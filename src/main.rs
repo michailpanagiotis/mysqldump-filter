@@ -22,11 +22,6 @@ fn get_write_buffer<P: AsRef<Path>>(filename: P) -> io::BufWriter<File> {
     return BufWriter::new(f);
 }
 
-fn write_line(mut buffer: io::BufWriter<File>, line: &String) {
-    buffer.write_all(line.as_bytes()).expect("Unable to write data");
-    buffer.write_all(b"\n").expect("Unable to write data");
-}
-
 fn main() {
     let re = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
     let args: Vec<String> = env::args().collect();
@@ -44,8 +39,9 @@ fn main() {
                 let filename = format!("{table}.sql");
                 println!("Reading table {} into {}", table, filename);
                 buf = get_write_buffer(&filename);
-                write_line(buf, &line);
             }
+            buf.write_all(line.as_bytes()).expect("Unable to write data");
+            buf.write_all(b"\n").expect("Unable to write data");
         }
     }
 }
