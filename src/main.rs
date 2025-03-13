@@ -1,5 +1,6 @@
 use std::fs::File;
-use std::io::{self, BufRead};
+use std::fs::OpenOptions;
+use std::io::{self, BufRead, BufWriter, Write};
 use std::path::Path;
 use std::env;
 use regex::Regex;
@@ -12,6 +13,20 @@ where P: AsRef<Path>, {
     Ok(io::BufReader::new(file).lines())
 }
 
+fn get_write_buffer<P: AsRef<Path>>(filename: P) -> io::BufWriter<File> {
+    File::create(&filename).expect("Unable to create file");
+    let f = OpenOptions::new()
+        .append(true)
+        .open(&filename)
+        .expect("Unable to open file");
+    return BufWriter::new(f);
+}
+
+fn write_line(mut buffer: io::BufWriter<File>, line: &String) {
+    buffer.write_all(line.as_bytes()).expect("Unable to write data");
+    buffer.write_all(b"\n").expect("Unable to write data");
+}
+
 fn main() {
     let re = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
     let args: Vec<String> = env::args().collect();
@@ -20,14 +35,17 @@ fn main() {
 
     if let Ok(lines) = read_lines(file_path) {
         let mut table;
+        let mut buf = get_write_buffer("schema.sql");
         // Consumes the iterator, returns an (Optional) String
         for line in lines.map_while(Result::ok) {
             if line.starts_with("-- Dumping data for table") {
                 let caps = re.captures(&line).unwrap();
                 table = caps.get(1).unwrap().as_str();
-                println!("Reading table {}", table);
+                let filename = format!("{table}.sql");
+                println!("Reading table {} into {}", table, filename);
+                buf = get_write_buffer(&filename);
+                write_line(buf, &line);
             }
         }
     }
-
 }
