@@ -1,55 +1,44 @@
 use std::fs::File;
 use std::fs::OpenOptions;
-use std::io::{self, BufWriter, Write};
+use std::io::{self, BufRead, BufWriter, Write};
 use std::path::Path;
 use std::env;
-use tempfile::tempfile;
-use std::collections::HashMap;
-use lazy_static::lazy_static;
 use regex::Regex;
 
-mod reader;
-
-lazy_static! {
-    static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
+// The output is wrapped in a Result to allow matching on errors.
+// Returns an Iterator to the Reader of the lines of the file.
+fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
+where P: AsRef<Path>, {
+    let file = File::open(filename)?;
+    Ok(io::BufReader::new(file).lines())
 }
 
 fn get_write_buffer<P: AsRef<Path>>(filename: P) -> io::BufWriter<File> {
-    // let file = tempfile().expect("Unable to open temporary file");
-
     File::create(&filename).expect("Unable to create file");
-    let file = OpenOptions::new()
+    let f = OpenOptions::new()
         .append(true)
         .open(&filename)
         .expect("Unable to open file");
-
-
-    return BufWriter::new(file);
-}
-
-fn get_table_name_from_comment(comment: &String) -> (String, String) {
-    let caps = TABLE_DUMP_RE.captures(&comment).unwrap();
-    let table = caps.get(1).unwrap().as_str().to_string();
-    let filename = format!("{table}.sql");
-    return (table, filename);
+    return BufWriter::new(f);
 }
 
 fn main() {
+    let re = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
     let args: Vec<String> = env::args().collect();
     let file_path = &args[1];
     dbg!(file_path);
 
-    let mut writers: HashMap<String, File> = HashMap::new();
-
-    if let Ok(lines) = reader::read_lines(file_path) {
+    if let Ok(lines) = read_lines(file_path) {
+        let mut table;
         let mut buf = get_write_buffer("schema.sql");
         // Consumes the iterator, returns an (Optional) String
         for line in lines.map_while(Result::ok) {
             if line.starts_with("-- Dumping data for table") {
-                let (table, filename) = get_table_name_from_comment(&line);
+                let caps = re.captures(&line).unwrap();
+                table = caps.get(1).unwrap().as_str();
+                let filename = format!("{table}.sql");
                 println!("Reading table {} into {}", table, filename);
                 buf = get_write_buffer(&filename);
-                writers.insert(table.clone(), tempfile().expect("Unable to open temporary file"));
             }
             buf.write_all(line.as_bytes()).expect("Unable to write data");
             buf.write_all(b"\n").expect("Unable to write data");
