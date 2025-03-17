@@ -1,30 +1,11 @@
-use std::fs::File;
-use std::fs::OpenOptions;
-use std::io::{self, BufWriter, Write};
-use std::path::Path;
-use std::env;
-use tempfile::tempfile;
-use std::collections::HashMap;
 use lazy_static::lazy_static;
 use regex::Regex;
 
+mod options;
 mod reader;
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
-}
-
-fn get_write_buffer<P: AsRef<Path>>(filename: P) -> io::BufWriter<File> {
-    // let file = tempfile().expect("Unable to open temporary file");
-
-    File::create(&filename).expect("Unable to create file");
-    let file = OpenOptions::new()
-        .append(true)
-        .open(&filename)
-        .expect("Unable to open file");
-
-
-    return BufWriter::new(file);
 }
 
 fn get_table_name_from_comment(comment: &String) -> (String, String) {
@@ -35,24 +16,32 @@ fn get_table_name_from_comment(comment: &String) -> (String, String) {
 }
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
-    let file_path = &args[1];
-    dbg!(file_path);
-
-    let mut writers: HashMap<String, File> = HashMap::new();
-
-    if let Ok(lines) = reader::read_lines(file_path) {
-        let mut buf = get_write_buffer("schema.sql");
-        // Consumes the iterator, returns an (Optional) String
+    let (all_tables, input_path) = options::parse_options();
+    if let Ok(lines) = reader::read_lines(&input_path) {
+        let mut current_table: Option<String> = None;
         for line in lines.map_while(Result::ok) {
             if line.starts_with("-- Dumping data for table") {
                 let (table, filename) = get_table_name_from_comment(&line);
                 println!("Reading table {} into {}", table, filename);
-                buf = get_write_buffer(&filename);
-                writers.insert(table.clone(), tempfile().expect("Unable to open temporary file"));
+                // let file = tempfile().expect("Unable to open temporary file");
+                // writers.insert(table.clone(), file);
+                // wbuffers.insert(table.clone(), BufWriter::new(file));
+                // dbg!(&wbuffers[&table]);
+
+                // buf = get_write_buffer(&filename);
+                current_table = Some(table.clone());
             }
-            buf.write_all(line.as_bytes()).expect("Unable to write data");
-            buf.write_all(b"\n").expect("Unable to write data");
+            match current_table {
+                Some(x) => {
+                    let cloned = x.clone();
+                    if all_tables.contains(&cloned) {
+
+                    }
+                },
+                _ => ()
+            }
+            // buf.write_all(line.as_bytes()).expect("Unable to write data");
+            // buf.write_all(b"\n").expect("Unable to write data");
         }
     }
 }
