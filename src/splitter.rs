@@ -22,7 +22,7 @@ fn get_write_buffer<P: AsRef<Path>>(filename: P) -> io::BufWriter<File> {
     return BufWriter::new(f);
 }
 
-fn main() {
+pub fn split() {
     let re = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
     let args: Vec<String> = env::args().collect();
     let file_path = &args[1];

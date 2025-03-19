@@ -20,7 +20,7 @@ struct Cli {
     input: Option<PathBuf>,
 }
 
-pub fn parse_options() -> (HashSet<String>, PathBuf) {
+pub fn parse_options() -> (PathBuf, HashSet<String>) {
     let mut all_tables: HashSet<String> = HashSet::new();
     let cli = Cli::parse();
     match cli.cmd {
@@ -33,5 +33,5 @@ pub fn parse_options() -> (HashSet<String>, PathBuf) {
 
         }
     }
-    return (all_tables, cli.input.unwrap());
+    return (cli.input.unwrap(), all_tables);
 }

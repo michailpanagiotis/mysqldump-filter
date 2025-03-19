@@ -3,6 +3,7 @@ use regex::Regex;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};
 use std::collections::{HashSet, HashMap};
+use std::path::PathBuf;
 
 mod options;
 mod reader;
@@ -18,63 +19,59 @@ fn get_table_name_from_comment(comment: String) -> (String, String) {
     (table, filename)
 }
 
-fn get_files(all_tables: &HashSet<String>) -> HashMap<String, File> {
-    let mut files: HashMap<String, File> = HashMap::new();
-    for table in all_tables.iter() {
-        let filename = format!("{table}.sql");
-        println!("{} {}", table, filename);
+fn get_writer(filename: &String) -> BufWriter<File> {
+    File::create(filename).expect("Unable to create file");
+    let file = OpenOptions::new()
+        .append(true)
+        .open(filename)
+        .expect("Unable to open file");
 
-        File::create(&filename).expect("Unable to create file");
-        let file = OpenOptions::new()
-            .append(true)
-            .open(&filename)
-            .expect("Unable to open file");
-
-        files.insert(table.clone(), file);
-    }
-    files
+    BufWriter::new(file)
 }
 
-fn get_writers(all_tables: &HashSet<String>) -> HashMap<String, BufWriter<File>> {
+fn get_writers(requested_tables: &HashSet<String>) -> HashMap<String, BufWriter<File>> {
     let mut writers: HashMap<String, io::BufWriter<File>> = HashMap::new();
-    for table in all_tables.iter() {
+    for table in requested_tables.iter() {
         let filename = format!("{table}.sql");
-        println!("{} {}", table, filename);
-
-        File::create(&filename).expect("Unable to create file");
-        let file = OpenOptions::new()
-            .append(true)
-            .open(&filename)
-            .expect("Unable to open file");
-
-        writers.insert(table.clone(), BufWriter::new(file));
+        writers.insert(table.clone(), get_writer(&filename));
     }
     writers
 }
 
-fn main() {
-    let (all_tables, input_path) = options::parse_options();
-    if let Ok(lines) = reader::read_lines(&input_path) {
-        let mut files = get_files(&all_tables);
-        let mut writers = get_writers(&all_tables);
-        let mut current_writer: Option<&mut io::BufWriter<File>> = None;
+fn split(sqldump_filepath: &PathBuf, requested_tables: &HashSet<String>) -> HashSet<String> {
+    let exported_tables: HashSet<String> = HashSet::new();
+    let lines = reader::read_lines(sqldump_filepath).expect("Cannot open file");
+    let mut writers = get_writers(requested_tables);
+    let mut base_writer: BufWriter<File> = get_writer(&"schema.sql".to_string());
+    let mut current_writer: Option<&mut io::BufWriter<File>> = Some(&mut base_writer);
 
-        for line in lines.map_while(Result::ok) {
-            if line.starts_with("-- Dumping data for table") {
-                let (table, filename) = get_table_name_from_comment(line.clone());
-                if all_tables.contains(&table) {
-                    println!("Reading table {} into {}", table, filename);
-                    current_writer = writers.get_mut(&table);
-                } else {
-                    println!("Omitting table {}", table);
-                    current_writer = None;
-                }
+    for line in lines.map_while(Result::ok) {
+        if line.starts_with("-- Dumping data for table") {
+            let (table, filename) = get_table_name_from_comment(line.clone());
+            if let Some(value) = current_writer {
+                value.flush().expect("Cannot flush buffer");
             }
-
-            if let Some(ref mut writer) = current_writer {
-                writer.write_all(line.as_bytes()).expect("Unable to write data");
-                writer.write_all(b"\n").expect("Unable to write data");
+            if requested_tables.contains(&table) {
+                println!("Reading table {} into {}", table, filename);
+                current_writer = writers.get_mut(&table);
+            } else {
+                current_writer = None;
             }
         }
+
+        if let Some(ref mut writer) = current_writer {
+            writer.write_all(line.as_bytes()).expect("Unable to write data");
+            writer.write_all(b"\n").expect("Unable to write data");
+        }
     }
+
+    if let Some(value) = current_writer {
+        value.flush().expect("Cannot flush buffer");
+    }
+    exported_tables
+}
+
+fn main() {
+    let (input_path, requested_tables) = options::parse_options();
+    let _exported_tables = split(&input_path, &requested_tables);
 }
