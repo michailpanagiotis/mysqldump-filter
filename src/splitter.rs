@@ -1,47 +1,59 @@
-use std::fs::File;
-use std::fs::OpenOptions;
-use std::io::{self, BufRead, BufWriter, Write};
-use std::path::Path;
-use std::env;
+use lazy_static::lazy_static;
 use regex::Regex;
+use std::fs::{File, OpenOptions};
+use std::io::{self, BufWriter, Write};
+use std::collections::HashSet;
+use std::path::PathBuf;
 
-// The output is wrapped in a Result to allow matching on errors.
-// Returns an Iterator to the Reader of the lines of the file.
-fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
-where P: AsRef<Path>, {
-    let file = File::open(filename)?;
-    Ok(io::BufReader::new(file).lines())
+use crate::reader;
+
+lazy_static! {
+    static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
 }
 
-fn get_write_buffer<P: AsRef<Path>>(filename: P) -> io::BufWriter<File> {
-    File::create(&filename).expect("Unable to create file");
-    let f = OpenOptions::new()
+fn get_table_name_from_comment(comment: String) -> String {
+    let table = TABLE_DUMP_RE.captures(&comment).unwrap().get(1).unwrap().as_str().to_string();
+    table
+}
+
+fn get_writer(filename: &String) -> BufWriter<File> {
+    File::create(filename).expect("Unable to create file");
+    let file = OpenOptions::new()
         .append(true)
-        .open(&filename)
+        .open(filename)
         .expect("Unable to open file");
-    return BufWriter::new(f);
+
+    BufWriter::new(file)
 }
 
-pub fn split() {
-    let re = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
-    let args: Vec<String> = env::args().collect();
-    let file_path = &args[1];
-    dbg!(file_path);
+pub fn split(sqldump_filepath: &PathBuf, schema_file: &String, requested_tables: &HashSet<String>) -> HashSet<String> {
+    let exported_tables: HashSet<String> = HashSet::new();
+    let lines = reader::read_lines(sqldump_filepath);
+    let mut cwriter: Option<io::BufWriter<File>> = Some(get_writer(schema_file));
 
-    if let Ok(lines) = read_lines(file_path) {
-        let mut table;
-        let mut buf = get_write_buffer("schema.sql");
-        // Consumes the iterator, returns an (Optional) String
-        for line in lines.map_while(Result::ok) {
-            if line.starts_with("-- Dumping data for table") {
-                let caps = re.captures(&line).unwrap();
-                table = caps.get(1).unwrap().as_str();
+    for line in lines.map_while(Result::ok) {
+        if line.starts_with("-- Dumping data for table") {
+            if let Some(ref mut writer) = cwriter {
+                writer.flush().expect("Cannot flush buffer");
+            }
+            let table = get_table_name_from_comment(line.clone());
+            if requested_tables.contains(&table) {
                 let filename = format!("{table}.sql");
                 println!("Reading table {} into {}", table, filename);
-                buf = get_write_buffer(&filename);
+                cwriter = Some(get_writer(&filename));
+            } else {
+                cwriter = None;
             }
-            buf.write_all(line.as_bytes()).expect("Unable to write data");
-            buf.write_all(b"\n").expect("Unable to write data");
+        }
+
+        if let Some(ref mut writer) = cwriter {
+            writer.write_all(line.as_bytes()).expect("Unable to write data");
+            writer.write_all(b"\n").expect("Unable to write data");
         }
     }
+
+    if let Some(ref mut writer) = cwriter {
+        writer.flush().expect("Cannot flush buffer");
+    }
+    exported_tables
 }
