@@ -36,13 +36,13 @@ fn split(sqldump_filepath: &PathBuf, schema_file: &String, requested_tables: &Ha
 
     for line in lines.map_while(Result::ok) {
         if line.starts_with("-- Dumping data for table") {
-            let (table, filename) = get_table_name_from_comment(line.clone());
             if let Some(ref mut writer) = cwriter {
                 writer.flush().expect("Cannot flush buffer");
             }
+            let (table, filename) = get_table_name_from_comment(line.clone());
             if requested_tables.contains(&table) {
                 println!("Reading table {} into {}", table, filename);
-                cwriter = Some(get_writer(&format!("{table}.sql")));
+                cwriter = Some(get_writer(&filename));
             } else {
                 cwriter = None;
             }
