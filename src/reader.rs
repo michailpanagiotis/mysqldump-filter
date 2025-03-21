@@ -15,6 +15,7 @@ use nom::{
   sequence::preceded,
   sequence::terminated,
   sequence::tuple,
+  sequence::pair,
   sequence::separated_pair,
   // see the "streaming/complete" paragraph lower for an explanation of these submodules
   character::complete::char,
@@ -24,6 +25,7 @@ use nom::{
   bytes::complete::take,
   bytes::complete::tag,
   bytes::complete::is_a,
+  multi::many0,
   branch::alt,
   multi::separated_list0,
 };
@@ -80,14 +82,14 @@ fn parse_insert(input: &str) -> IResult<&str, Vec<&str>> {
 }
 
 
-fn parse_values(input: &str) -> IResult<&str, &str> {
-    preceded(
-        (is_not(")"), is_not("("), tag("(")),
-        take_until(");")
-    ).parse(input)
-}
+// fn parse_values(input: &str) -> IResult<&str, (&str, (&str, &str))> {
+//     pair(
+//       take_until(","),
+//       is_not("\n").parse(input)
+//     ).parse(input)
+// }
 
-fn parse_insert_statement(input: &str) -> IResult<&str, (Vec<&str>, &str)> {
+fn parse_insert_statement(input: &str) -> IResult<&str, (Vec<&str>, (&str, &str))> {
     separated_pair(
         preceded(take_until("("), preceded(take_until("`"), take_until(")"))).and_then(
           separated_list0(
@@ -96,7 +98,15 @@ fn parse_insert_statement(input: &str) -> IResult<&str, (Vec<&str>, &str)> {
           )
         ),
         take_until("("),
-        preceded(tag("("), take_until(");"))
+        preceded(tag("("), take_until(");")).and_then(
+            (
+                // terminated(take_until(","), alt((tag(","), is_not("\n")))),
+                terminated(alt((delimited(tag("'"), is_not("'"), tag("'")), tag("NULL"), take_until(","))), alt((tag(","), is_not("\n")))),
+                alt((delimited(tag("'"), is_not("'"), tag("'")), tag("NULL"), take_until(",")))
+                // preceded(char('\''), take_until("',"))
+                // take_until(",").and_then(preceded(char('\''), take_until("'"))),
+            )
+        )
     ).parse(input)
 }
 
@@ -118,7 +128,12 @@ pub fn read_ids(filename: &String) -> (HashSet<i32>, BloomFilter) {
 
         let (leftover, parsed) = parse_insert_statement(line.as_str()).unwrap();
 
-        dbg!(parsed);
+        let (_, values_str) = parsed;
+        dbg!(values_str);
+
+        // let (lef2, par2) = parse_values(values_str).unwrap();
+        //
+        // dbg!(par2);
 
         // println!("Reading table {}", line);
         // let values = INSERT_VALUES_RE.captures(&line).unwrap().get(1).unwrap().as_str().to_string();
