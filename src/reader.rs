@@ -28,6 +28,7 @@ use nom::{
   multi::many0,
   branch::alt,
   multi::separated_list0,
+  combinator::eof,
 };
 
 lazy_static! {
@@ -82,6 +83,7 @@ fn parse_insert(input: &str) -> IResult<&str, Vec<&str>> {
 }
 
 
+
 // fn parse_values(input: &str) -> IResult<&str, (&str, (&str, &str))> {
 //     pair(
 //       take_until(","),
@@ -89,7 +91,7 @@ fn parse_insert(input: &str) -> IResult<&str, Vec<&str>> {
 //     ).parse(input)
 // }
 
-fn parse_insert_statement(input: &str) -> IResult<&str, (Vec<&str>, (&str, &str))> {
+fn parse_insert_statement(input: &str) -> IResult<&str, (Vec<&str>, Vec<&str>)> {
     separated_pair(
         preceded(take_until("("), preceded(take_until("`"), take_until(")"))).and_then(
           separated_list0(
@@ -99,13 +101,17 @@ fn parse_insert_statement(input: &str) -> IResult<&str, (Vec<&str>, (&str, &str)
         ),
         take_until("("),
         preceded(tag("("), take_until(");")).and_then(
-            (
-                // terminated(take_until(","), alt((tag(","), is_not("\n")))),
-                terminated(alt((delimited(tag("'"), is_not("'"), tag("'")), tag("NULL"), take_until(","))), alt((tag(","), is_not("\n")))),
-                alt((delimited(tag("'"), is_not("'"), tag("'")), tag("NULL"), take_until(",")))
-                // preceded(char('\''), take_until("',"))
-                // take_until(",").and_then(preceded(char('\''), take_until("'"))),
-            )
+            // VALUES list
+            many0(terminated(
+                alt((
+                    // quoted value
+                    delimited(tag("'"), is_not("'"), tag("'")),
+                    // unquoted value
+                    take_until(",")
+                )),
+                // delimiter
+                alt((tag(","), eof)),
+            ))
         )
     ).parse(input)
 }
