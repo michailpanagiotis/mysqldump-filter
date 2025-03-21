@@ -26,6 +26,7 @@ use nom::{
   bytes::complete::tag,
   bytes::complete::is_a,
   multi::many0,
+  multi::many_m_n,
   branch::alt,
   multi::separated_list0,
   combinator::eof,
@@ -91,7 +92,7 @@ fn parse_insert(input: &str) -> IResult<&str, Vec<&str>> {
 //     ).parse(input)
 // }
 
-fn parse_insert_statement(input: &str) -> IResult<&str, (Vec<&str>, Vec<&str>)> {
+fn parse_insert_statement(times: usize, input: &str) -> IResult<&str, (Vec<&str>, Vec<&str>)> {
     separated_pair(
         preceded(take_until("("), preceded(take_until("`"), take_until(")"))).and_then(
           separated_list0(
@@ -102,7 +103,7 @@ fn parse_insert_statement(input: &str) -> IResult<&str, (Vec<&str>, Vec<&str>)> 
         take_until("("),
         preceded(tag("("), take_until(");")).and_then(
             // VALUES list
-            many0(terminated(
+            many_m_n(1, times, terminated(
                 alt((
                     // quoted value
                     delimited(tag("'"), is_not("'"), tag("'")),
@@ -132,10 +133,9 @@ pub fn read_ids(filename: &String) -> (HashSet<i32>, BloomFilter) {
             id_position = fields.position(|x| x.starts_with("`id`"));
         }
 
-        let (leftover, parsed) = parse_insert_statement(line.as_str()).unwrap();
+        let (leftover, (fields, values)) = parse_insert_statement(id_position.unwrap() + 1, line.as_str()).unwrap();
 
-        let (_, values_str) = parsed;
-        dbg!(values_str);
+        dbg!(fields, values);
 
         // let (lef2, par2) = parse_values(values_str).unwrap();
         //
@@ -155,7 +155,7 @@ pub fn read_ids(filename: &String) -> (HashSet<i32>, BloomFilter) {
         //             .quoting(false)
         //     .from_reader(values.as_bytes());
         // // dbg!(&reader);
-        println!("NEW");
+        // println!("NEW");
 
         // let res = parse_csv(values.as_str());
         // if res.is_ok() {
