@@ -78,8 +78,11 @@ fn parse_insert(input: &str) -> IResult<&str, Vec<&str>> {
   ).parse(input)
 }
 
-fn parse_values(input: &str) -> IResult<&str, ((&str, &str), &str)> {
-    ((is_not(")"), is_not("(")), tag("(")).parse(input)
+fn parse_values(input: &str) -> IResult<&str, &str> {
+    preceded(
+        (is_not(")"), is_not("("), tag("(")),
+        take_until(");")
+    ).parse(input)
 }
 
 pub fn read_ids(filename: &String) -> (HashSet<i32>, BloomFilter) {
