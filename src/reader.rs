@@ -8,16 +8,13 @@ use fastbloom::BloomFilter;
 use nom::{
   IResult,
   Parser,
-  sequence::delimited,
-  sequence::preceded,
-  sequence::terminated,
-  bytes::complete::is_not,
-  bytes::complete::take_until,
-  bytes::complete::tag,
+  character::complete::char,
   multi::many_m_n,
   branch::alt,
   multi::separated_list0,
   combinator::eof,
+  bytes::complete::{is_not, take_until, tag},
+  sequence::{delimited, preceded, terminated},
 };
 
 lazy_static! {
@@ -39,7 +36,7 @@ fn parse_fields(input: &str) -> IResult<&str, Vec<&str>> {
     preceded(take_until("("), preceded(take_until("`"), take_until(")"))).and_then(
       separated_list0(
           tag(", "),
-          delimited(tag("`"), is_not("`"), tag("`")),
+          delimited(char('`'), is_not("`"), char('`')),
       )
     ).parse(input)
 }
@@ -51,7 +48,7 @@ fn parse_values(id_index: usize, input: &str) -> IResult<&str, Vec<&str>> {
             alt((
                 tag("''"),
                 // quoted value
-                delimited(tag("'"), is_not("'"), tag("'")),
+                delimited(char('\''), is_not("'"), char('\'')),
                 // unquoted value
                 take_until(",")
             )),

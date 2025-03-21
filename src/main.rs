@@ -9,14 +9,14 @@ fn main() {
     //
     // let table_file = String::from("sequelize_meta.sql");
     // reader::read_ids(&table_file);
-    // let table_file = String::from("dim_stripe_events.test.sql");
-    // reader::read_ids(&table_file);
+    let table_file = String::from("dim_stripe_events.test.sql");
+    reader::read_ids(&table_file);
 
-    let mut tables: Vec<String> = requested_tables.into_iter().collect();
-    tables.sort();
-
-    for table in tables {
-        let table_file = format!("{table}.sql");
-        reader::read_ids(&table_file);
-    }
+    // let mut tables: Vec<String> = requested_tables.into_iter().collect();
+    // tables.sort();
+    //
+    // for table in tables {
+    //     let table_file = format!("{table}.sql");
+    //     reader::read_ids(&table_file);
+    // }
 }
