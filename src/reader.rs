@@ -15,6 +15,7 @@ use nom::{
   sequence::preceded,
   sequence::terminated,
   sequence::tuple,
+  sequence::separated_pair,
   // see the "streaming/complete" paragraph lower for an explanation of these submodules
   character::complete::char,
   bytes::complete::is_not,
@@ -78,10 +79,24 @@ fn parse_insert(input: &str) -> IResult<&str, Vec<&str>> {
   ).parse(input)
 }
 
+
 fn parse_values(input: &str) -> IResult<&str, &str> {
     preceded(
         (is_not(")"), is_not("("), tag("(")),
         take_until(");")
+    ).parse(input)
+}
+
+fn parse_insert_statement(input: &str) -> IResult<&str, (Vec<&str>, &str)> {
+    separated_pair(
+        preceded(take_until("("), preceded(take_until("`"), take_until(")"))).and_then(
+          separated_list0(
+              tag(", "),
+              delimited(tag("`"), is_not("`"), tag("`")),
+          )
+        ),
+        take_until("("),
+        preceded(tag("("), take_until(");"))
     ).parse(input)
 }
 
@@ -101,7 +116,7 @@ pub fn read_ids(filename: &String) -> (HashSet<i32>, BloomFilter) {
             id_position = fields.position(|x| x.starts_with("`id`"));
         }
 
-        let parsed = parse_values(line.as_str());
+        let (leftover, parsed) = parse_insert_statement(line.as_str()).unwrap();
 
         dbg!(parsed);
 
