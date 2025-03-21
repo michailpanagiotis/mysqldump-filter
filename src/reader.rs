@@ -46,44 +46,32 @@ where P: AsRef<Path>, {
     io::BufReader::new(file).lines()
 }
 
-fn parse_id<T: FromStr>(id: &str) -> Option<T> {
-    id.parse::<T>().ok()
-}
 
-fn is_not_cell_end(c: char) -> bool {
-    c != ',' && c != '\n'
-}
-
-fn take4(input: &str) -> IResult<&str, &str> {
-  take(4u8)(input)
-}
-
-fn quotes(input: &str) -> IResult<&str, &str> {
-  delimited(char('\''), is_not("'"), char('\'')).parse(input)
-}
-
-fn abcd_parser(i: &str) -> IResult<&str, &str> {
-  tag("abcd")(i) // will consume bytes if the input begins with "abcd"
-}
-
-fn parse_csv(input: &str) -> IResult<&str, &str> {
-   alt((quotes, take_while(is_not_cell_end))).parse(input)
-}
-
-fn parse_insert(input: &str) -> IResult<&str, Vec<&str>> {
-  delimited(
-    terminated(is_not("("), tag("(")),
-    is_not(")").and_then(
+fn parse_fields(input: &str) -> IResult<&str, Vec<&str>> {
+    preceded(take_until("("), preceded(take_until("`"), take_until(")"))).and_then(
       separated_list0(
           tag(", "),
           delimited(tag("`"), is_not("`"), tag("`")),
       )
-    ),
-    tag(")")
-  ).parse(input)
+    ).parse(input)
 }
 
-
+fn parse_values(id_index: usize, input: &str) -> IResult<&str, Vec<&str>> {
+    preceded((take_until("VALUES ("), tag("VALUES (")), take_until(");")).and_then(
+        // VALUES list
+        many_m_n(1, id_index + 1, terminated(
+            alt((
+                tag("''"),
+                // quoted value
+                delimited(tag("'"), is_not("'"), tag("'")),
+                // unquoted value
+                take_until(",")
+            )),
+            // delimiter
+            alt((tag(","), eof)),
+        ))
+    ).parse(input)
+}
 
 // fn parse_values(input: &str) -> IResult<&str, (&str, (&str, &str))> {
 //     pair(
@@ -128,14 +116,19 @@ pub fn read_ids(filename: &String) -> (HashSet<i32>, BloomFilter) {
         }
 
         if id_position.is_none() {
-            let fields_string = INSERT_RE.captures(&line).unwrap().get(1).unwrap().as_str().to_string();
-            let mut fields = fields_string.split(", ");
-            id_position = fields.position(|x| x.starts_with("`id`"));
+            let (_, fields) = parse_fields(line.as_str()).unwrap();
+            id_position = fields.iter().position(|x| x == &"id");
+            if id_position.is_none() {
+                id_position = fields.iter().position(|x| x == &"name");
+            }
         }
 
-        let (leftover, (fields, values)) = parse_insert_statement(id_position.unwrap() + 1, line.as_str()).unwrap();
+        let (_, values) = parse_values(id_position.unwrap(), line.as_str()).unwrap();
+        // dbg!(values);
 
-        dbg!(fields, values);
+        // let (leftover, (fields, values)) = parse_insert_statement(id_position.unwrap() + 1, line.as_str()).unwrap();
+        //
+        // dbg!(fields, values);
 
         // let (lef2, par2) = parse_values(values_str).unwrap();
         //
