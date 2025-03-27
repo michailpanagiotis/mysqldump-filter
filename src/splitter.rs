@@ -16,7 +16,7 @@ fn get_table_name_from_comment(comment: String) -> String {
     table
 }
 
-fn get_writer(filename: &String) -> BufWriter<File> {
+fn get_writer(filename: &PathBuf) -> BufWriter<File> {
     File::create(filename).expect("Unable to create file");
     let file = OpenOptions::new()
         .append(true)
@@ -26,10 +26,14 @@ fn get_writer(filename: &String) -> BufWriter<File> {
     BufWriter::new(file)
 }
 
-pub fn split(sqldump_filepath: &PathBuf, schema_file: &String, requested_tables: &HashSet<String>) -> HashSet<String> {
+pub fn split(sqldump_filepath: &PathBuf, output_dir: &PathBuf, schema_file: &String, requested_tables: &HashSet<String>) -> HashSet<String> {
     let exported_tables: HashSet<String> = HashSet::new();
     let lines = reader::read_lines(sqldump_filepath);
-    let mut cwriter: Option<io::BufWriter<File>> = Some(get_writer(schema_file));
+
+    let mut schema_path = PathBuf::from(output_dir);
+    schema_path.push(schema_file);
+
+    let mut cwriter: Option<io::BufWriter<File>> = Some(get_writer(&schema_path));
 
     for line in lines.map_while(Result::ok) {
         if line.starts_with("-- Dumping data for table") {
@@ -38,9 +42,10 @@ pub fn split(sqldump_filepath: &PathBuf, schema_file: &String, requested_tables:
             }
             let table = get_table_name_from_comment(line.clone());
             if requested_tables.contains(&table) {
-                let filename = format!("{table}.sql");
-                println!("Reading table {} into {}", table, filename);
-                cwriter = Some(get_writer(&filename));
+                let mut path = PathBuf::from(output_dir);
+                path.push(format!("{table}.sql"));
+                println!("Reading table {} into {}", table, path.display());
+                cwriter = Some(get_writer(&path));
             } else {
                 cwriter = None;
             }
