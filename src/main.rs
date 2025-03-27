@@ -14,7 +14,12 @@ enum Commands {
         #[clap(short, long, required = true, num_args = 1..)]
         output_dir: PathBuf,
     },
-    Filter,
+    Filter {
+        #[clap(short, long, required = true, num_args = 1..)]
+        query: String,
+        #[clap(short, long, required = true, num_args = 1..)]
+        output: PathBuf,
+    },
     Ids
 }
 
@@ -44,8 +49,10 @@ fn main() {
             let table_file = String::from("dim_stripe_events.test.sql");
             reader::read_ids(&table_file);
         }
-        Commands::Filter => {
-
+        Commands::Filter { query, output, } => {
+            let (_, parsed) = reader::parse_query(&query).expect("cannot parse query");
+            let (field, value) = parsed;
+            splitter::filter_inserts(&input_path, &field, &value, &output);
         }
     }
 

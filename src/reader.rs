@@ -14,7 +14,7 @@ use nom::{
   multi::separated_list0,
   combinator::eof,
   bytes::complete::{is_not, take_until, tag},
-  sequence::{delimited, preceded, terminated},
+  sequence::{delimited, preceded, terminated, separated_pair},
 };
 
 lazy_static! {
@@ -32,7 +32,7 @@ where P: AsRef<Path>, {
 }
 
 
-fn parse_fields(input: &str) -> IResult<&str, Vec<&str>> {
+pub fn parse_fields(input: &str) -> IResult<&str, Vec<&str>> {
     preceded(take_until("("), preceded(take_until("`"), take_until(")"))).and_then(
       separated_list0(
           tag(", "),
@@ -41,7 +41,15 @@ fn parse_fields(input: &str) -> IResult<&str, Vec<&str>> {
     ).parse(input)
 }
 
-fn parse_values(id_index: usize, input: &str) -> IResult<&str, Vec<&str>> {
+pub fn parse_query(input: &str) -> IResult<&str, (&str, &str)> {
+    separated_pair(
+        is_not("="),
+        tag("="),
+        is_not("=")
+    ).parse(input)
+}
+
+pub fn parse_values(id_index: usize, input: &str) -> IResult<&str, Vec<&str>> {
     preceded((take_until("VALUES ("), tag("VALUES (")), take_until(");")).and_then(
         // VALUES list
         many_m_n(1, id_index + 1, terminated(

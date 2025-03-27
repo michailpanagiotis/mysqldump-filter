@@ -62,3 +62,30 @@ pub fn split(sqldump_filepath: &PathBuf, output_dir: &PathBuf, schema_file: &Str
     }
     exported_tables
 }
+
+pub fn filter_inserts(sqldump_filepath: &PathBuf, field: &str, value: &str, output: &PathBuf) {
+    let lines = reader::read_lines(sqldump_filepath);
+    let mut writer: io::BufWriter<File> = get_writer(output);
+    let mut field_position: Option<usize> = None;
+
+    println!("Filtering table {} with {}={}", sqldump_filepath.display(), field, value);
+
+    for line in lines.map_while(Result::ok) {
+        if !line.starts_with("INSERT INTO") {
+            writer.write_all(line.as_bytes()).expect("Unable to write data");
+            writer.write_all(b"\n").expect("Unable to write data");
+        } else {
+            if field_position.is_none() {
+                let (_, fields) = reader::parse_fields(line.as_str()).unwrap();
+                field_position = fields.iter().position(|x| x == &field);
+            }
+
+            let (_, values) = reader::parse_values(field_position.unwrap(), line.as_str()).unwrap();
+            let current_value = String::from(values.into_iter().nth(field_position.unwrap()).unwrap());
+            if current_value == value {
+                writer.write_all(line.as_bytes()).expect("Unable to write data");
+                writer.write_all(b"\n").expect("Unable to write data");
+            }
+        }
+    }
+}
