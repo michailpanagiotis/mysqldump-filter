@@ -3,7 +3,7 @@ use regex::Regex;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::reader;
 
@@ -26,8 +26,10 @@ fn get_writer(filename: &PathBuf) -> BufWriter<File> {
     BufWriter::new(file)
 }
 
-pub fn split(sqldump_filepath: &PathBuf, output_dir: &PathBuf, schema_file: &String, requested_tables: &HashSet<String>) -> HashSet<String> {
-    let exported_tables: HashSet<String> = HashSet::new();
+pub fn split(sqldump_filepath: &PathBuf, output_dir: &Path, schema_file: &PathBuf, requested_tables: &HashSet<String>) -> (HashSet<String>, Vec<PathBuf>) {
+    let mut exported_tables: HashSet<String> = HashSet::new();
+    let mut data_files: Vec<PathBuf> = Vec::new();
+
     let lines = reader::read_lines(sqldump_filepath);
 
     let mut schema_path = PathBuf::from(output_dir);
@@ -42,10 +44,11 @@ pub fn split(sqldump_filepath: &PathBuf, output_dir: &PathBuf, schema_file: &Str
             }
             let table = get_table_name_from_comment(line.clone());
             if requested_tables.contains(&table) {
-                let mut path = PathBuf::from(output_dir);
-                path.push(format!("{table}.sql"));
+                let path = PathBuf::from(output_dir).join(&table).with_extension("sql");
+                data_files.push(path.to_owned());
                 println!("Reading table {} into {}", table, path.display());
                 cwriter = Some(get_writer(&path));
+                exported_tables.insert(table.to_string());
             } else {
                 cwriter = None;
             }
@@ -60,7 +63,7 @@ pub fn split(sqldump_filepath: &PathBuf, output_dir: &PathBuf, schema_file: &Str
     if let Some(ref mut writer) = cwriter {
         writer.flush().expect("Cannot flush buffer");
     }
-    exported_tables
+    (exported_tables, data_files)
 }
 
 pub fn filter_inserts(sqldump_filepath: &PathBuf, field: &str, value: &str, output: &PathBuf) {
