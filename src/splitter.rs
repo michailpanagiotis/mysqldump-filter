@@ -2,8 +2,9 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::thread::current;
 
 use crate::reader;
 
@@ -28,7 +29,9 @@ fn get_writer(filename: &PathBuf) -> BufWriter<File> {
 
 pub fn split(sqldump_filepath: &PathBuf, output_dir: &Path, schema_file: &PathBuf, requested_tables: &HashSet<String>) -> (HashSet<String>, Vec<PathBuf>) {
     let mut exported_tables: HashSet<String> = HashSet::new();
+    let mut writer_per_table: HashMap<String, io::BufWriter<File>> = HashMap::new();
     let mut data_files: Vec<PathBuf> = Vec::new();
+    let mut current_table: Option<String> = None;
 
     let lines = reader::read_lines(sqldump_filepath);
 
@@ -47,17 +50,27 @@ pub fn split(sqldump_filepath: &PathBuf, output_dir: &Path, schema_file: &PathBu
                 let path = PathBuf::from(output_dir).join(&table).with_extension("sql");
                 data_files.push(path.to_owned());
                 println!("Reading table {} into {}", table, path.display());
+                writer_per_table.insert(table.to_string(), get_writer(&path));
                 cwriter = Some(get_writer(&path));
+                current_table = Some(table.to_string());
                 exported_tables.insert(table.to_string());
             } else {
                 cwriter = None;
+                current_table = None;
             }
         }
 
-        if let Some(ref mut writer) = cwriter {
-            writer.write_all(line.as_bytes()).expect("Unable to write data");
-            writer.write_all(b"\n").expect("Unable to write data");
+        if let Some(ref mut table) = current_table {
+            let current_writer = writer_per_table.get_mut(table).expect("unknown writer");
+            current_writer.write_all(line.as_bytes()).expect("Unable to write data");
+            current_writer.write_all(b"\n").expect("Unable to write data");
         }
+        //
+        //
+        // if let Some(ref mut writer) = cwriter {
+        //     writer.write_all(line.as_bytes()).expect("Unable to write data");
+        //     writer.write_all(b"\n").expect("Unable to write data");
+        // }
     }
 
     if let Some(ref mut writer) = cwriter {
