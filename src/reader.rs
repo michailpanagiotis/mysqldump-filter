@@ -31,6 +31,12 @@ where P: AsRef<Path>, {
     io::BufReader::new(file).lines()
 }
 
+pub fn parse_table_name(input: &str) -> IResult<&str, &str> {
+    preceded(
+        tag("INSERT INTO `"),
+        is_not("`"),
+    ).parse(input)
+}
 
 pub fn parse_fields(input: &str) -> IResult<&str, Vec<&str>> {
     preceded(take_until("("), preceded(take_until("`"), take_until(")"))).and_then(

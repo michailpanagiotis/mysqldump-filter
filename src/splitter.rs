@@ -27,6 +27,19 @@ fn get_writer(filename: &PathBuf) -> BufWriter<File> {
 }
 
 #[derive(Debug)]
+enum StatementType {
+    Unknown,
+    Insert,
+}
+
+#[derive(Debug)]
+struct Statement {
+    line: String,
+    table: Option<String>,
+    r#type: StatementType,
+}
+
+#[derive(Debug)]
 struct TableInfo {
     writer_per_table: HashMap<String, io::BufWriter<File>>,
     filepath_per_table: HashMap<String, PathBuf>,
@@ -49,10 +62,12 @@ impl TableInfo {
     }
 
     fn add_writer(&mut self, table: &String) {
-        let path = self.output_dir.join(table).with_extension("sql");
-        println!("Reading table {} into {}", table, path.display());
-        self.filepath_per_table.insert(table.to_string(), path.clone());
-        self.writer_per_table.insert(table.to_string(), get_writer(&path));
+        if !self.writer_per_table.contains_key(table) {
+            let path = self.output_dir.join(table).with_extension("sql");
+            println!("Reading table {} into {}", table, path.display());
+            self.filepath_per_table.insert(table.to_string(), path.clone());
+            self.writer_per_table.insert(table.to_string(), get_writer(&path));
+        }
     }
 
     fn get_writer(&mut self, current_table: &Option<String>) -> Option<&mut BufWriter<File>>{
@@ -63,9 +78,9 @@ impl TableInfo {
         }
     }
 
-    fn on_new_line(&mut self, line: &String, current_table: &Option<String>) {
-        if let Some(ref mut writer) = self.get_writer(current_table) {
-            writer.write_all(line.as_bytes()).expect("Unable to write data");
+    fn on_new_statement(&mut self, statement: &Statement) {
+        if let Some(ref mut writer) = self.get_writer(&statement.table) {
+            writer.write_all(statement.line.as_bytes()).expect("Unable to write data");
             writer.write_all(b"\n").expect("Unable to write data");
         }
     }
@@ -97,25 +112,45 @@ impl TableInfo {
     }
 }
 
-pub fn split(sqldump_filepath: &PathBuf, output_dir: &Path, schema_file: &PathBuf, requested_tables: &HashSet<String>) -> (HashSet<String>, Vec<PathBuf>) {
+fn read_statements(sqldump_filepath: &PathBuf, requested_tables: &HashSet<String>) -> impl Iterator<Item = Statement> {
     let mut current_table: Option<String> = None;
-    let mut table_info = TableInfo::new(output_dir, schema_file);
-
-    for line in reader::read_lines(sqldump_filepath).map_while(Result::ok) {
+    let annotate_with_table = move |line: String| {
         if line.starts_with("-- Dumping data for table") {
-            table_info.on_table_end(&current_table);
             let table = get_table_name_from_comment(line.clone());
             current_table = Some(table.to_string());
-            table_info.set_current_table(&table);
-            if requested_tables.contains(&table) {
-                table_info.add_writer(&table);
-            }
         }
+        Statement { line, r#type: StatementType::Insert, table: current_table.clone() }
+    };
+    reader::read_lines(sqldump_filepath)
+        .map_while(Result::ok)
+        .map(annotate_with_table)
+        .filter(|st| st.table.is_some() && requested_tables.contains(st.table.as_ref().unwrap()))
+}
 
-        table_info.on_new_line(&line, &current_table);
+pub fn split(sqldump_filepath: &PathBuf, output_dir: &Path, schema_file: &PathBuf, requested_tables: &HashSet<String>) -> (HashSet<String>, Vec<PathBuf>) {
+    let mut current_table: Option<String> = None;
+
+    let annotate_with_table = |line: String| {
+        if line.starts_with("-- Dumping data for table") {
+            let table = get_table_name_from_comment(line.clone());
+            current_table = Some(table.to_string());
+        }
+        Statement {
+            line,
+            r#type: StatementType::Insert,
+            table: current_table.clone(),
+        }
+    };
+
+    let mut table_info = TableInfo::new(output_dir, schema_file);
+    for statement in read_statements(sqldump_filepath, requested_tables) {
+        if let Some(ref table) = statement.table {
+            // if requested_tables.contains(table) {
+                table_info.add_writer(table);
+            // }
+        }
+        table_info.on_new_statement(&statement);
     }
-
-    table_info.on_input_end(&current_table);
 
     (table_info.get_exported_tables(), table_info.get_data_files())
 }
