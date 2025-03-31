@@ -28,98 +28,92 @@ fn get_writer(filename: &PathBuf) -> BufWriter<File> {
 
 #[derive(Debug)]
 struct TableInfo {
-    requested_tables: HashSet<String>,
     writer_per_table: HashMap<String, io::BufWriter<File>>,
+    filepath_per_table: HashMap<String, PathBuf>,
     schema_writer: io::BufWriter<File>,
     output_dir: PathBuf,
+    current_table: Option<String>,
 }
 
 impl TableInfo {
-    fn new(output_dir: &Path, schema_file: &PathBuf, requested_tables: &HashSet<String>) -> TableInfo {
+    fn new(output_dir: &Path, schema_file: &PathBuf) -> TableInfo {
         let mut schema_path = PathBuf::from(output_dir);
         schema_path.push(schema_file);
         TableInfo{
-            requested_tables: requested_tables.to_owned(),
             writer_per_table: HashMap::new(),
+            filepath_per_table: HashMap::new(),
             schema_writer: get_writer(&schema_path),
             output_dir: PathBuf::from(output_dir),
+            current_table: None,
         }
     }
 
     fn add_writer(&mut self, table: &String) {
-        if self.requested_tables.contains(table) {
-            let path = self.output_dir.join(table).with_extension("sql");
-            self.writer_per_table.insert(table.to_string(), get_writer(&path));
-        }
+        let path = self.output_dir.join(table).with_extension("sql");
+        println!("Reading table {} into {}", table, path.display());
+        self.filepath_per_table.insert(table.to_string(), path.clone());
+        self.writer_per_table.insert(table.to_string(), get_writer(&path));
     }
 
-    fn get_writer(&mut self, current_table: &Option<String>) -> Option<&mut BufWriter<File>>{
-        if let Some(table) = current_table {
-            if self.requested_tables.contains(table) {
-                return Some(self.writer_per_table.get_mut(table).expect("unknown writer"));
-            }
-            None
+    fn get_current_writer(&mut self) -> Option<&mut BufWriter<File>>{
+        if let Some(ref mut table) = self.current_table {
+            self.writer_per_table.get_mut(table)
         } else {
             Some(&mut self.schema_writer)
         }
     }
 
-    fn on_new_line(&mut self, line: &String, current_table: &Option<String>) {
-        if let Some(ref mut writer) = self.get_writer(current_table) {
+    fn on_new_line(&mut self, line: &String) {
+        if let Some(ref mut writer) = self.get_current_writer() {
             writer.write_all(line.as_bytes()).expect("Unable to write data");
             writer.write_all(b"\n").expect("Unable to write data");
         }
     }
 
-    fn on_table_end(&mut self, current_table: &Option<String>) {
-        if let Some(ref mut writer) = self.get_writer(current_table) {
+    fn on_table_end(&mut self) {
+        if let Some(ref mut writer) = self.get_current_writer() {
             writer.flush().expect("Cannot flush buffer");
         }
+    }
+
+    fn on_input_end(&mut self) {
+        self.on_table_end();
+    }
+
+    fn get_data_files(&mut self) -> Vec<PathBuf> {
+        let filepaths: Vec<PathBuf> = self.filepath_per_table.values().cloned().collect();
+        filepaths
+    }
+
+    fn get_exported_tables(&mut self) -> HashSet<String> {
+        let filepaths = HashSet::from_iter(self.filepath_per_table.keys().cloned());
+        filepaths
+    }
+
+    fn set_current_table(&mut self, table: &str) {
+        self.on_table_end();
+        self.current_table = Some(table.to_owned());
     }
 }
 
 pub fn split(sqldump_filepath: &PathBuf, output_dir: &Path, schema_file: &PathBuf, requested_tables: &HashSet<String>) -> (HashSet<String>, Vec<PathBuf>) {
-    let mut exported_tables: HashSet<String> = HashSet::new();
-    let mut writer_per_table: HashMap<String, io::BufWriter<File>> = HashMap::new();
-    let mut data_files: Vec<PathBuf> = Vec::new();
-    let mut current_table: Option<String> = None;
+    let mut table_info = TableInfo::new(output_dir, schema_file);
 
-    let mut lines = reader::read_lines(sqldump_filepath);
-
-    let mut table_info = TableInfo::new(output_dir, schema_file, requested_tables);
-
-    lines.by_ref().take_while(|line| line.is_ok() && !line.as_ref().unwrap().starts_with("-- Dumping data for table"));
-
-    let mut schema_path = PathBuf::from(output_dir);
-    schema_path.push(schema_file);
-
-    for line in lines.map_while(Result::ok) {
+    for line in reader::read_lines(sqldump_filepath).map_while(Result::ok) {
         if line.starts_with("-- Dumping data for table") {
-            table_info.on_table_end(&current_table);
             let table = get_table_name_from_comment(line.clone());
-            current_table = Some(table.to_string());
+            table_info.set_current_table(&table);
             if requested_tables.contains(&table) {
-                let path = PathBuf::from(output_dir).join(&table).with_extension("sql");
-                data_files.push(path.to_owned());
-                println!("Reading table {} into {}", table, path.display());
-                writer_per_table.insert(table.to_string(), get_writer(&path));
                 table_info.add_writer(&table);
-                exported_tables.insert(table.to_string());
             }
         }
 
-        table_info.on_new_line(&line, &current_table);
-
-        //
-        // if let Some(ref mut writer) = cwriter {
-        //     writer.write_all(line.as_bytes()).expect("Unable to write data");
-        //     writer.write_all(b"\n").expect("Unable to write data");
-        // }
+        table_info.on_new_line(&line);
     }
 
-    table_info.on_table_end(&current_table);
+    table_info.on_input_end();
 
-    (exported_tables, data_files)
+    (table_info.get_exported_tables(), table_info.get_data_files())
 }
 
 pub fn filter_inserts(sqldump_filepath: &PathBuf, field: &str, value: &str, output: &PathBuf) {
