@@ -77,6 +77,7 @@ fn main() {
             let schema_file = working_dir.path().join("schema.sql");
             let (_, data_files) = splitter::split(&input_path, working_dir.path(), &schema_file, &requested_tables);
 
+            println!("Combining files");
             combine_files(&schema_file, data_files.iter(), output);
             _ = working_dir.close();
         }
