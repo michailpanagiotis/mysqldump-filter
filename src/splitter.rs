@@ -55,29 +55,31 @@ impl TableInfo {
         self.writer_per_table.insert(table.to_string(), get_writer(&path));
     }
 
-    fn get_current_writer(&mut self) -> Option<&mut BufWriter<File>>{
-        if let Some(ref mut table) = self.current_table {
+    fn get_writer(&mut self, current_table: &Option<String>) -> Option<&mut BufWriter<File>>{
+        if let Some(table) = current_table {
             self.writer_per_table.get_mut(table)
         } else {
             Some(&mut self.schema_writer)
         }
     }
 
-    fn on_new_line(&mut self, line: &String) {
-        if let Some(ref mut writer) = self.get_current_writer() {
+    fn on_new_line(&mut self, line: &String, current_table: &Option<String>) {
+        if let Some(ref mut writer) = self.get_writer(current_table) {
             writer.write_all(line.as_bytes()).expect("Unable to write data");
             writer.write_all(b"\n").expect("Unable to write data");
         }
     }
 
-    fn on_table_end(&mut self) {
-        if let Some(ref mut writer) = self.get_current_writer() {
+    fn on_table_end(&mut self, current_table: &Option<String>) {
+        if let Some(ref mut writer) = self.get_writer(current_table) {
             writer.flush().expect("Cannot flush buffer");
         }
     }
 
-    fn on_input_end(&mut self) {
-        self.on_table_end();
+    fn on_input_end(&mut self, current_table: &Option<String>) {
+        if let Some(ref mut writer) = self.get_writer(current_table) {
+            writer.flush().expect("Cannot flush buffer");
+        }
     }
 
     fn get_data_files(&mut self) -> Vec<PathBuf> {
@@ -91,27 +93,29 @@ impl TableInfo {
     }
 
     fn set_current_table(&mut self, table: &str) {
-        self.on_table_end();
         self.current_table = Some(table.to_owned());
     }
 }
 
 pub fn split(sqldump_filepath: &PathBuf, output_dir: &Path, schema_file: &PathBuf, requested_tables: &HashSet<String>) -> (HashSet<String>, Vec<PathBuf>) {
+    let mut current_table: Option<String> = None;
     let mut table_info = TableInfo::new(output_dir, schema_file);
 
     for line in reader::read_lines(sqldump_filepath).map_while(Result::ok) {
         if line.starts_with("-- Dumping data for table") {
+            table_info.on_table_end(&current_table);
             let table = get_table_name_from_comment(line.clone());
+            current_table = Some(table.to_string());
             table_info.set_current_table(&table);
             if requested_tables.contains(&table) {
                 table_info.add_writer(&table);
             }
         }
 
-        table_info.on_new_line(&line);
+        table_info.on_new_line(&line, &current_table);
     }
 
-    table_info.on_input_end();
+    table_info.on_input_end(&current_table);
 
     (table_info.get_exported_tables(), table_info.get_data_files())
 }
