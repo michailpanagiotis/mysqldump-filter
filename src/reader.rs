@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, BufRead};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use lazy_static::lazy_static;
 use regex::Regex;
 use fastbloom::BloomFilter;
@@ -18,9 +18,23 @@ use nom::{
 };
 
 lazy_static! {
+    static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
     static ref INSERT_RE: Regex = Regex::new(r"INSERT[^(]*\(([^)]+)\)").unwrap();
     static ref INSERT_VALUES_RE: Regex = Regex::new(r"INSERT.*\(([^)]+)\)").unwrap();
     static ref SPLIT_VALUES_RE: Regex = Regex::new(r"(?U)'[^']+'|[^,]+").unwrap();
+}
+
+#[derive(Debug)]
+pub enum StatementType {
+    Unknown,
+    Insert,
+}
+
+#[derive(Debug)]
+pub struct Statement {
+    pub line: String,
+    pub table: Option<String>,
+    pub r#type: StatementType,
 }
 
 // The output is wrapped in a Result to allow matching on errors.
@@ -29,6 +43,30 @@ pub fn read_lines<P>(filename: P) -> io::Lines<io::BufReader<File>>
 where P: AsRef<Path>, {
     let file = File::open(filename).expect("Cannot open file");
     io::BufReader::new(file).lines()
+}
+
+pub fn read_statements(sqldump_filepath: &PathBuf, requested_tables: &HashSet<String>) -> impl Iterator<Item = Statement> {
+    let mut current_table: Option<String> = None;
+    let annotate_with_table = move |line: String| {
+        if line.starts_with("-- Dumping data for table") {
+            let table = TABLE_DUMP_RE.captures(&line).unwrap().get(1).unwrap().as_str().to_string();
+            current_table = Some(table.to_string());
+        }
+        let statement_type = if line.starts_with("INSERT") { StatementType::Insert } else { StatementType::Unknown };
+        // match statement_type {
+        //     StatementType::Insert => {
+        //         let (_, extracted_table_name) = parse_table_name(&line).unwrap();
+        //     }
+        //     _ => {
+        //
+        //     }
+        // }
+        Statement { line, r#type: statement_type, table: current_table.clone() }
+    };
+    read_lines(sqldump_filepath)
+        .map_while(Result::ok)
+        .map(annotate_with_table)
+        .filter(|st| st.table.is_some() && requested_tables.contains(st.table.as_ref().unwrap()))
 }
 
 pub fn parse_table_name(input: &str) -> IResult<&str, &str> {
