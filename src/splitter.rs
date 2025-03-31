@@ -128,26 +128,10 @@ fn read_statements(sqldump_filepath: &PathBuf, requested_tables: &HashSet<String
 }
 
 pub fn split(sqldump_filepath: &PathBuf, output_dir: &Path, schema_file: &PathBuf, requested_tables: &HashSet<String>) -> (HashSet<String>, Vec<PathBuf>) {
-    let mut current_table: Option<String> = None;
-
-    let annotate_with_table = |line: String| {
-        if line.starts_with("-- Dumping data for table") {
-            let table = get_table_name_from_comment(line.clone());
-            current_table = Some(table.to_string());
-        }
-        Statement {
-            line,
-            r#type: StatementType::Insert,
-            table: current_table.clone(),
-        }
-    };
-
     let mut table_info = TableInfo::new(output_dir, schema_file);
     for statement in read_statements(sqldump_filepath, requested_tables) {
         if let Some(ref table) = statement.table {
-            // if requested_tables.contains(table) {
-                table_info.add_writer(table);
-            // }
+            table_info.add_writer(table);
         }
         table_info.on_new_statement(&statement);
     }
