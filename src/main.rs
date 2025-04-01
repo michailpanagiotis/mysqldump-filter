@@ -11,12 +11,6 @@ mod config;
 
 #[derive(Subcommand, Debug, Clone)]
 enum Commands {
-    Filter {
-        #[clap(short, long, required = true, num_args = 1..)]
-        query: String,
-        #[clap(short, long, required = true, num_args = 1..)]
-        output: PathBuf,
-    },
     Ids,
 }
 
@@ -63,20 +57,16 @@ fn main() {
                     let table_file = String::from("dim_stripe_events.test.sql");
                     reader::read_ids(&table_file);
                 }
-                Commands::Filter { query, output, } => {
-                    let (_, parsed) = reader::parse_query(&query).expect("cannot parse query");
-                    let (field, value) = parsed;
-                    splitter::filter_inserts(&input_path, field, value, &output);
-                }
             }
         },
         None => {
-            let config = config::parse(cli.config.to_str().unwrap());
-
-            dbg!(&config);
             let working_dir = TempDir::new("splitter").expect("cannot create temporary dir");
             let schema_file = working_dir.path().join("schema.sql");
-            let (_, data_files) = splitter::split(&input_path, working_dir.path(), &schema_file, config);
+            let input_file = std::env::current_dir().unwrap().to_path_buf().join(&input_path);
+            let config = config::parse(cli.config.to_str().unwrap(), &input_file, working_dir.path(), &schema_file);
+
+            dbg!(&config);
+            let (_, data_files) = splitter::split(config);
 
             println!("Combining files");
             combine_files(&schema_file, data_files.iter(), cli.output);

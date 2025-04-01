@@ -1,4 +1,6 @@
 use std::collections::{HashSet, HashMap};
+use std::path::{Path, PathBuf};
+use std::usize;
 use nom::{
   IResult,
   Parser,
@@ -9,8 +11,11 @@ use nom::{
 #[derive(Debug)]
 #[derive(Clone)]
 pub struct Config {
+    pub input_file: PathBuf,
+    pub output_dir: PathBuf,
     pub requested_tables: HashSet<String>,
     pub filter_per_table: HashMap<String, Vec<FilterCondition>>,
+    pub schema_file: PathBuf,
 }
 
 #[derive(Debug)]
@@ -42,7 +47,6 @@ impl FilterCondition {
     fn new(definition: String) -> FilterCondition {
         let (_, parsed) = FilterCondition::parse_query(&definition).expect("cannot parse filter condition");
         let (field, operator, value) = parsed;
-        dbg!(operator);
         FilterCondition {
             field: field.to_string(),
             position: None,
@@ -63,12 +67,20 @@ impl FilterCondition {
         }
     }
 
-    fn set_position(&mut self, position: &Option<usize>) {
+    pub fn matches_field(&self, field_name: &str) -> bool {
+        return &self.field == field_name;
+    }
+
+    pub fn has_determined_position(&self) -> bool {
+        self.position.is_some()
+    }
+
+    pub fn set_position(&mut self, position: &Option<usize>) {
         self.position = *position;
     }
 }
 
-pub fn parse(config_file: &str) -> Config {
+pub fn parse(config_file: &str, input_file: &PathBuf, output_dir: &Path, schema_file: &PathBuf) -> Config {
     let settings = config::Config::builder()
         .add_source(config::File::new(config_file, config::FileFormat::Json))
         .add_source(config::Environment::with_prefix("MYSQLDUMP_FILTER"))
@@ -93,8 +105,10 @@ pub fn parse(config_file: &str) -> Config {
                 .collect())
         )
         .collect();
-    dbg!(&filter_per_table);
     Config {
+        output_dir: output_dir.to_path_buf(),
+        input_file: input_file.clone(),
+        schema_file: schema_file.clone(),
         requested_tables,
         filter_per_table,
     }
