@@ -1,44 +1,36 @@
 use clap::{Parser, Subcommand};
-use std::collections::HashSet;
 use std::path::PathBuf;
-use std::fs::{File, create_dir_all};
+use std::fs::File;
 use std::io;
 use std::iter;
 use tempdir::TempDir;
 
 mod reader;
 mod splitter;
+mod config;
 
 #[derive(Subcommand, Debug, Clone)]
 enum Commands {
-    Split {
-        #[clap(short, long, value_delimiter = ' ', required = true, num_args = 1..)]
-        keep_table_data: Option<Vec<String>>,
-        #[clap(short, long, required = true, num_args = 1..)]
-        output_dir: PathBuf,
-    },
-    FilterTableData {
-        #[clap(short, long, value_delimiter = ' ', required = true, num_args = 1..)]
-        keep_table_data: Option<Vec<String>>,
-        #[clap(short, long, required = true, num_args = 1..)]
-        output: PathBuf,
-    },
     Filter {
         #[clap(short, long, required = true, num_args = 1..)]
         query: String,
         #[clap(short, long, required = true, num_args = 1..)]
         output: PathBuf,
     },
-    Ids
+    Ids,
 }
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Cli {
     #[command(subcommand)]
-    cmd: Commands,
+    cmd: Option<Commands>,
     #[clap(value_name = "FILE", required=true)]
-    input: Option<PathBuf>,
+    input: PathBuf,
+    #[clap(short, long, required = true, num_args = 1..)]
+    config: PathBuf,
+    #[clap(short, long, required = true, num_args = 1..)]
+    output: PathBuf,
 }
 
 fn append_to_file(input_path: &PathBuf, mut output_file: &File) {
@@ -56,40 +48,39 @@ fn combine_files<'a, I: Iterator<Item = &'a PathBuf>>(schema_file: &'a PathBuf, 
 
 fn main() {
     let cli = Cli::parse();
-    let input_path = cli.input.unwrap();
+    let input_path = cli.input;
+    dbg!(&input_path);
+    // println!(
+    //     "{:?}",
+    //     settings
+    //         .try_deserialize::<HashMap<String, String>>()
+    //         .unwrap()
+    // );
     match cli.cmd {
-        Commands::Split { keep_table_data, output_dir, .. } => {
-            let mut requested_tables: HashSet<String> = HashSet::new();
-            for table in keep_table_data.unwrap() {
-                requested_tables.insert(table.to_string());
+        Some(cmd) => {
+            match cmd {
+                Commands::Ids => {
+                    let table_file = String::from("dim_stripe_events.test.sql");
+                    reader::read_ids(&table_file);
+                }
+                Commands::Filter { query, output, } => {
+                    let (_, parsed) = reader::parse_query(&query).expect("cannot parse query");
+                    let (field, value) = parsed;
+                    splitter::filter_inserts(&input_path, field, value, &output);
+                }
             }
-            create_dir_all(&output_dir).ok();
-            let schema_file = output_dir.as_path().join("schema.sql");
-            let _exported_tables = splitter::split(&input_path, &output_dir, &schema_file, &requested_tables);
-        }
-        Commands::FilterTableData { keep_table_data, output, .. } => {
-            let mut requested_tables: HashSet<String> = HashSet::new();
-            for table in keep_table_data.unwrap() {
-                requested_tables.insert(table.to_string());
-            }
-            let working_dir = TempDir::new("splitter").expect("cannot create temporary dir");
+        },
+        None => {
+            let config = config::parse(cli.config.to_str().unwrap());
 
+            let working_dir = TempDir::new("splitter").expect("cannot create temporary dir");
             let schema_file = working_dir.path().join("schema.sql");
-            let (_, data_files) = splitter::split(&input_path, working_dir.path(), &schema_file, &requested_tables);
+            let (_, data_files) = splitter::split(&input_path, working_dir.path(), &schema_file, config);
 
             println!("Combining files");
-            combine_files(&schema_file, data_files.iter(), output);
+            combine_files(&schema_file, data_files.iter(), cli.output);
             _ = working_dir.close();
-        }
-        Commands::Ids => {
-            let table_file = String::from("dim_stripe_events.test.sql");
-            reader::read_ids(&table_file);
-        }
-        Commands::Filter { query, output, } => {
-            let (_, parsed) = reader::parse_query(&query).expect("cannot parse query");
-            let (field, value) = parsed;
-            splitter::filter_inserts(&input_path, &field, &value, &output);
-        }
+        },
     }
 
     // let schema_file = String::from("schema.sql");

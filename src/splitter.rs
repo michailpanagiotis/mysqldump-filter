@@ -6,6 +6,7 @@ use std::collections::{HashSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use crate::reader;
+use crate::config::Config;
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -27,10 +28,11 @@ struct TableInfo {
     filepath_per_table: HashMap<String, PathBuf>,
     schema_writer: io::BufWriter<File>,
     output_dir: PathBuf,
+    config: Config,
 }
 
 impl TableInfo {
-    fn new(output_dir: &Path, schema_file: &PathBuf) -> TableInfo {
+    fn new(config: Config, output_dir: &Path, schema_file: &PathBuf) -> TableInfo {
         let mut schema_path = PathBuf::from(output_dir);
         schema_path.push(schema_file);
         TableInfo{
@@ -38,6 +40,7 @@ impl TableInfo {
             filepath_per_table: HashMap::new(),
             schema_writer: get_writer(&schema_path),
             output_dir: PathBuf::from(output_dir),
+            config,
         }
     }
 
@@ -54,6 +57,9 @@ impl TableInfo {
             Some(table) => {
                 if !self.writer_per_table.contains_key(table) {
                     self.add_writer(table);
+                }
+                if self.config.filter_per_table.contains_key(table) {
+                    println!("asda");
                 }
                 self.writer_per_table.get_mut(table).expect("Cannot find writer")
             },
@@ -79,9 +85,9 @@ impl TableInfo {
     }
 }
 
-pub fn split(sqldump_filepath: &PathBuf, output_dir: &Path, schema_file: &PathBuf, requested_tables: &HashSet<String>) -> (HashSet<String>, Vec<PathBuf>) {
-    let mut table_info = TableInfo::new(output_dir, schema_file);
-    for statement in reader::read_statements(sqldump_filepath, requested_tables, true) {
+pub fn split(sqldump_filepath: &PathBuf, output_dir: &Path, schema_file: &PathBuf, config: Config) -> (HashSet<String>, Vec<PathBuf>) {
+    let mut table_info = TableInfo::new(config.clone(), output_dir, schema_file);
+    for statement in reader::read_statements(sqldump_filepath, &config.requested_tables, true) {
         table_info.on_new_statement(&statement);
     }
 
