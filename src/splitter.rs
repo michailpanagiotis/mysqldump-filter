@@ -81,7 +81,7 @@ impl TableInfo {
 
 pub fn split(sqldump_filepath: &PathBuf, output_dir: &Path, schema_file: &PathBuf, requested_tables: &HashSet<String>) -> (HashSet<String>, Vec<PathBuf>) {
     let mut table_info = TableInfo::new(output_dir, schema_file);
-    for statement in reader::read_statements(sqldump_filepath, requested_tables) {
+    for statement in reader::read_statements(sqldump_filepath, requested_tables, true) {
         table_info.on_new_statement(&statement);
     }
 

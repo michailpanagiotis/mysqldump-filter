@@ -45,28 +45,31 @@ where P: AsRef<Path>, {
     io::BufReader::new(file).lines()
 }
 
-pub fn read_statements(sqldump_filepath: &PathBuf, requested_tables: &HashSet<String>) -> impl Iterator<Item = Statement> {
+pub fn read_statements(sqldump_filepath: &PathBuf, requested_tables: &HashSet<String>, use_running_table: bool) -> impl Iterator<Item = Statement> {
     let mut current_table: Option<String> = None;
     let annotate_with_table = move |line: String| {
         if line.starts_with("-- Dumping data for table") {
             let table = TABLE_DUMP_RE.captures(&line).unwrap().get(1).unwrap().as_str().to_string();
-            current_table = Some(table.to_string());
+            current_table = Some(table);
         }
         let statement_type = if line.starts_with("INSERT") { StatementType::Insert } else { StatementType::Unknown };
-        // match statement_type {
-        //     StatementType::Insert => {
-        //         let (_, extracted_table_name) = parse_table_name(&line).unwrap();
-        //     }
-        //     _ => {
-        //
-        //     }
-        // }
+        if !use_running_table {
+            match statement_type {
+                StatementType::Insert => {
+                    let table: String = line.chars().skip(13).take_while(|x| x != &'`').collect();
+                    current_table = Some(table);
+                }
+                _ => {
+
+                }
+            }
+        }
         Statement { line, r#type: statement_type, table: current_table.clone() }
     };
     read_lines(sqldump_filepath)
         .map_while(Result::ok)
         .map(annotate_with_table)
-        .filter(|st| st.table.is_some() && requested_tables.contains(st.table.as_ref().unwrap()))
+        .filter(|st| st.table.is_none() || requested_tables.contains(st.table.as_ref().unwrap()))
 }
 
 pub fn parse_table_name(input: &str) -> IResult<&str, &str> {
