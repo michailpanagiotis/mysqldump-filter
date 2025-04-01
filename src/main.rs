@@ -73,6 +73,7 @@ fn main() {
         None => {
             let config = config::parse(cli.config.to_str().unwrap());
 
+            dbg!(&config);
             let working_dir = TempDir::new("splitter").expect("cannot create temporary dir");
             let schema_file = working_dir.path().join("schema.sql");
             let (_, data_files) = splitter::split(&input_path, working_dir.path(), &schema_file, config);

@@ -103,22 +103,32 @@ pub fn filter_inserts(sqldump_filepath: &PathBuf, field: &str, value: &str, outp
 
     println!("Filtering table {} with {}={}", sqldump_filepath.display(), field, value);
 
+    let mut cond = FilterCondition {
+        field: field.to_owned(),
+        position: None,
+        operator: FilterOperator::Equals,
+        value: value.to_string(),
+    };
+
     for line in lines.map_while(Result::ok) {
         if !line.starts_with("INSERT INTO") {
             writer.write_all(line.as_bytes()).expect("Unable to write data");
             writer.write_all(b"\n").expect("Unable to write data");
         } else {
-            if field_position.is_none() {
+            if cond.position.is_none() {
                 let (_, fields) = reader::parse_fields(line.as_str()).unwrap();
-                field_position = fields.iter().position(|x| x == &field);
+                let field_position = fields.iter().position(|x| x == &cond.field);
+                cond.set_position(&field_position);
             }
 
-            let (_, values) = reader::parse_values(field_position.unwrap(), line.as_str()).unwrap();
-            let current_value = String::from(values.into_iter().nth(field_position.unwrap()).unwrap());
-            if current_value == value {
-                writer.write_all(line.as_bytes()).expect("Unable to write data");
-                writer.write_all(b"\n").expect("Unable to write data");
-            }
+            let (_, values) = reader::parse_values(cond.position.unwrap(), line.as_str()).unwrap();
+            let current_value = String::from(values.into_iter().nth(cond.position.unwrap()).unwrap());
+            cond.test(&current_value);
+
+
+
+            writer.write_all(line.as_bytes()).expect("Unable to write data");
+            writer.write_all(b"\n").expect("Unable to write data");
         }
     }
 }
