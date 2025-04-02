@@ -57,16 +57,12 @@ impl FilterCondition {
         }
     }
 
-    fn test(&self, other_value: &String) -> bool {
+    pub fn test(&self, other_value: &String) -> bool {
         match &self.operator {
             FilterOperator::Equals => &self.value == other_value,
             FilterOperator::NotEquals => &self.value != other_value,
             FilterOperator::Unknown => false
         }
-    }
-
-    pub fn matches_field(&self, field_name: &str) -> bool {
-        return &self.field == field_name;
     }
 }
 

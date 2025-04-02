@@ -48,7 +48,6 @@ impl TableDataWriter {
             self.value_position_per_field = statement.get_field_positions();
             let Some(ref value_position_per_field) = self.value_position_per_field else { return };
             assert_eq!(value_position_per_field.len(), 44);
-            dbg!(value_position_per_field);
         }
     }
 
@@ -60,19 +59,12 @@ impl TableDataWriter {
 
         let values = statement.get_values();
 
-        dbg!(value_position_per_field);
+        let failed_filters = filters.iter().filter(|f| {
+            let position = value_position_per_field[&f.field];
+            !f.test(&values[position])
+        });
 
-        assert_eq!(value_position_per_field.len(), 44);
-
-        // dbg!(&value_position_per_field);
-        for (key, position) in value_position_per_field.iter() {
-            // dbg!(&position);
-            dbg!(&values);
-            let value = &values[*position];
-            // dbg!(&key);
-            // dbg!(&value);
-        }
-        false
+        failed_filters.count() > 0
     }
 
     fn on_new_statement(&mut self, statement: &reader::Statement) {

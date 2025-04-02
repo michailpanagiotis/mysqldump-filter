@@ -3,16 +3,17 @@ use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 use lazy_static::lazy_static;
+use nom::multi::separated_list1;
 use regex::Regex;
 use fastbloom::BloomFilter;
 use nom::{
   IResult,
   Parser,
-  character::complete::char,
+  character::complete::{char, one_of, none_of},
   branch::alt,
   multi::{separated_list0, many1, many_m_n},
-  combinator::eof,
-  bytes::complete::{is_not, take_until, tag},
+  combinator::{not, eof},
+  bytes::complete::{escaped, is_not, is_a, take_until, tag, take_till},
   sequence::{delimited, preceded, terminated},
 };
 
@@ -71,25 +72,27 @@ impl Statement {
 
     pub fn get_values(&self) -> Vec<String> {
         let mut parser = preceded((take_until("VALUES ("), tag("VALUES (")), take_until(");")).and_then(
-            // VALUES list
-            many1(terminated(
+            separated_list1(
+                one_of(",)"),
                 alt((
-                    tag("''"),
                     // quoted value
-                    delimited(char('\''), is_not("'"), char('\'')),
+                    delimited(
+                        tag("'"),
+                        // escaped or empty
+                        alt((
+                            escaped(none_of("\\\'"), '\\', tag("'")),
+                            tag("")
+                        )),
+                        tag("'")
+                    ),
                     // unquoted value
-                    take_until(",")
+                    take_till(|c| c == ','),
                 )),
-                // delimiter
-                alt((tag(","), tag(","))),
-            ))
+            )
         );
         let res: IResult<&str, Vec<&str>> = parser.parse(&self.line);
         let (_, values) = res.expect("cannot parse values");
-        let values_vec: Vec<String> = values.iter().map(|item| item.to_string()).collect();
-        dbg!(&values_vec);
-        assert_eq!(values_vec.len(), 44);
-        return values_vec;
+        values.iter().map(|item| item.to_string()).collect()
     }
 }
 
