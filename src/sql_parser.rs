@@ -1,44 +1,34 @@
 use lazy_static::lazy_static;
 use regex::Regex;
-use std::fs::{File, OpenOptions};
-use std::io::{self, BufWriter, Write};
-use std::collections::{HashSet, HashMap};
+use std::io::Write;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::reader;
+use crate::io_utils;
 use crate::config::{Config, FilterCondition};
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
 }
 
-fn get_writer(filename: &PathBuf) -> BufWriter<File> {
-    File::create(filename).expect("Unable to create file");
-    let file = OpenOptions::new()
-        .append(true)
-        .open(filename)
-        .expect("Unable to open file");
-
-    BufWriter::new(file)
-}
-
-
 #[derive(Debug)]
 struct TableDataWriter {
     value_position_per_field: Option<HashMap<String, usize>>,
     filepath: PathBuf,
-    writer: io::BufWriter<File>,
+    writer: io_utils::Writer,
     filters: Option<Vec<FilterCondition>>,
 }
 
 impl TableDataWriter {
-    fn new(table: &String, output_dir: &Path, filter_per_table: &HashMap<String, Vec<FilterCondition>>) -> TableDataWriter {
-        let path = output_dir.join(table).with_extension("sql");
-        println!("Reading table {} into {}", table, path.display());
+    fn new(table: &String, working_dir: &Path, filter_per_table: &HashMap<String, Vec<FilterCondition>>) -> TableDataWriter {
+        let filepath = working_dir.join(table).with_extension("sql");
+        println!("Reading table {} into {}", table, filepath.display());
+        let writer = io_utils::get_file_writer(&filepath);
         TableDataWriter {
             value_position_per_field: None,
-            filepath: path.clone(),
-            writer: get_writer(&path),
+            filepath,
+            writer,
             filters: filter_per_table.get(table).cloned(),
         }
     }
@@ -86,22 +76,22 @@ impl TableDataWriter {
 struct Parser {
     config: Config,
     writer_per_table: HashMap<String, TableDataWriter>,
-    schema_writer: io::BufWriter<File>,
+    schema_writer: io_utils::Writer,
 }
 
 impl Parser {
-    fn new(config: Config, output_dir: &Path, schema_file: &PathBuf) -> Parser {
+    fn new(config: Config, working_dir: &Path, schema_file: &PathBuf) -> Parser {
         Parser{
             config,
             writer_per_table: HashMap::new(),
-            schema_writer: get_writer(&PathBuf::from(output_dir).join(schema_file)),
+            schema_writer: io_utils::get_file_writer(&PathBuf::from(working_dir).join(schema_file)),
         }
     }
 
     fn register_table(&mut self, table: &String) {
         self.writer_per_table.insert(table.to_string(), TableDataWriter::new(
             table,
-            &self.config.output_dir,
+            &self.config.working_dir,
             &self.config.filter_per_table,
         ));
     }
@@ -133,21 +123,24 @@ impl Parser {
         let filepaths: Vec<PathBuf> = self.writer_per_table.values().map(|x| x.filepath.clone()).collect();
         filepaths
     }
-
-    fn get_exported_tables(&mut self) -> HashSet<String> {
-        let filepaths = HashSet::from_iter(self.writer_per_table.keys().cloned());
-        filepaths
-    }
 }
 
-pub fn split(config: Config) -> (HashSet<String>, Vec<PathBuf>) {
-    dbg!(&config);
-    let mut table_info = Parser::new(config.clone(), &config.output_dir, &config.schema_file);
+pub fn truncate(config: Config) {
+    let mut table_info = Parser::new(
+        config.clone(),
+        &config.working_dir,
+        &config.schema_file,
+    );
     for statement in reader::read_statements(&config.input_file, &config.requested_tables, true) {
         table_info.on_new_statement(&statement);
     }
 
     table_info.on_input_end();
 
-    (table_info.get_exported_tables(), table_info.get_data_files())
+    println!("Combining files");
+    io_utils::combine_files(
+        &config.schema_file,
+        table_info.get_data_files().iter(),
+        config.output_file,
+    );
 }

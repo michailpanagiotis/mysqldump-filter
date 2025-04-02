@@ -1,20 +1,64 @@
-use std::collections::{HashSet, HashMap};
-use std::path::{Path, PathBuf};
 use nom::{
   IResult,
   Parser,
   bytes::complete::{is_not, tag},
   branch::alt,
 };
+use std::collections::{HashSet, HashMap};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 #[derive(Clone)]
 pub struct Config {
     pub input_file: PathBuf,
-    pub output_dir: PathBuf,
+    pub output_file: PathBuf,
+    pub working_dir: PathBuf,
+    pub schema_file: PathBuf,
     pub requested_tables: HashSet<String>,
     pub filter_per_table: HashMap<String, Vec<FilterCondition>>,
-    pub schema_file: PathBuf,
+}
+
+impl Config {
+    pub fn new(
+        config_file: &Path,
+        input_file: &Path,
+        output_file: &Path,
+        working_dir: &Path,
+    ) -> Config {
+        let settings = config::Config::builder()
+            .add_source(config::File::new(config_file.to_str().expect("invalid config path"), config::FileFormat::Json))
+            .add_source(config::Environment::with_prefix("MYSQLDUMP_FILTER"))
+            .build()
+            .unwrap();
+        let requested_tables: HashSet<_> = settings
+            .get_array("allow_data_on_tables")
+            .expect("no key 'allow_data_on_tables' in config")
+            .iter().map(|x| x.to_string()).collect();
+
+        let filter_per_table: HashMap<String, Vec<FilterCondition>>= settings
+            .get_table("filter_inserts")
+            .expect("no key 'filter_inserts' in config")
+            .into_iter()
+            .map(|(key, value)| (
+                key,
+                value
+                    .into_array()
+                    .expect("invalid value")
+                    .into_iter()
+                    .map(|x| FilterCondition::new(x.to_string()))
+                    .collect())
+            )
+            .collect();
+        let schema_file = working_dir.join("schema.sql");
+        Config {
+            working_dir: working_dir.to_path_buf(),
+            input_file: input_file.to_path_buf(),
+            output_file: output_file.to_path_buf(),
+            schema_file: schema_file.to_path_buf(),
+            requested_tables,
+            filter_per_table,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -62,39 +106,5 @@ impl FilterCondition {
             FilterOperator::NotEquals => &self.value != other_value,
             FilterOperator::Unknown => false
         }
-    }
-}
-
-pub fn parse(config_file: &str, input_file: &Path, output_dir: &Path, schema_file: &Path) -> Config {
-    let settings = config::Config::builder()
-        .add_source(config::File::new(config_file, config::FileFormat::Json))
-        .add_source(config::Environment::with_prefix("MYSQLDUMP_FILTER"))
-        .build()
-        .unwrap();
-    let requested_tables: HashSet<_> = settings
-        .get_array("allow_data_on_tables")
-        .expect("no key 'allow_data_on_tables' in config")
-        .iter().map(|x| x.to_string()).collect();
-
-    let filter_per_table: HashMap<String, Vec<FilterCondition>>= settings
-        .get_table("filter_inserts")
-        .expect("no key 'filter_inserts' in config")
-        .into_iter()
-        .map(|(key, value)| (
-            key,
-            value
-                .into_array()
-                .expect("invalid value")
-                .into_iter()
-                .map(|x| FilterCondition::new(x.to_string()))
-                .collect())
-        )
-        .collect();
-    Config {
-        output_dir: output_dir.to_path_buf(),
-        input_file: input_file.to_path_buf(),
-        schema_file: schema_file.to_path_buf(),
-        requested_tables,
-        filter_per_table,
     }
 }
