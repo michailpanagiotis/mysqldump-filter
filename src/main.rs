@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use std::path::PathBuf;
 use std::fs::File;
 use std::io;
@@ -6,19 +6,12 @@ use std::iter;
 use tempdir::TempDir;
 
 mod reader;
-mod splitter;
+mod sql_parser;
 mod config;
-
-#[derive(Subcommand, Debug, Clone)]
-enum Commands {
-    Ids,
-}
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Cli {
-    #[command(subcommand)]
-    cmd: Option<Commands>,
     #[clap(value_name = "FILE", required=true)]
     input: PathBuf,
     #[clap(short, long, required = true, num_args = 1..)]
@@ -44,49 +37,15 @@ fn main() {
     let cli = Cli::parse();
     let input_path = cli.input;
     dbg!(&input_path);
-    // println!(
-    //     "{:?}",
-    //     settings
-    //         .try_deserialize::<HashMap<String, String>>()
-    //         .unwrap()
-    // );
-    match cli.cmd {
-        Some(cmd) => {
-            match cmd {
-                Commands::Ids => {
-                    let table_file = String::from("dim_stripe_events.test.sql");
-                    reader::read_ids(&table_file);
-                }
-            }
-        },
-        None => {
-            let working_dir = TempDir::new("splitter").expect("cannot create temporary dir");
-            let schema_file = working_dir.path().join("schema.sql");
-            let input_file = std::env::current_dir().unwrap().to_path_buf().join(&input_path);
-            let config = config::parse(cli.config.to_str().unwrap(), &input_file, working_dir.path(), &schema_file);
+    let working_dir = TempDir::new("sql_parser").expect("cannot create temporary dir");
+    let schema_file = working_dir.path().join("schema.sql");
+    let input_file = std::env::current_dir().unwrap().to_path_buf().join(&input_path);
+    let config = config::parse(cli.config.to_str().unwrap(), &input_file, working_dir.path(), &schema_file);
 
-            dbg!(&config);
-            let (_, data_files) = splitter::split(config);
+    dbg!(&config);
+    let (_, data_files) = sql_parser::split(config);
 
-            println!("Combining files");
-            combine_files(&schema_file, data_files.iter(), cli.output);
-            _ = working_dir.close();
-        },
-    }
-
-    // let schema_file = String::from("schema.sql");
-    // let _exported_tables = splitter::split(&input_path, &schema_file, &requested_tables);
-    //
-    // let table_file = String::from("sequelize_meta.sql");
-    // reader::read_ids(&table_file);
-    // let table_file = String::from("dim_stripe_events.test.sql");
-    // reader::read_ids(&table_file);
-
-    // let mut tables: Vec<String> = requested_tables.into_iter().collect();
-    // tables.sort();
-    //
-    // for table in tables {
-    //     let table_file = format!("{table}.sql");
-    //     reader::read_ids(&table_file);
-    // }
+    println!("Combining files");
+    combine_files(&schema_file, data_files.iter(), cli.output);
+    _ = working_dir.close();
 }

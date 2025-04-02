@@ -1,20 +1,18 @@
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, BufRead};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use lazy_static::lazy_static;
 use nom::multi::separated_list1;
 use regex::Regex;
-use fastbloom::BloomFilter;
 use nom::{
   IResult,
   Parser,
   character::complete::{char, one_of, none_of},
   branch::alt,
-  multi::{separated_list0, many1, many_m_n},
-  combinator::{not, eof},
-  bytes::complete::{escaped, is_not, is_a, take_until, tag, take_till},
-  sequence::{delimited, preceded, terminated},
+  multi::separated_list0,
+  bytes::complete::{escaped, is_not, take_until, tag, take_till},
+  sequence::{delimited, preceded},
 };
 
 lazy_static! {
@@ -41,10 +39,6 @@ pub struct Statement {
 impl Statement {
     pub fn is_insert(&self) -> bool {
         self.r#type == StatementType::Insert
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.line
     }
 
     pub fn as_bytes(&self) -> &[u8] {
@@ -96,14 +90,6 @@ impl Statement {
     }
 }
 
-// The output is wrapped in a Result to allow matching on errors.
-// Returns an Iterator to the Reader of the lines of the file.
-pub fn read_lines<P>(filename: P) -> io::Lines<io::BufReader<File>>
-where P: AsRef<Path>, {
-    let file = File::open(filename).expect("Cannot open file");
-    io::BufReader::new(file).lines()
-}
-
 pub fn read_statements(sqldump_filepath: &PathBuf, requested_tables: &HashSet<String>, use_running_table: bool) -> impl Iterator<Item = Statement> {
     let mut current_table: Option<String> = None;
     let annotate_with_table = move |line: String| {
@@ -120,67 +106,9 @@ pub fn read_statements(sqldump_filepath: &PathBuf, requested_tables: &HashSet<St
         }
         Statement { line, r#type: statement_type, table: current_table.clone() }
     };
-    read_lines(sqldump_filepath)
+    let file = File::open(sqldump_filepath).expect("Cannot open file");
+    io::BufReader::new(file).lines()
         .map_while(Result::ok)
         .map(annotate_with_table)
         .filter(|st| st.table.is_none() || requested_tables.contains(st.table.as_ref().unwrap()))
-}
-
-pub fn parse_fields(input: &str) -> HashMap::<String, usize> {
-    let res: IResult<&str, Vec<&str>> = preceded(
-        take_until("("), preceded(take_until("`"), take_until(")"))
-    ).and_then(
-      separated_list0(
-          tag(", "),
-          delimited(char('`'), is_not("`"), char('`')),
-      )
-    ).parse(input);
-    let (_, fields) = res.expect("cannot parse fields");
-    HashMap::from_iter(
-        fields.iter().enumerate().map(|(idx, item)| (item.to_string(), idx))
-    )
-}
-
-pub fn parse_values(id_index: usize, input: &str) -> IResult<&str, Vec<&str>> {
-    preceded((take_until("VALUES ("), tag("VALUES (")), take_until(");")).and_then(
-        // VALUES list
-        many_m_n(1, id_index + 1, terminated(
-            alt((
-                tag("''"),
-                // quoted value
-                delimited(char('\''), is_not("'"), char('\'')),
-                // unquoted value
-                take_until(",")
-            )),
-            // delimiter
-            alt((tag(","), eof)),
-        ))
-    ).parse(input)
-}
-
-pub fn read_ids(filename: &String) -> (HashSet<String>, BloomFilter) {
-    let lines = read_lines(filename);
-    let mut id_position: Option<usize> = None;
-    let mut ids: HashSet<String> = HashSet::new();
-    println!("Reading ids of {}", filename);
-    for line in lines.map_while(Result::ok) {
-        if !line.starts_with("INSERT") {
-            continue
-        }
-
-        if id_position.is_none() {
-            let fields = parse_fields(line.as_str());
-            id_position = fields.get("id").copied();
-            if id_position.is_none() {
-                id_position = fields.get("name").copied();
-            }
-        }
-
-        let (_, values) = parse_values(id_position.unwrap(), line.as_str()).unwrap();
-        let id = String::from(values.into_iter().nth(id_position.unwrap()).unwrap());
-        ids.insert(id);
-    }
-
-    let ids_lookup = BloomFilter::with_false_pos(0.001).items(ids.iter());
-    (ids, ids_lookup)
 }

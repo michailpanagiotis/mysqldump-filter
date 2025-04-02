@@ -1,6 +1,5 @@
 use std::collections::{HashSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::usize;
 use nom::{
   IResult,
   Parser,
@@ -66,7 +65,7 @@ impl FilterCondition {
     }
 }
 
-pub fn parse(config_file: &str, input_file: &PathBuf, output_dir: &Path, schema_file: &PathBuf) -> Config {
+pub fn parse(config_file: &str, input_file: &Path, output_dir: &Path, schema_file: &Path) -> Config {
     let settings = config::Config::builder()
         .add_source(config::File::new(config_file, config::FileFormat::Json))
         .add_source(config::Environment::with_prefix("MYSQLDUMP_FILTER"))
@@ -93,8 +92,8 @@ pub fn parse(config_file: &str, input_file: &PathBuf, output_dir: &Path, schema_
         .collect();
     Config {
         output_dir: output_dir.to_path_buf(),
-        input_file: input_file.clone(),
-        schema_file: schema_file.clone(),
+        input_file: input_file.to_path_buf(),
+        schema_file: schema_file.to_path_buf(),
         requested_tables,
         filter_per_table,
     }
