@@ -29,7 +29,7 @@ pub enum FilterOperator {
 #[derive(Debug)]
 #[derive(Clone)]
 pub struct FilterCondition {
-    field: String,
+    pub field: String,
     position: Option<usize>,
     operator: FilterOperator,
     value: String,

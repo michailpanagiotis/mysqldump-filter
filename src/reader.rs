@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
@@ -25,6 +25,7 @@ lazy_static! {
 }
 
 #[derive(Debug)]
+#[derive(PartialEq)]
 pub enum StatementType {
     Unknown,
     Insert,
@@ -79,13 +80,19 @@ pub fn parse_table_name(input: &str) -> IResult<&str, &str> {
     ).parse(input)
 }
 
-pub fn parse_fields(input: &str) -> IResult<&str, Vec<&str>> {
-    preceded(take_until("("), preceded(take_until("`"), take_until(")"))).and_then(
+pub fn parse_fields(input: &str) -> HashMap::<String, usize> {
+    let res: IResult<&str, Vec<&str>> = preceded(
+        take_until("("), preceded(take_until("`"), take_until(")"))
+    ).and_then(
       separated_list0(
           tag(", "),
           delimited(char('`'), is_not("`"), char('`')),
       )
-    ).parse(input)
+    ).parse(input);
+    let (_, fields) = res.expect("cannot parse fields");
+    HashMap::from_iter(
+        fields.iter().enumerate().map(|(idx, item)| (item.to_string(), idx))
+    )
 }
 
 pub fn parse_query(input: &str) -> IResult<&str, (&str, &str)> {
@@ -124,10 +131,10 @@ pub fn read_ids(filename: &String) -> (HashSet<String>, BloomFilter) {
         }
 
         if id_position.is_none() {
-            let (_, fields) = parse_fields(line.as_str()).unwrap();
-            id_position = fields.iter().position(|x| x == &"id");
+            let fields = parse_fields(line.as_str());
+            id_position = fields.get("id").copied();
             if id_position.is_none() {
-                id_position = fields.iter().position(|x| x == &"name");
+                id_position = fields.get("name").copied();
             }
         }
 

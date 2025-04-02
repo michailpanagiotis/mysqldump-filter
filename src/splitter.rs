@@ -6,7 +6,7 @@ use std::collections::{HashSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use crate::reader;
-use crate::config::Config;
+use crate::config::{Config, FilterCondition};
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -24,39 +24,56 @@ fn get_writer(filename: &PathBuf) -> BufWriter<File> {
 
 
 #[derive(Debug)]
-struct TableInfo {
-    value_position_per_field: HashMap<String, usize>,
+struct TableDataWriter {
+    value_position_per_field: Option<HashMap<String, usize>>,
+    filepath: PathBuf,
+    writer: io::BufWriter<File>,
+    filters: Option<Vec<FilterCondition>>,
+}
+
+impl TableDataWriter {
+    fn new(table: &String, config: &Config) -> TableDataWriter {
+        let path = config.output_dir.join(table).with_extension("sql");
+        println!("Reading table {} into {}", table, path.display());
+        TableDataWriter {
+            value_position_per_field: None,
+            filepath: path.clone(),
+            writer: get_writer(&path),
+            filters: config.filter_per_table.get(table).cloned(),
+        }
+    }
+
+    fn on_new_statement(&mut self, reader::Statement { line, table: _, r#type: s_type }: &reader::Statement) {
+        if self.filters.is_some() && self.value_position_per_field.is_none() && s_type == &reader::StatementType::Insert {
+            self.value_position_per_field = Some(reader::parse_fields(line));
+        }
+        self.writer.write_all(line.as_bytes()).expect("Unable to write data");
+        self.writer.write_all(b"\n").expect("Unable to write data");
+    }
+
+    fn flush(&mut self) {
+        self.writer.flush().expect("Cannot flush buffer");
+    }
 }
 
 #[derive(Debug)]
 struct Parser {
-    writer_per_table: HashMap<String, io::BufWriter<File>>,
-    filepath_per_table: HashMap<String, PathBuf>,
-    schema_writer: io::BufWriter<File>,
-    output_dir: PathBuf,
     config: Config,
-    info_per_table: HashMap<String, TableInfo>,
+    info_per_table: HashMap<String, TableDataWriter>,
+    schema_writer: io::BufWriter<File>,
 }
 
 impl Parser {
     fn new(config: Config, output_dir: &Path, schema_file: &PathBuf) -> Parser {
-        let mut schema_path = PathBuf::from(output_dir);
-        schema_path.push(schema_file);
         Parser{
-            writer_per_table: HashMap::new(),
-            filepath_per_table: HashMap::new(),
-            schema_writer: get_writer(&schema_path),
-            output_dir: PathBuf::from(output_dir),
             config,
             info_per_table: HashMap::new(),
+            schema_writer: get_writer(&PathBuf::from(output_dir).join(schema_file)),
         }
     }
 
-    fn add_writer(&mut self, table: &String) {
-        let path = self.output_dir.join(table).with_extension("sql");
-        println!("Reading table {} into {}", table, path.display());
-        self.filepath_per_table.insert(table.to_string(), path.clone());
-        self.writer_per_table.insert(table.to_string(), get_writer(&path));
+    fn register_table(&mut self, table: &String) {
+        self.info_per_table.insert(table.to_string(), TableDataWriter::new(table, &self.config));
     }
 
     // fn should_drop_statement(&self, reader::Statement { table: table_option, line, r#type: _ }: &reader::Statement) -> bool {
@@ -79,32 +96,35 @@ impl Parser {
         // if self.should_drop_statement(&statement) {
         //     return
         // }
-        let writer = match &table_option {
-            None => &mut self.schema_writer,
+        match &table_option {
+            None => {
+                self.schema_writer.write_all(line.as_bytes()).expect("Unable to write data");
+                self.schema_writer.write_all(b"\n").expect("Unable to write data");
+            },
             Some(table) => {
-                if !self.writer_per_table.contains_key(table) {
-                    self.add_writer(table);
+                if !self.info_per_table.contains_key(table) {
+                    self.register_table(table);
                 }
-                self.writer_per_table.get_mut(table).expect("Cannot find writer")
+                let info = self.info_per_table.get_mut(table).expect("Cannot find table info");
+                info.on_new_statement(statement);
             },
         };
-        writer.write_all(line.as_bytes()).expect("Unable to write data");
-        writer.write_all(b"\n").expect("Unable to write data");
     }
 
     fn on_input_end(&mut self) {
-        for writer in self.writer_per_table.values_mut() {
-            writer.flush().expect("Cannot flush buffer");
+        self.schema_writer.flush().expect("Unable to flush schema file");
+        for info in self.info_per_table.values_mut() {
+            info.flush();
         }
     }
 
     fn get_data_files(&mut self) -> Vec<PathBuf> {
-        let filepaths: Vec<PathBuf> = self.filepath_per_table.values().cloned().collect();
+        let filepaths: Vec<PathBuf> = self.info_per_table.values().map(|x| x.filepath.clone()).collect();
         filepaths
     }
 
     fn get_exported_tables(&mut self) -> HashSet<String> {
-        let filepaths = HashSet::from_iter(self.filepath_per_table.keys().cloned());
+        let filepaths = HashSet::from_iter(self.info_per_table.keys().cloned());
         filepaths
     }
 }
