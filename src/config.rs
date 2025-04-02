@@ -30,7 +30,6 @@ pub enum FilterOperator {
 #[derive(Clone)]
 pub struct FilterCondition {
     pub field: String,
-    position: Option<usize>,
     operator: FilterOperator,
     value: String,
 }
@@ -49,7 +48,6 @@ impl FilterCondition {
         let (field, operator, value) = parsed;
         FilterCondition {
             field: field.to_string(),
-            position: None,
             operator: match operator {
                 "==" => FilterOperator::Equals,
                 "!=" => FilterOperator::NotEquals,
@@ -69,14 +67,6 @@ impl FilterCondition {
 
     pub fn matches_field(&self, field_name: &str) -> bool {
         return &self.field == field_name;
-    }
-
-    pub fn has_determined_position(&self) -> bool {
-        self.position.is_some()
-    }
-
-    pub fn set_position(&mut self, position: &Option<usize>) {
-        self.position = *position;
     }
 }
 

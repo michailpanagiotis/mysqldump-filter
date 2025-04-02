@@ -32,23 +32,57 @@ struct TableDataWriter {
 }
 
 impl TableDataWriter {
-    fn new(table: &String, config: &Config) -> TableDataWriter {
-        let path = config.output_dir.join(table).with_extension("sql");
+    fn new(table: &String, output_dir: &Path, filter_per_table: &HashMap<String, Vec<FilterCondition>>) -> TableDataWriter {
+        let path = output_dir.join(table).with_extension("sql");
         println!("Reading table {} into {}", table, path.display());
         TableDataWriter {
             value_position_per_field: None,
             filepath: path.clone(),
             writer: get_writer(&path),
-            filters: config.filter_per_table.get(table).cloned(),
+            filters: filter_per_table.get(table).cloned(),
         }
     }
 
-    fn on_new_statement(&mut self, reader::Statement { line, table: _, r#type: s_type }: &reader::Statement) {
-        if self.filters.is_some() && self.value_position_per_field.is_none() && s_type == &reader::StatementType::Insert {
-            self.value_position_per_field = Some(reader::parse_fields(line));
+    fn try_determine_field_positions(&mut self, statement: &reader::Statement) {
+        if self.filters.is_some() && self.value_position_per_field.is_none() {
+            self.value_position_per_field = statement.get_field_positions();
+            let Some(ref value_position_per_field) = self.value_position_per_field else { return };
+            assert_eq!(value_position_per_field.len(), 44);
+            dbg!(value_position_per_field);
         }
-        self.writer.write_all(line.as_bytes()).expect("Unable to write data");
-        self.writer.write_all(b"\n").expect("Unable to write data");
+    }
+
+    fn should_drop_statement(&self, statement: &reader::Statement) -> bool {
+        if !statement.is_insert(){ return false };
+
+        let Some(ref filters) = self.filters else { return false };
+        let Some(ref value_position_per_field) = self.value_position_per_field else { return false };
+
+        let values = statement.get_values();
+
+        dbg!(value_position_per_field);
+
+        assert_eq!(value_position_per_field.len(), 44);
+
+        // dbg!(&value_position_per_field);
+        for (key, position) in value_position_per_field.iter() {
+            // dbg!(&position);
+            dbg!(&values);
+            let value = &values[*position];
+            // dbg!(&key);
+            // dbg!(&value);
+        }
+        false
+    }
+
+    fn on_new_statement(&mut self, statement: &reader::Statement) {
+        if statement.is_insert() {
+            self.try_determine_field_positions(statement);
+        }
+        if !self.should_drop_statement(statement) {
+            self.writer.write_all(statement.as_bytes()).expect("Unable to write data");
+            self.writer.write_all(b"\n").expect("Unable to write data");
+        }
     }
 
     fn flush(&mut self) {
@@ -59,7 +93,7 @@ impl TableDataWriter {
 #[derive(Debug)]
 struct Parser {
     config: Config,
-    info_per_table: HashMap<String, TableDataWriter>,
+    writer_per_table: HashMap<String, TableDataWriter>,
     schema_writer: io::BufWriter<File>,
 }
 
@@ -67,13 +101,17 @@ impl Parser {
     fn new(config: Config, output_dir: &Path, schema_file: &PathBuf) -> Parser {
         Parser{
             config,
-            info_per_table: HashMap::new(),
+            writer_per_table: HashMap::new(),
             schema_writer: get_writer(&PathBuf::from(output_dir).join(schema_file)),
         }
     }
 
     fn register_table(&mut self, table: &String) {
-        self.info_per_table.insert(table.to_string(), TableDataWriter::new(table, &self.config));
+        self.writer_per_table.insert(table.to_string(), TableDataWriter::new(
+            table,
+            &self.config.output_dir,
+            &self.config.filter_per_table,
+        ));
     }
 
     // fn should_drop_statement(&self, reader::Statement { table: table_option, line, r#type: _ }: &reader::Statement) -> bool {
@@ -102,10 +140,10 @@ impl Parser {
                 self.schema_writer.write_all(b"\n").expect("Unable to write data");
             },
             Some(table) => {
-                if !self.info_per_table.contains_key(table) {
+                if !self.writer_per_table.contains_key(table) {
                     self.register_table(table);
                 }
-                let info = self.info_per_table.get_mut(table).expect("Cannot find table info");
+                let info = self.writer_per_table.get_mut(table).expect("Cannot find table info");
                 info.on_new_statement(statement);
             },
         };
@@ -113,18 +151,18 @@ impl Parser {
 
     fn on_input_end(&mut self) {
         self.schema_writer.flush().expect("Unable to flush schema file");
-        for info in self.info_per_table.values_mut() {
+        for info in self.writer_per_table.values_mut() {
             info.flush();
         }
     }
 
     fn get_data_files(&mut self) -> Vec<PathBuf> {
-        let filepaths: Vec<PathBuf> = self.info_per_table.values().map(|x| x.filepath.clone()).collect();
+        let filepaths: Vec<PathBuf> = self.writer_per_table.values().map(|x| x.filepath.clone()).collect();
         filepaths
     }
 
     fn get_exported_tables(&mut self) -> HashSet<String> {
-        let filepaths = HashSet::from_iter(self.info_per_table.keys().cloned());
+        let filepaths = HashSet::from_iter(self.writer_per_table.keys().cloned());
         filepaths
     }
 }

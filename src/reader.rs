@@ -9,12 +9,11 @@ use nom::{
   IResult,
   Parser,
   character::complete::char,
-  multi::many_m_n,
   branch::alt,
-  multi::separated_list0,
+  multi::{separated_list0, many1, many_m_n},
   combinator::eof,
   bytes::complete::{is_not, take_until, tag},
-  sequence::{delimited, preceded, terminated, separated_pair},
+  sequence::{delimited, preceded, terminated},
 };
 
 lazy_static! {
@@ -38,6 +37,62 @@ pub struct Statement {
     pub r#type: StatementType,
 }
 
+impl Statement {
+    pub fn is_insert(&self) -> bool {
+        self.r#type == StatementType::Insert
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.line
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        self.line.as_bytes()
+    }
+
+    pub fn get_field_positions(&self) -> Option<HashMap::<String, usize>> {
+        if !self.is_insert() {
+            return None;
+        }
+        let mut parser = preceded(
+            take_until("("), preceded(take_until("`"), take_until(")"))
+        ).and_then(
+          separated_list0(
+              tag(", "),
+              delimited(char('`'), is_not("`"), char('`')),
+          )
+        );
+        let res: IResult<&str, Vec<&str>> = parser.parse(&self.line);
+        let (_, fields) = res.expect("cannot parse fields");
+        Some(HashMap::from_iter(
+            fields.iter().enumerate().map(|(idx, item)| (item.to_string(), idx))
+        ))
+    }
+
+    pub fn get_values(&self) -> Vec<String> {
+        let mut parser = preceded((take_until("VALUES ("), tag("VALUES (")), take_until(");")).and_then(
+            // VALUES list
+            many1(terminated(
+                alt((
+                    tag("''"),
+                    // quoted value
+                    delimited(char('\''), is_not("'"), char('\'')),
+                    // unquoted value
+                    take_until(",")
+                )),
+                // delimiter
+                alt((tag(","), tag(","))),
+            ))
+        );
+        let res: IResult<&str, Vec<&str>> = parser.parse(&self.line);
+        let (_, values) = res.expect("cannot parse values");
+        let values_vec: Vec<String> = values.iter().map(|item| item.to_string()).collect();
+        dbg!(&values_vec);
+        assert_eq!(values_vec.len(), 44);
+        return values_vec;
+    }
+}
+
 // The output is wrapped in a Result to allow matching on errors.
 // Returns an Iterator to the Reader of the lines of the file.
 pub fn read_lines<P>(filename: P) -> io::Lines<io::BufReader<File>>
@@ -55,14 +110,9 @@ pub fn read_statements(sqldump_filepath: &PathBuf, requested_tables: &HashSet<St
         }
         let statement_type = if line.starts_with("INSERT") { StatementType::Insert } else { StatementType::Unknown };
         if !use_running_table {
-            match statement_type {
-                StatementType::Insert => {
-                    let table: String = line.chars().skip(13).take_while(|x| x != &'`').collect();
-                    current_table = Some(table);
-                }
-                _ => {
-
-                }
+            if let StatementType::Insert = statement_type {
+                let table: String = line.chars().skip(13).take_while(|x| x != &'`').collect();
+                current_table = Some(table);
             }
         }
         Statement { line, r#type: statement_type, table: current_table.clone() }
@@ -71,13 +121,6 @@ pub fn read_statements(sqldump_filepath: &PathBuf, requested_tables: &HashSet<St
         .map_while(Result::ok)
         .map(annotate_with_table)
         .filter(|st| st.table.is_none() || requested_tables.contains(st.table.as_ref().unwrap()))
-}
-
-pub fn parse_table_name(input: &str) -> IResult<&str, &str> {
-    preceded(
-        tag("INSERT INTO `"),
-        is_not("`"),
-    ).parse(input)
 }
 
 pub fn parse_fields(input: &str) -> HashMap::<String, usize> {
@@ -93,14 +136,6 @@ pub fn parse_fields(input: &str) -> HashMap::<String, usize> {
     HashMap::from_iter(
         fields.iter().enumerate().map(|(idx, item)| (item.to_string(), idx))
     )
-}
-
-pub fn parse_query(input: &str) -> IResult<&str, (&str, &str)> {
-    separated_pair(
-        is_not("="),
-        tag("="),
-        is_not("=")
-    ).parse(input)
 }
 
 pub fn parse_values(id_index: usize, input: &str) -> IResult<&str, Vec<&str>> {
