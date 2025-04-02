@@ -107,13 +107,9 @@ impl Parser {
     }
 
     fn on_new_statement(&mut self, statement: &reader::Statement) {
-        let reader::Statement { table: table_option, line, r#type: _ } = statement;
-        // if self.should_drop_statement(&statement) {
-        //     return
-        // }
-        match &table_option {
+        match statement.get_table() {
             None => {
-                self.schema_writer.write_all(line.as_bytes()).expect("Unable to write data");
+                self.schema_writer.write_all(statement.as_bytes()).expect("Unable to write data");
                 self.schema_writer.write_all(b"\n").expect("Unable to write data");
             },
             Some(table) => {

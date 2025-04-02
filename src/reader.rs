@@ -24,7 +24,7 @@ lazy_static! {
 
 #[derive(Debug)]
 #[derive(PartialEq)]
-pub enum StatementType {
+enum StatementType {
     Unknown,
     Insert,
 }
@@ -33,12 +33,16 @@ pub enum StatementType {
 pub struct Statement {
     pub line: String,
     pub table: Option<String>,
-    pub r#type: StatementType,
+    r#type: StatementType,
 }
 
 impl Statement {
     pub fn is_insert(&self) -> bool {
         self.r#type == StatementType::Insert
+    }
+
+    pub fn get_table(&self) -> Option<&String> {
+        self.table.as_ref()
     }
 
     pub fn as_bytes(&self) -> &[u8] {
