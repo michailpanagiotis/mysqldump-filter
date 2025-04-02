@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, BufRead};
-use std::path::PathBuf;
+use std::path::Path;
 use lazy_static::lazy_static;
 use nom::multi::separated_list1;
 use regex::Regex;
@@ -94,7 +94,7 @@ impl Statement {
     }
 }
 
-pub fn read_statements(sqldump_filepath: &PathBuf, requested_tables: &HashSet<String>, use_running_table: bool) -> impl Iterator<Item = Statement> {
+pub fn read_statements(sqldump_filepath: &Path, requested_tables: &HashSet<String>, use_running_table: bool) -> impl Iterator<Item = Statement> {
     let mut current_table: Option<String> = None;
     let annotate_with_table = move |line: String| {
         if line.starts_with("-- Dumping data for table") {

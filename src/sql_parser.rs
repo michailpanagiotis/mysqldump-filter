@@ -73,14 +73,14 @@ impl TableDataWriter {
 }
 
 #[derive(Debug)]
-struct Parser<'a> {
+pub struct Parser<'a> {
     config: &'a Config,
     writer_per_table: HashMap<String, TableDataWriter>,
     schema_writer: io_utils::Writer,
 }
 
 impl Parser<'_> {
-    fn new(config: &Config) -> Parser {
+    pub fn new(config: &Config) -> Parser {
         Parser{
             config,
             writer_per_table: HashMap::new(),
@@ -124,22 +124,16 @@ impl Parser<'_> {
         filepaths
     }
 
-    fn parse_input_file(&mut self) {
-        for statement in reader::read_statements(&self.config.input_file, &self.config.requested_tables, true) {
+    pub fn parse_input_file(&mut self, input_file: &Path, output_file: &Path) {
+        for statement in reader::read_statements(input_file, &self.config.requested_tables, true) {
             self.on_new_statement(&statement);
         }
         self.on_input_end();
         println!("Combining files");
         io_utils::combine_files(
             &self.config.schema_file,
-            self.get_data_files().iter(),
-            &self.config.output_file,
+            self.get_data_files().iter().map(|x| x.as_path()),
+            output_file,
         );
     }
-}
-
-pub fn truncate(config: Config) {
-    let mut table_info = Parser::new(&config);
-    table_info.parse_input_file();
-    config.close_working_dir();
 }
