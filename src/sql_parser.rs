@@ -73,25 +73,25 @@ impl TableDataWriter {
 }
 
 #[derive(Debug)]
-struct Parser {
-    config: Config,
+struct Parser<'a> {
+    config: &'a Config,
     writer_per_table: HashMap<String, TableDataWriter>,
     schema_writer: io_utils::Writer,
 }
 
-impl Parser {
-    fn new(config: Config, working_dir: &Path, schema_file: &PathBuf) -> Parser {
+impl Parser<'_> {
+    fn new(config: &Config) -> Parser {
         Parser{
             config,
             writer_per_table: HashMap::new(),
-            schema_writer: io_utils::get_file_writer(&PathBuf::from(working_dir).join(schema_file)),
+            schema_writer: io_utils::get_file_writer(&config.schema_file),
         }
     }
 
     fn register_table(&mut self, table: &String) {
         self.writer_per_table.insert(table.to_string(), TableDataWriter::new(
             table,
-            &self.config.working_dir,
+            &self.config.working_dir_path,
             &self.config.filter_per_table,
         ));
     }
@@ -123,24 +123,23 @@ impl Parser {
         let filepaths: Vec<PathBuf> = self.writer_per_table.values().map(|x| x.filepath.clone()).collect();
         filepaths
     }
+
+    fn parse_input_file(&mut self) {
+        for statement in reader::read_statements(&self.config.input_file, &self.config.requested_tables, true) {
+            self.on_new_statement(&statement);
+        }
+        self.on_input_end();
+        println!("Combining files");
+        io_utils::combine_files(
+            &self.config.schema_file,
+            self.get_data_files().iter(),
+            &self.config.output_file,
+        );
+    }
 }
 
 pub fn truncate(config: Config) {
-    let mut table_info = Parser::new(
-        config.clone(),
-        &config.working_dir,
-        &config.schema_file,
-    );
-    for statement in reader::read_statements(&config.input_file, &config.requested_tables, true) {
-        table_info.on_new_statement(&statement);
-    }
-
-    table_info.on_input_end();
-
-    println!("Combining files");
-    io_utils::combine_files(
-        &config.schema_file,
-        table_info.get_data_files().iter(),
-        config.output_file,
-    );
+    let mut table_info = Parser::new(&config);
+    table_info.parse_input_file();
+    config.close_working_dir();
 }

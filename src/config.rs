@@ -6,13 +6,14 @@ use nom::{
 };
 use std::collections::{HashSet, HashMap};
 use std::path::{Path, PathBuf};
+use tempdir::TempDir;
 
 #[derive(Debug)]
-#[derive(Clone)]
 pub struct Config {
     pub input_file: PathBuf,
     pub output_file: PathBuf,
-    pub working_dir: PathBuf,
+    pub working_dir_path: PathBuf,
+    pub working_dir: TempDir,
     pub schema_file: PathBuf,
     pub requested_tables: HashSet<String>,
     pub filter_per_table: HashMap<String, Vec<FilterCondition>>,
@@ -23,8 +24,9 @@ impl Config {
         config_file: &Path,
         input_file: &Path,
         output_file: &Path,
-        working_dir: &Path,
     ) -> Config {
+        let working_dir = TempDir::new("sql_parser").expect("cannot create temporary dir");
+        let working_dir_path = working_dir.path().to_path_buf();
         let settings = config::Config::builder()
             .add_source(config::File::new(config_file.to_str().expect("invalid config path"), config::FileFormat::Json))
             .add_source(config::Environment::with_prefix("MYSQLDUMP_FILTER"))
@@ -49,15 +51,20 @@ impl Config {
                     .collect())
             )
             .collect();
-        let schema_file = working_dir.join("schema.sql");
+        let schema_file = working_dir_path.join("schema.sql");
         Config {
-            working_dir: working_dir.to_path_buf(),
+            working_dir_path,
+            working_dir,
             input_file: input_file.to_path_buf(),
             output_file: output_file.to_path_buf(),
             schema_file: schema_file.to_path_buf(),
             requested_tables,
             filter_per_table,
         }
+    }
+
+    pub fn close_working_dir(self) {
+        let _ = self.working_dir.close();
     }
 }
 

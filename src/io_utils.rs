@@ -26,7 +26,7 @@ fn append_to_file(input_path: &PathBuf, mut output_file: &File) {
     io::copy(&mut input, &mut output_file).expect("cannot copy file");
 }
 
-pub fn combine_files<'a, I: Iterator<Item = &'a PathBuf>>(schema_file: &'a PathBuf, data_files: I, output: PathBuf) {
+pub fn combine_files<'a, I: Iterator<Item = &'a PathBuf>>(schema_file: &'a PathBuf, data_files: I, output: &PathBuf) {
     let all_files = iter::once(schema_file).chain(data_files);
     let output_file = File::create(output).expect("cannot create output file");
     for f in all_files {
