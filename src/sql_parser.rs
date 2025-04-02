@@ -119,9 +119,8 @@ impl Parser<'_> {
         }
     }
 
-    fn get_data_files(&mut self) -> Vec<PathBuf> {
-        let filepaths: Vec<PathBuf> = self.writer_per_table.values().map(|x| x.filepath.clone()).collect();
-        filepaths
+    fn get_data_files(&mut self) -> Vec<&Path> {
+        self.writer_per_table.values().map(|x| x.filepath.as_path()).collect::<Vec<&Path>>()
     }
 
     pub fn parse_input_file(&mut self, input_file: &Path, output_file: &Path) {
@@ -132,7 +131,7 @@ impl Parser<'_> {
         println!("Combining files");
         io_utils::combine_files(
             &self.config.schema_file,
-            self.get_data_files().iter().map(|x| x.as_path()),
+            self.get_data_files().into_iter(),
             output_file,
         );
     }
