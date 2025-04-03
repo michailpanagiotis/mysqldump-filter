@@ -1,5 +1,5 @@
 use std::io::Write;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::sql_statement::Statement;
@@ -12,7 +12,7 @@ struct TableDataWriter {
     filepath: PathBuf,
     writer: WriterType,
     filters: Option<Vec<FilterCondition>>,
-    references: Option<Vec<String>>,
+    references: Option<HashMap<String, HashSet<String>>>,
 }
 
 impl TableDataWriter {
@@ -25,12 +25,16 @@ impl TableDataWriter {
         let filepath = working_dir.join(table).with_extension("sql");
         println!("Reading table {} into {}", table, filepath.display());
         let writer = LineWriter::new(&filepath);
+
+        let references: Option<HashMap<String, HashSet<String>>> = references_per_table.get(table).map(
+            |refs| HashMap::from_iter(refs.iter().map(|r| (r.clone(), HashSet::new())))
+        );
         TableDataWriter {
             value_position_per_field: None,
             filepath,
             writer,
             filters: filters_per_table.get(table).cloned(),
-            references: references_per_table.get(table).cloned(),
+            references,
         }
     }
 
@@ -56,17 +60,17 @@ impl TableDataWriter {
         failed_filters.count() > 0
     }
 
-    fn capture_references(&self, statement: &Statement) {
+    fn capture_references(&mut self, statement: &Statement) {
         if !statement.is_insert(){ return };
-        let Some(ref references) = self.references else { return };
+        let Some(ref mut references) = self.references else { return };
         let Some(ref value_position_per_field) = self.value_position_per_field else { return };
 
         let values = statement.get_values();
 
-        for reference in references {
-            let position = value_position_per_field[reference];
+        for (field, set) in references.iter_mut() {
+            let position = value_position_per_field[field];
             let value = &values[position];
-            println!("{value}");
+            set.insert(value.clone());
         }
     }
 
