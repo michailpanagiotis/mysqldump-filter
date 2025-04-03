@@ -35,16 +35,12 @@ impl LineWriter for WriterType {
     }
 }
 
-fn append_to_file(input_path: &Path, mut output_file: &File) {
-    let mut input = File::open(input_path).expect("cannot open file");
-    io::copy(&mut input, &mut output_file).expect("cannot copy file");
-}
-
 pub fn combine_files<'a, I: Iterator<Item = &'a Path>>(schema_file: &'a Path, data_files: I, output: &Path) {
     println!("Combining files");
     let all_files = iter::once(schema_file).chain(data_files);
-    let output_file = File::create(output).expect("cannot create output file");
+    let mut output_file = File::create(output).expect("cannot create output file");
     for f in all_files {
-        append_to_file(f, &output_file);
+        let mut input = File::open(f).expect("cannot open file");
+        io::copy(&mut input, &mut output_file).expect("cannot copy file");
     }
 }
