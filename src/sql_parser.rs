@@ -40,15 +40,13 @@ impl TableInfo {
         LineWriter::new(&self.filepath)
     }
 
-    fn try_determine_field_positions(&mut self, statement: &Statement) {
-        if !self.filters.is_empty() && self.value_position_per_field.is_some() {
+    fn should_drop_statement(&mut self, statement: &Statement) -> bool {
+        if !statement.is_insert(){ return false };
+
+        if  !self.filters.is_empty() && self.value_position_per_field.is_none() {
             self.insert_statement_sample = Some(statement.clone());
             self.value_position_per_field = statement.get_field_positions();
         }
-    }
-
-    fn should_drop_statement(&self, statement: &Statement) -> bool {
-        if !statement.is_insert(){ return false };
 
         let Some(ref value_position_per_field) = self.value_position_per_field else { return false };
 
@@ -103,9 +101,6 @@ impl TableDataWriter {
     }
 
     fn on_new_statement(&mut self, statement: &Statement) {
-        if statement.is_insert() {
-            self.table_info.try_determine_field_positions(statement);
-        }
         if !self.table_info.should_drop_statement(statement) {
             self.table_info.capture_references(statement);
             self.writer.write_line(statement.as_bytes()).expect("Unable to write data");
