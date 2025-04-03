@@ -12,12 +12,14 @@ use nom::{
 
 #[derive(Debug)]
 #[derive(PartialEq)]
+#[derive(Clone)]
 enum StatementType {
     Unknown,
     Insert,
 }
 
 #[derive(Debug)]
+#[derive(Clone)]
 pub struct Statement {
     pub line: String,
     pub table: Option<String>,

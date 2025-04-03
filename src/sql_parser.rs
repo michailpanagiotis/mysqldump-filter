@@ -7,39 +7,42 @@ use crate::io_utils::{WriterType, LineWriter, combine_files, read_sql};
 use crate::config::{Config, FilterCondition};
 
 #[derive(Debug)]
-struct TableDataWriter {
-    value_position_per_field: Option<HashMap<String, usize>>,
+struct TableInfo {
     filepath: PathBuf,
-    writer: WriterType,
-    filters: Option<Vec<FilterCondition>>,
-    references: Option<HashMap<String, HashSet<String>>>,
+    filters: Vec<FilterCondition>,
+    references: HashMap<String, HashSet<String>>,
+    insert_statement_sample: Option<Statement>,
+    value_position_per_field: Option<HashMap<String, usize>>,
 }
 
-impl TableDataWriter {
+impl TableInfo {
     fn new(
         table: &String,
         working_dir: &Path,
-        filters_per_table: &HashMap<String, Vec<FilterCondition>>,
-        references_per_table: &HashMap<String, Vec<String>>,
-    ) -> TableDataWriter {
+        filters: Option<&Vec<FilterCondition>>,
+        references: Option<&Vec<String>>,
+    ) -> TableInfo {
         let filepath = working_dir.join(table).with_extension("sql");
         println!("Reading table {} into {}", table, filepath.display());
-        let writer = LineWriter::new(&filepath);
 
-        let references: Option<HashMap<String, HashSet<String>>> = references_per_table.get(table).map(
-            |refs| HashMap::from_iter(refs.iter().map(|r| (r.clone(), HashSet::new())))
-        );
-        TableDataWriter {
-            value_position_per_field: None,
+        TableInfo {
             filepath,
-            writer,
-            filters: filters_per_table.get(table).cloned(),
-            references,
+            filters: match filters { Some(f) => f.clone(), None => Vec::new() },
+            references: match references { Some(r) => {
+                HashMap::from_iter(r.iter().map(|r| (r.clone(), HashSet::new())))
+            }, None => HashMap::new() },
+            insert_statement_sample: None,
+            value_position_per_field: None,
         }
     }
 
+    fn get_writer(&self) -> WriterType {
+        LineWriter::new(&self.filepath)
+    }
+
     fn try_determine_field_positions(&mut self, statement: &Statement) {
-        if self.filters.is_some() && self.value_position_per_field.is_none() {
+        if !self.filters.is_empty() && self.value_position_per_field.is_some() {
+            self.insert_statement_sample = Some(statement.clone());
             self.value_position_per_field = statement.get_field_positions();
         }
     }
@@ -47,12 +50,11 @@ impl TableDataWriter {
     fn should_drop_statement(&self, statement: &Statement) -> bool {
         if !statement.is_insert(){ return false };
 
-        let Some(ref filters) = self.filters else { return false };
         let Some(ref value_position_per_field) = self.value_position_per_field else { return false };
 
         let values = statement.get_values();
 
-        let failed_filters = filters.iter().filter(|f| {
+        let failed_filters = self.filters.iter().filter(|f| {
             let position = value_position_per_field[&f.field];
             !f.test(&values[position])
         });
@@ -62,24 +64,50 @@ impl TableDataWriter {
 
     fn capture_references(&mut self, statement: &Statement) {
         if !statement.is_insert(){ return };
-        let Some(ref mut references) = self.references else { return };
         let Some(ref value_position_per_field) = self.value_position_per_field else { return };
 
         let values = statement.get_values();
 
-        for (field, set) in references.iter_mut() {
+        for (field, set) in self.references.iter_mut() {
             let position = value_position_per_field[field];
             let value = &values[position];
             set.insert(value.clone());
         }
     }
+}
+
+#[derive(Debug)]
+struct TableDataWriter {
+    writer: WriterType,
+    table_info: TableInfo,
+}
+
+impl TableDataWriter {
+    fn new(
+        table: &String,
+        working_dir: &Path,
+        filters_per_table: &HashMap<String, Vec<FilterCondition>>,
+        references_per_table: &HashMap<String, Vec<String>>,
+    ) -> TableDataWriter {
+        let table_info = TableInfo::new(
+            table,
+            working_dir,
+            filters_per_table.get(table),
+            references_per_table.get(table),
+        );
+        let writer = table_info.get_writer();
+        TableDataWriter {
+            writer,
+            table_info,
+        }
+    }
 
     fn on_new_statement(&mut self, statement: &Statement) {
         if statement.is_insert() {
-            self.try_determine_field_positions(statement);
+            self.table_info.try_determine_field_positions(statement);
         }
-        if !self.should_drop_statement(statement) {
-            self.capture_references(statement);
+        if !self.table_info.should_drop_statement(statement) {
+            self.table_info.capture_references(statement);
             self.writer.write_line(statement.as_bytes()).expect("Unable to write data");
         }
     }
@@ -137,7 +165,7 @@ impl Parser<'_> {
     }
 
     fn get_data_files(&mut self) -> Vec<&Path> {
-        self.writer_per_table.values().map(|x| x.filepath.as_path()).collect::<Vec<&Path>>()
+        self.writer_per_table.values().map(|x| x.table_info.filepath.as_path()).collect::<Vec<&Path>>()
     }
 
     pub fn parse_input_file(&mut self, input_file: &Path, output_file: &Path) {
