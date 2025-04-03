@@ -12,10 +12,16 @@ struct TableDataWriter {
     filepath: PathBuf,
     writer: WriterType,
     filters: Option<Vec<FilterCondition>>,
+    references: Option<Vec<String>>,
 }
 
 impl TableDataWriter {
-    fn new(table: &String, working_dir: &Path, filter_per_table: &HashMap<String, Vec<FilterCondition>>) -> TableDataWriter {
+    fn new(
+        table: &String,
+        working_dir: &Path,
+        filters_per_table: &HashMap<String, Vec<FilterCondition>>,
+        references_per_table: &HashMap<String, Vec<String>>,
+    ) -> TableDataWriter {
         let filepath = working_dir.join(table).with_extension("sql");
         println!("Reading table {} into {}", table, filepath.display());
         let writer = LineWriter::new(&filepath);
@@ -23,7 +29,8 @@ impl TableDataWriter {
             value_position_per_field: None,
             filepath,
             writer,
-            filters: filter_per_table.get(table).cloned(),
+            filters: filters_per_table.get(table).cloned(),
+            references: references_per_table.get(table).cloned(),
         }
     }
 
@@ -49,11 +56,26 @@ impl TableDataWriter {
         failed_filters.count() > 0
     }
 
+    fn capture_references(&self, statement: &Statement) {
+        if !statement.is_insert(){ return };
+        let Some(ref references) = self.references else { return };
+        let Some(ref value_position_per_field) = self.value_position_per_field else { return };
+
+        let values = statement.get_values();
+
+        for reference in references {
+            let position = value_position_per_field[reference];
+            let value = &values[position];
+            println!("{value}");
+        }
+    }
+
     fn on_new_statement(&mut self, statement: &Statement) {
         if statement.is_insert() {
             self.try_determine_field_positions(statement);
         }
         if !self.should_drop_statement(statement) {
+            self.capture_references(statement);
             self.writer.write_line(statement.as_bytes()).expect("Unable to write data");
         }
     }
@@ -83,7 +105,8 @@ impl Parser<'_> {
         self.writer_per_table.insert(table.to_string(), TableDataWriter::new(
             table,
             &self.config.working_dir_path,
-            &self.config.filter_per_table,
+            &self.config.filters_per_table,
+            &self.config.references_per_table,
         ));
     }
 
