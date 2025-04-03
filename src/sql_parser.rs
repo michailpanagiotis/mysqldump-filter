@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::reader;
-use crate::io_utils;
+use crate::io_utils::{WriterType, LineWriter, combine_files};
 use crate::config::{Config, FilterCondition};
 
 lazy_static! {
@@ -16,7 +16,7 @@ lazy_static! {
 struct TableDataWriter {
     value_position_per_field: Option<HashMap<String, usize>>,
     filepath: PathBuf,
-    writer: io_utils::Writer,
+    writer: WriterType,
     filters: Option<Vec<FilterCondition>>,
 }
 
@@ -24,7 +24,7 @@ impl TableDataWriter {
     fn new(table: &String, working_dir: &Path, filter_per_table: &HashMap<String, Vec<FilterCondition>>) -> TableDataWriter {
         let filepath = working_dir.join(table).with_extension("sql");
         println!("Reading table {} into {}", table, filepath.display());
-        let writer = io_utils::get_file_writer(&filepath);
+        let writer = LineWriter::new(&filepath);
         TableDataWriter {
             value_position_per_field: None,
             filepath,
@@ -62,8 +62,7 @@ impl TableDataWriter {
             self.try_determine_field_positions(statement);
         }
         if !self.should_drop_statement(statement) {
-            self.writer.write_all(statement.as_bytes()).expect("Unable to write data");
-            self.writer.write_all(b"\n").expect("Unable to write data");
+            self.writer.write_line(statement.as_bytes()).expect("Unable to write data");
         }
     }
 
@@ -76,7 +75,7 @@ impl TableDataWriter {
 pub struct Parser<'a> {
     config: &'a Config,
     writer_per_table: HashMap<String, TableDataWriter>,
-    schema_writer: io_utils::Writer,
+    schema_writer: WriterType,
 }
 
 impl Parser<'_> {
@@ -84,7 +83,7 @@ impl Parser<'_> {
         Parser{
             config,
             writer_per_table: HashMap::new(),
-            schema_writer: io_utils::get_file_writer(&config.schema_file),
+            schema_writer: LineWriter::new(&config.schema_file),
         }
     }
 
@@ -99,8 +98,7 @@ impl Parser<'_> {
     fn on_new_statement(&mut self, statement: &reader::Statement) {
         match statement.get_table() {
             None => {
-                self.schema_writer.write_all(statement.as_bytes()).expect("Unable to write data");
-                self.schema_writer.write_all(b"\n").expect("Unable to write data");
+                self.schema_writer.write_line(statement.as_bytes()).expect("Unable to write data");
             },
             Some(table) => {
                 if !self.writer_per_table.contains_key(table) {
@@ -128,7 +126,7 @@ impl Parser<'_> {
             self.on_new_statement(&statement);
         }
         self.on_input_end();
-        io_utils::combine_files(
+        combine_files(
             &self.config.schema_file,
             self.get_data_files().into_iter(),
             output_file,
