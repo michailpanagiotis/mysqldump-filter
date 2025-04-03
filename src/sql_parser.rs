@@ -128,7 +128,6 @@ impl Parser<'_> {
             self.on_new_statement(&statement);
         }
         self.on_input_end();
-        println!("Combining files");
         io_utils::combine_files(
             &self.config.schema_file,
             self.get_data_files().into_iter(),

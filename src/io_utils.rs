@@ -27,6 +27,7 @@ fn append_to_file(input_path: &Path, mut output_file: &File) {
 }
 
 pub fn combine_files<'a, I: Iterator<Item = &'a Path>>(schema_file: &'a Path, data_files: I, output: &Path) {
+    println!("Combining files");
     let all_files = iter::once(schema_file).chain(data_files);
     let output_file = File::create(output).expect("cannot create output file");
     for f in all_files {
