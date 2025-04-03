@@ -36,8 +36,6 @@ impl TableDataWriter {
     fn try_determine_field_positions(&mut self, statement: &reader::Statement) {
         if self.filters.is_some() && self.value_position_per_field.is_none() {
             self.value_position_per_field = statement.get_field_positions();
-            let Some(ref value_position_per_field) = self.value_position_per_field else { return };
-            assert_eq!(value_position_per_field.len(), 44);
         }
     }
 
