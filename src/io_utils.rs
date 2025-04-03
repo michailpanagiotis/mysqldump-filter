@@ -1,8 +1,9 @@
 use lazy_static::lazy_static;
 use regex::Regex;
+use std::collections::HashSet;
 use std::io::Write;
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufWriter};
+use std::io::{self, BufRead, BufWriter};
 use std::iter;
 use std::path::Path;
 
@@ -43,4 +44,20 @@ pub fn combine_files<'a, I: Iterator<Item = &'a Path>>(schema_file: &'a Path, da
         let mut input = File::open(f).expect("cannot open file");
         io::copy(&mut input, &mut output_file).expect("cannot copy file");
     }
+}
+
+pub fn read_sql(sqldump_filepath: &Path, requested_tables: &HashSet<String>) -> impl Iterator<Item = (Option<String>, String)> {
+    let mut current_table: Option<String> = None;
+    let annotate_with_table = move |line: String| {
+        if line.starts_with("-- Dumping data for table") {
+            let table = TABLE_DUMP_RE.captures(&line).unwrap().get(1).unwrap().as_str().to_string();
+            current_table = Some(table);
+        }
+        (current_table.clone(), line)
+    };
+    let file = File::open(sqldump_filepath).expect("Cannot open file");
+    io::BufReader::new(file).lines()
+        .map_while(Result::ok)
+        .map(annotate_with_table)
+        .filter(|(table, _)| table.is_none() || requested_tables.contains(table.as_ref().unwrap()))
 }

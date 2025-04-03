@@ -1,16 +1,10 @@
-use lazy_static::lazy_static;
-use regex::Regex;
 use std::io::Write;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::reader;
-use crate::io_utils::{WriterType, LineWriter, combine_files};
+use crate::sql_statement::Statement;
+use crate::io_utils::{WriterType, LineWriter, combine_files, read_sql};
 use crate::config::{Config, FilterCondition};
-
-lazy_static! {
-    static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
-}
 
 #[derive(Debug)]
 struct TableDataWriter {
@@ -33,13 +27,13 @@ impl TableDataWriter {
         }
     }
 
-    fn try_determine_field_positions(&mut self, statement: &reader::Statement) {
+    fn try_determine_field_positions(&mut self, statement: &Statement) {
         if self.filters.is_some() && self.value_position_per_field.is_none() {
             self.value_position_per_field = statement.get_field_positions();
         }
     }
 
-    fn should_drop_statement(&self, statement: &reader::Statement) -> bool {
+    fn should_drop_statement(&self, statement: &Statement) -> bool {
         if !statement.is_insert(){ return false };
 
         let Some(ref filters) = self.filters else { return false };
@@ -55,7 +49,7 @@ impl TableDataWriter {
         failed_filters.count() > 0
     }
 
-    fn on_new_statement(&mut self, statement: &reader::Statement) {
+    fn on_new_statement(&mut self, statement: &Statement) {
         if statement.is_insert() {
             self.try_determine_field_positions(statement);
         }
@@ -93,7 +87,7 @@ impl Parser<'_> {
         ));
     }
 
-    fn on_new_statement(&mut self, statement: &reader::Statement) {
+    fn on_new_statement(&mut self, statement: &Statement) {
         match statement.get_table() {
             None => {
                 self.schema_writer.write_line(statement.as_bytes()).expect("Unable to write data");
@@ -120,7 +114,8 @@ impl Parser<'_> {
     }
 
     pub fn parse_input_file(&mut self, input_file: &Path, output_file: &Path) {
-        for statement in reader::read_statements(input_file, &self.config.requested_tables, true) {
+        for (table, line) in read_sql(input_file, &self.config.requested_tables) {
+            let statement = Statement::new(&table, &line);
             self.on_new_statement(&statement);
         }
         self.on_input_end();

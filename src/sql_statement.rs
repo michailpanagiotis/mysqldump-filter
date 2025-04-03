@@ -1,10 +1,5 @@
-use std::collections::{HashMap, HashSet};
-use std::fs::File;
-use std::io::{self, BufRead};
-use std::path::Path;
-use lazy_static::lazy_static;
+use std::collections::HashMap;
 use nom::multi::separated_list1;
-use regex::Regex;
 use nom::{
   IResult,
   Parser,
@@ -14,13 +9,6 @@ use nom::{
   bytes::complete::{escaped, is_not, take_until, tag, take_till},
   sequence::{delimited, preceded},
 };
-
-lazy_static! {
-    static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
-    static ref INSERT_RE: Regex = Regex::new(r"INSERT[^(]*\(([^)]+)\)").unwrap();
-    static ref INSERT_VALUES_RE: Regex = Regex::new(r"INSERT.*\(([^)]+)\)").unwrap();
-    static ref SPLIT_VALUES_RE: Regex = Regex::new(r"(?U)'[^']+'|[^,]+").unwrap();
-}
 
 #[derive(Debug)]
 #[derive(PartialEq)]
@@ -37,6 +25,15 @@ pub struct Statement {
 }
 
 impl Statement {
+    pub fn new(table: &Option<String>, line: &str) -> Self {
+       let statement_type = if line.starts_with("INSERT") { StatementType::Insert } else { StatementType::Unknown };
+       Statement {
+        line: line.to_string(),
+        r#type: statement_type,
+        table: table.clone(),
+       }
+    }
+
     pub fn is_insert(&self) -> bool {
         self.r#type == StatementType::Insert
     }
@@ -92,27 +89,4 @@ impl Statement {
         let (_, values) = res.expect("cannot parse values");
         values.iter().map(|item| item.to_string()).collect()
     }
-}
-
-pub fn read_statements(sqldump_filepath: &Path, requested_tables: &HashSet<String>, use_running_table: bool) -> impl Iterator<Item = Statement> {
-    let mut current_table: Option<String> = None;
-    let annotate_with_table = move |line: String| {
-        if line.starts_with("-- Dumping data for table") {
-            let table = TABLE_DUMP_RE.captures(&line).unwrap().get(1).unwrap().as_str().to_string();
-            current_table = Some(table);
-        }
-        let statement_type = if line.starts_with("INSERT") { StatementType::Insert } else { StatementType::Unknown };
-        if !use_running_table {
-            if let StatementType::Insert = statement_type {
-                let table: String = line.chars().skip(13).take_while(|x| x != &'`').collect();
-                current_table = Some(table);
-            }
-        }
-        Statement { line, r#type: statement_type, table: current_table.clone() }
-    };
-    let file = File::open(sqldump_filepath).expect("Cannot open file");
-    io::BufReader::new(file).lines()
-        .map_while(Result::ok)
-        .map(annotate_with_table)
-        .filter(|st| st.table.is_none() || requested_tables.contains(st.table.as_ref().unwrap()))
 }

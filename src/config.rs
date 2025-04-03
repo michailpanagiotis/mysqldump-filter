@@ -3,6 +3,7 @@ use nom::{
   Parser,
   bytes::complete::{is_not, tag},
   branch::alt,
+  combinator::rest,
 };
 use std::collections::{HashSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -59,6 +60,7 @@ impl Config {
 pub enum FilterOperator {
     Equals,
     NotEquals,
+    References,
     Unknown,
 }
 
@@ -73,13 +75,14 @@ pub struct FilterCondition {
 impl FilterCondition {
     fn parse_query(input: &str) -> IResult<&str, (&str, &str, &str)> {
         (
-            is_not("!="),
-            alt((tag("=="), tag("!="))),
-            is_not("=")
+            is_not("!=-"),
+            alt((tag("=="), tag("!="), tag("->"))),
+            rest
         ).parse(input)
     }
 
     fn new(definition: String) -> FilterCondition {
+        println!("parsing {definition}");
         let (_, parsed) = FilterCondition::parse_query(&definition).expect("cannot parse filter condition");
         let (field, operator, value) = parsed;
         FilterCondition {
@@ -87,6 +90,7 @@ impl FilterCondition {
             operator: match operator {
                 "==" => FilterOperator::Equals,
                 "!=" => FilterOperator::NotEquals,
+                "->" => FilterOperator::References,
                 _ => FilterOperator::Unknown,
             },
             value: value.to_string(),
@@ -97,7 +101,8 @@ impl FilterCondition {
         match &self.operator {
             FilterOperator::Equals => &self.value == other_value,
             FilterOperator::NotEquals => &self.value != other_value,
-            FilterOperator::Unknown => false
+            FilterOperator::References => true,
+            FilterOperator::Unknown => true
         }
     }
 }
