@@ -66,10 +66,39 @@ impl FilterCondition {
 }
 
 #[derive(Debug)]
+#[derive(Clone)]
+pub struct Filters {
+    items: Vec<FilterCondition>,
+}
+
+impl Filters {
+    pub fn from_json_array(json_array: config::Value) -> Self {
+        Filters {
+            items: json_array
+                .into_array()
+                .expect("invalid value")
+                .into_iter()
+                .map(|x| FilterCondition::new(x.to_string()))
+                .collect()
+        }
+    }
+
+    pub fn to_direct_filters(&self) -> Self {
+        Filters {
+            items: self.items.clone()
+                .into_iter()
+                .filter(|x| !x.is_reference())
+                .collect()
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct Config {
     pub working_dir_path: PathBuf,
     pub schema_file: PathBuf,
     pub requested_tables: HashSet<String>,
+    pub direct_filters_per_table: HashMap<String, Vec<FilterCondition>>,
     pub filters_per_table: HashMap<String, Vec<FilterCondition>>,
     pub references_per_table: HashMap<String, Vec<String>>,
 }
@@ -103,6 +132,7 @@ impl Config {
                     .collect())
             )
             .collect();
+
         let references_per_table: HashMap<String, Vec<String>> = filters_per_table
             .values()
             .flatten()
@@ -114,12 +144,18 @@ impl Config {
                 (parts[0].to_string(), parts[1].to_string())
             })
             .into_group_map();
+
+        let direct_filters_per_table: HashMap<String, Vec<FilterCondition>> = HashMap::from_iter(filters_per_table.clone().into_iter().map(|(k, v)| {
+            (k, v.into_iter().filter(|x| !x.is_reference()).collect())
+        }));
+
         let schema_file = working_dir_path.join("schema.sql");
         Config {
             schema_file: schema_file.to_path_buf(),
             working_dir_path: working_dir_path.to_path_buf(),
             requested_tables,
             filters_per_table,
+            direct_filters_per_table,
             references_per_table,
         }
     }
