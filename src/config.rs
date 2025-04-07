@@ -6,7 +6,7 @@ use nom::{
   branch::alt,
   combinator::rest,
 };
-use std::collections::{HashSet, HashMap};
+use std::{collections::{HashMap, HashSet}, iter::Filter};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
@@ -28,16 +28,14 @@ pub struct FilterCondition {
 }
 
 impl FilterCondition {
-    fn parse_query(input: &str) -> IResult<&str, (&str, &str, &str)> {
-        (
+    fn new(definition: String) -> FilterCondition {
+        let mut parser = (
             is_not("!=-"),
             alt((tag("=="), tag("!="), tag("->"))),
             rest
-        ).parse(input)
-    }
-
-    fn new(definition: String) -> FilterCondition {
-        let (_, parsed) = FilterCondition::parse_query(&definition).expect("cannot parse filter condition");
+        );
+        let res: IResult<&str, (&str, &str, &str)> = parser.parse(&definition);
+        let (_, parsed) = res.expect("cannot parse filter condition");
         let (field, operator, value) = parsed;
         FilterCondition {
             field: field.to_string(),
@@ -49,6 +47,10 @@ impl FilterCondition {
             },
             value: value.to_string(),
         }
+    }
+
+    fn from_value(value: config::Value) -> Self {
+        FilterCondition::new(value.to_string())
     }
 
     pub fn test(&self, other_value: &String) -> bool {
@@ -72,14 +74,9 @@ pub struct Filters {
 }
 
 impl Filters {
-    pub fn from_json_array(json_array: config::Value) -> Self {
+    pub fn from_value(value: &config::Value) -> Self {
         Filters {
-            items: json_array
-                .into_array()
-                .expect("invalid value")
-                .into_iter()
-                .map(|x| FilterCondition::new(x.to_string()))
-                .collect()
+            items: value.clone().into_array().unwrap().into_iter().map(FilterCondition::from_value).collect()
         }
     }
 
@@ -144,6 +141,11 @@ impl Config {
                 (parts[0].to_string(), parts[1].to_string())
             })
             .into_group_map();
+
+        let res: HashMap<String, Filters> = settings.get_table("filter_inserts")
+            .expect("no key 'filter_inserts' in config")
+            .iter().map(|(k, v)| (k.to_string(), Filters::from_value(v))).collect();
+        dbg!(&res);
 
         let direct_filters_per_table: HashMap<String, Vec<FilterCondition>> = HashMap::from_iter(filters_per_table.clone().into_iter().map(|(k, v)| {
             (k, v.into_iter().filter(|x| !x.is_reference()).collect())
