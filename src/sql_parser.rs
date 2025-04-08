@@ -97,7 +97,6 @@ impl InsertTracker {
 struct TableDataWriter {
     table: String,
     filepath: PathBuf,
-    writer: WriterType,
     insert_tracker: Option<InsertTracker>,
     filters: TableFilters,
     references: Vec<String>,
@@ -111,13 +110,10 @@ impl TableDataWriter {
         references_per_table: &HashMap<String, Vec<String>>,
     ) -> TableDataWriter {
         let filepath = working_dir.join(table).with_extension("sql");
-        println!("Reading table {} into {}", table, filepath.display());
-        let writer = LineWriter::new(&filepath);
 
         TableDataWriter {
             table: table.clone(),
             filepath,
-            writer,
             insert_tracker: None,
             filters: filters_per_table.get(table),
             references: match references_per_table.get(table) {
@@ -127,27 +123,25 @@ impl TableDataWriter {
         }
     }
 
-    fn on_new_statement(&mut self, statement: &Statement, reference_tracker: &mut ReferenceTracker) {
-        if statement.is_insert() {
-            if self.insert_tracker.is_none() {
-                let field_positions = statement.get_field_positions().expect("cannot find positions");
-
-                self.insert_tracker = Some(InsertTracker::new(
-                    &self.table, &self.filters, &self.references, field_positions,
-                ))
-            }
-            let Some(ref mut insert_tracker) = self.insert_tracker else { return };
-            if !insert_tracker.should_drop_statement(statement, reference_tracker) {
-                insert_tracker.capture_references(statement, reference_tracker);
-                self.writer.write_line(statement.as_bytes()).expect("Unable to write data");
-            }
-        } else {
-            self.writer.write_line(statement.as_bytes()).expect("Unable to write data");
+    fn should_keep_statement(&mut self, statement: &Statement, reference_tracker: &mut ReferenceTracker) -> bool {
+        if !statement.is_insert() {
+            return true;
         }
-    }
 
-    fn flush(&mut self) {
-        self.writer.flush().expect("Cannot flush buffer");
+        let insert_tracker = self.insert_tracker.get_or_insert({
+            let field_positions = statement.get_field_positions().expect("cannot find positions");
+
+            InsertTracker::new(
+                &self.table, &self.filters, &self.references, field_positions,
+            )
+        });
+
+        if insert_tracker.should_drop_statement(statement, reference_tracker) {
+            return false;
+        }
+
+        insert_tracker.capture_references(statement, reference_tracker);
+        true
     }
 }
 
@@ -155,8 +149,9 @@ impl TableDataWriter {
 pub struct Parser<'a> {
     config: &'a Config,
     reference_tracker: ReferenceTracker,
-    writer_per_table: HashMap<String, TableDataWriter>,
+    data_writer_per_table: HashMap<String, TableDataWriter>,
     schema_writer: WriterType,
+    writer_per_table: HashMap<String, WriterType>,
 }
 
 impl Parser<'_> {
@@ -164,13 +159,17 @@ impl Parser<'_> {
         Parser{
             config,
             reference_tracker: ReferenceTracker::new(),
-            writer_per_table: HashMap::new(),
+            data_writer_per_table: HashMap::new(),
             schema_writer: LineWriter::new(&config.schema_file),
+            writer_per_table: HashMap::new(),
         }
     }
 
     fn register_table(&mut self, table: &String) {
-        self.writer_per_table.insert(table.to_string(), TableDataWriter::new(
+        let filepath = self.config.working_dir_path.join(table).with_extension("sql");
+        println!("Reading table {} into {}", table, filepath.display());
+        self.writer_per_table.insert(table.clone(), LineWriter::new(&filepath));
+        self.data_writer_per_table.insert(table.to_string(), TableDataWriter::new(
             table,
             &self.config.working_dir_path,
             &self.config.filters_per_table,
@@ -184,19 +183,21 @@ impl Parser<'_> {
                 self.schema_writer.write_line(statement.as_bytes()).expect("Unable to write data");
             },
             Some(table) => {
-                if !self.writer_per_table.contains_key(table) {
+                if !self.data_writer_per_table.contains_key(table) {
                     self.register_table(table);
                 }
-                let info = self.writer_per_table.get_mut(table).expect("Cannot find table info");
-                info.on_new_statement(statement, &mut self.reference_tracker);
+                let info = self.data_writer_per_table.get_mut(table).expect("Cannot find table info");
+                if info.should_keep_statement(statement, &mut self.reference_tracker) {
+                    self.writer_per_table.get_mut(table).unwrap().write_line(statement.as_bytes()).expect("Unable to write data");
+                }
             },
         };
     }
 
     fn on_input_end(&mut self) {
         self.schema_writer.flush().expect("Unable to flush schema file");
-        for info in self.writer_per_table.values_mut() {
-            info.flush();
+        for writer in self.writer_per_table.values_mut() {
+            writer.flush().expect("Cannot flush buffer");
         }
         dbg!(&self.reference_tracker);
     }
@@ -209,7 +210,7 @@ impl Parser<'_> {
         self.on_input_end();
 
         combine_files(
-            std::iter::once(self.config.schema_file.clone()).chain(self.writer_per_table.values().map(|x| x.filepath.clone())),
+            std::iter::once(self.config.schema_file.clone()).chain(self.data_writer_per_table.values().map(|x| x.filepath.clone())),
             output_file,
         );
     }
