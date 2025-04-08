@@ -34,6 +34,12 @@ impl FieldPositions {
     fn get_position(&self, field: &str) -> usize {
         self.0[field]
     }
+
+    pub fn get_value(&self, statement: &Statement, field: &String) -> String {
+        let values = statement.get_all_values();
+        let position = self.0[field];
+        values[position].clone()
+    }
 }
 
 #[derive(Debug)]
@@ -50,6 +56,7 @@ pub struct Statement {
     pub line: String,
     pub table: Option<String>,
     r#type: StatementType,
+    values: Option<Vec<String>>
 }
 
 impl Statement {
@@ -59,6 +66,7 @@ impl Statement {
         line: line.to_string(),
         r#type: statement_type,
         table: table.clone(),
+        values: None,
        }
     }
 

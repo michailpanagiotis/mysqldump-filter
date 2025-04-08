@@ -2,7 +2,7 @@ use std::io::Write;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::sql_statement::Statement;
+use crate::sql_statement::{FieldPositions, Statement};
 use crate::io_utils::{WriterType, LineWriter, combine_files, read_sql};
 use crate::config::{Config, FilterMap, TableFilters};
 
@@ -12,7 +12,7 @@ struct TableInfo {
     direct_filters: TableFilters,
     reference_filters: TableFilters,
     references: HashMap<String, HashSet<String>>,
-    value_position_per_field: Option<HashMap<String, usize>>,
+    field_positions: Option<FieldPositions>,
 }
 
 impl TableInfo {
@@ -32,7 +32,7 @@ impl TableInfo {
             references: match references { Some(r) => {
                 HashMap::from_iter(r.iter().map(|r| (r.clone(), HashSet::new())))
             }, None => HashMap::new() },
-            value_position_per_field: None,
+            field_positions: None,
         }
     }
 
@@ -46,13 +46,10 @@ impl TableInfo {
 
     fn capture_references(&mut self, statement: &Statement) {
         if !statement.is_insert(){ return };
-        let Some(ref value_position_per_field) = self.value_position_per_field else { return };
-
-        let values = statement.get_all_values();
+        let Some(ref field_positions) = self.field_positions else { return };
 
         for (field, set) in self.references.iter_mut() {
-            let position = value_position_per_field[field];
-            let value = &values[position];
+            let value = field_positions.get_value(statement, field);
             set.insert(value.clone());
         }
     }
