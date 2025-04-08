@@ -88,9 +88,9 @@ impl TableFilters {
         &self.filtered_fields
     }
 
-    pub fn test(&self, value_per_field: HashMap<String, String>) -> bool {
+    pub fn test(&self, value_per_field: &HashMap<String, String>) -> bool {
         for (field, value) in value_per_field {
-            if !self.test_single_field(&field, &value) {
+            if !self.test_single_field(field, value) {
                 return false;
             }
         }

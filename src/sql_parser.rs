@@ -10,18 +10,23 @@ use crate::config::{Config, FilterMap, TableFilters};
 #[derive(Debug)]
 struct ReferenceTracker {
     references: HashMap<String, HashSet<String>>,
+    is_complete: bool,
 }
 
 impl ReferenceTracker {
     fn new() -> Self {
         ReferenceTracker {
             references: HashMap::new(),
-
+            is_complete: false,
         }
     }
 
     fn get_key(&mut self, table: &String, field: &str) -> String {
         table.to_owned() + "." + field
+    }
+
+    fn has_completed(&self) -> bool {
+        self.is_complete
     }
 
     fn insert(&mut self, table: &String, field: &str, value: &String) {
@@ -68,7 +73,15 @@ impl InsertTracker {
             self.direct_filters.get_filtered_fields(),
         );
 
-        !self.direct_filters.test(value_per_field)
+        if !self.direct_filters.test(&value_per_field) {
+            return false;
+        }
+
+        if reference_tracker.has_completed() {
+            return self.reference_filters.test(&value_per_field);
+        }
+
+        true
     }
 
     fn capture_references(&mut self, statement: &Statement, reference_tracker: &mut ReferenceTracker) {

@@ -67,7 +67,6 @@ pub struct Statement {
     pub line: String,
     pub table: Option<String>,
     r#type: StatementType,
-    values: Option<Vec<String>>
 }
 
 impl Statement {
@@ -77,7 +76,6 @@ impl Statement {
         line: line.to_string(),
         r#type: statement_type,
         table: table.clone(),
-        values: None,
        }
     }
 
