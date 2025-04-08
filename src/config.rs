@@ -69,6 +69,30 @@ impl FilterCondition {
 
 #[derive(Debug)]
 #[derive(Clone)]
+pub struct FieldFilters(Vec<FilterCondition>);
+
+impl FieldFilters {
+    fn from_value(value: &config::Value) -> Self {
+        let res: Vec<FilterCondition> = value.clone().into_array().unwrap().into_iter().map(FilterCondition::from_value).collect();
+        FieldFilters(res)
+    }
+
+    fn empty() -> Self {
+        FieldFilters(Vec::new())
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.len() == 0
+    }
+
+    fn to_direct_filters(&self) -> Self {
+        let res: Vec<FilterCondition> = self.0.iter().filter(|x| !x.is_reference()).cloned().collect();
+        FieldFilters(res)
+    }
+}
+
+#[derive(Debug)]
+#[derive(Clone)]
 pub struct TableFilters(Vec<FilterCondition>);
 
 impl TableFilters {
