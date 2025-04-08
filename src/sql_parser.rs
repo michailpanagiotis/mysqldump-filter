@@ -10,6 +10,7 @@ use crate::config::{Config, FilterMap, TableFilters};
 struct TableInfo {
     filepath: PathBuf,
     direct_filters: TableFilters,
+    reference_filters: TableFilters,
     references: HashMap<String, HashSet<String>>,
     insert_statement_sample: Option<Statement>,
     value_position_per_field: Option<HashMap<String, usize>>,
@@ -19,7 +20,7 @@ impl TableInfo {
     fn new(
         table: &String,
         working_dir: &Path,
-        direct_filters: TableFilters,
+        filters: TableFilters,
         references: Option<&Vec<String>>,
     ) -> TableInfo {
         let filepath = working_dir.join(table).with_extension("sql");
@@ -27,7 +28,8 @@ impl TableInfo {
 
         TableInfo {
             filepath,
-            direct_filters,
+            direct_filters: filters.to_direct_filters(),
+            reference_filters: filters.to_reference_filters(),
             references: match references { Some(r) => {
                 HashMap::from_iter(r.iter().map(|r| (r.clone(), HashSet::new())))
             }, None => HashMap::new() },

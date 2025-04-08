@@ -135,12 +135,12 @@ impl TableFilters {
         true
     }
 
-    fn to_direct_filters(&self) -> Self {
+    pub fn to_direct_filters(&self) -> Self {
         let conditions: Vec<FilterCondition> = self.get_conditions().iter().filter(|x| !x.is_reference()).cloned().collect();
         TableFilters::from_conditions(&conditions)
     }
 
-    fn to_reference_filters(&self) -> Self {
+    pub fn to_reference_filters(&self) -> Self {
         let conditions: Vec<FilterCondition> = self.get_reference_conditions();
         TableFilters::from_conditions(&conditions)
     }
