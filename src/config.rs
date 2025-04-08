@@ -104,12 +104,14 @@ impl TableFilters {
     }
 
     fn from_config_value(value: &config::Value) -> Self {
-        let conditions: Vec<FilterCondition> = value.clone().into_array().unwrap().into_iter().map(FilterCondition::from_config_value).collect();
+        let conditions: Vec<FilterCondition> = value.clone().into_array().unwrap()
+            .into_iter()
+            .map(FilterCondition::from_config_value).collect();
         TableFilters::from_conditions(&conditions)
     }
 
-    fn get_conditions(&self) -> Vec<FilterCondition> {
-        self.0.values().flatten().cloned().collect()
+    fn get_direct_conditions(&self) -> Vec<FilterCondition> {
+        self.0.values().flatten().filter(|x| !x.is_reference()).cloned().collect()
     }
 
     fn get_reference_conditions(&self) -> Vec<FilterCondition> {
@@ -136,7 +138,7 @@ impl TableFilters {
     }
 
     pub fn to_direct_filters(&self) -> Self {
-        let conditions: Vec<FilterCondition> = self.get_conditions().iter().filter(|x| !x.is_reference()).cloned().collect();
+        let conditions: Vec<FilterCondition> = self.get_direct_conditions();
         TableFilters::from_conditions(&conditions)
     }
 
@@ -163,18 +165,6 @@ impl FilterMap {
         )
     }
 
-    fn to_direct_filters(&self) -> Self {
-        FilterMap::from_iter(
-            self.0.iter().map(|(k, v)| (k.clone(), v.to_direct_filters()))
-        )
-    }
-
-    fn to_reference_filters(&self) -> Self {
-        FilterMap::from_iter(
-            self.0.iter().map(|(k, v)| (k.clone(), v.to_reference_filters()))
-        )
-    }
-
     fn get_references(&self) -> HashMap<String, Vec<String>> {
         self.0.values()
             .flat_map(|v| v.get_references())
@@ -197,7 +187,7 @@ pub struct Config {
     pub working_dir_path: PathBuf,
     pub schema_file: PathBuf,
     pub requested_tables: HashSet<String>,
-    pub direct_filters_per_table: FilterMap,
+    pub filters_per_table: FilterMap,
     pub references_per_table: HashMap<String, Vec<String>>,
 }
 
@@ -216,22 +206,18 @@ impl Config {
             .expect("no key 'allow_data_on_tables' in config")
             .iter().map(|x| x.to_string()).collect();
 
-        let res = FilterMap::from_config_value(
+        let filters_per_table = FilterMap::from_config_value(
             &settings.get_table("filter_inserts").expect("no key 'filter_inserts' in config"),
         );
-        dbg!(&res);
 
-        let direct_filters_per_table = res.to_direct_filters();
-        let reference_filters_per_table = res.to_reference_filters();
-
-        let references_per_table = res.get_references();
+        let references_per_table = filters_per_table.get_references();
 
         let schema_file = working_dir_path.join("schema.sql");
         Config {
             schema_file: schema_file.to_path_buf(),
             working_dir_path: working_dir_path.to_path_buf(),
             requested_tables,
-            direct_filters_per_table,
+            filters_per_table,
             references_per_table,
         }
     }

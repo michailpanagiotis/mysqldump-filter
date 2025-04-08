@@ -11,6 +11,7 @@ struct TableInfo {
     filepath: PathBuf,
     direct_filters: TableFilters,
     reference_filters: TableFilters,
+    filtered_fields: Vec<String>,
     references: HashMap<String, HashSet<String>>,
     insert_statement_sample: Option<Statement>,
     value_position_per_field: Option<HashMap<String, usize>>,
@@ -30,6 +31,7 @@ impl TableInfo {
             filepath,
             direct_filters: filters.to_direct_filters(),
             reference_filters: filters.to_reference_filters(),
+            filtered_fields: filters.get_filtered_fields(),
             references: match references { Some(r) => {
                 HashMap::from_iter(r.iter().map(|r| (r.clone(), HashSet::new())))
             }, None => HashMap::new() },
@@ -54,9 +56,7 @@ impl TableInfo {
 
         let values = statement.get_values();
 
-        let fields = self.direct_filters.get_filtered_fields();
-
-        let value_per_field: HashMap<String, String> = HashMap::from_iter(fields.iter().map(|f| {
+        let value_per_field: HashMap<String, String> = HashMap::from_iter(self.filtered_fields.iter().map(|f| {
             let position = value_position_per_field[f];
             (f.clone(), values[position].clone())
         }));
@@ -88,13 +88,13 @@ impl TableDataWriter {
     fn new(
         table: &String,
         working_dir: &Path,
-        direct_filters_per_table: &FilterMap,
+        filters_per_table: &FilterMap,
         references_per_table: &HashMap<String, Vec<String>>,
     ) -> TableDataWriter {
         let table_info = TableInfo::new(
             table,
             working_dir,
-            direct_filters_per_table.get(table),
+            filters_per_table.get(table),
             references_per_table.get(table),
         );
         let writer = table_info.get_writer();
@@ -136,7 +136,7 @@ impl Parser<'_> {
         self.writer_per_table.insert(table.to_string(), TableDataWriter::new(
             table,
             &self.config.working_dir_path,
-            &self.config.direct_filters_per_table,
+            &self.config.filters_per_table,
             &self.config.references_per_table,
         ));
     }
