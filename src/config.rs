@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 #[derive(Debug)]
 #[derive(Clone)]
 #[derive(PartialEq)]
-pub enum FilterOperator {
+enum FilterOperator {
     Equals,
     NotEquals,
     References,
@@ -21,8 +21,8 @@ pub enum FilterOperator {
 
 #[derive(Debug)]
 #[derive(Clone)]
-pub struct FilterCondition {
-    pub field: String,
+struct FilterCondition {
+    field: String,
     operator: FilterOperator,
     value: String,
 }
@@ -49,69 +49,87 @@ impl FilterCondition {
         }
     }
 
-    fn from_value(value: config::Value) -> Self {
+    fn from_config_value(value: config::Value) -> Self {
         FilterCondition::new(value.to_string())
     }
 
-    pub fn test(&self, other_value: &String) -> bool {
+    fn test(&self, other_value: &str) -> bool {
         match &self.operator {
-            FilterOperator::Equals => &self.value == other_value,
-            FilterOperator::NotEquals => &self.value != other_value,
+            FilterOperator::Equals => self.value == other_value,
+            FilterOperator::NotEquals => self.value != other_value,
             FilterOperator::References => true,
             FilterOperator::Unknown => true
         }
     }
 
-    pub fn is_reference(&self) -> bool {
+    fn is_reference(&self) -> bool {
         self.operator == FilterOperator::References
     }
 }
 
-#[derive(Debug)]
-#[derive(Clone)]
-pub struct FieldFilters(Vec<FilterCondition>);
-
-impl FieldFilters {
-    fn from_value(value: &config::Value) -> Self {
-        let res: Vec<FilterCondition> = value.clone().into_array().unwrap().into_iter().map(FilterCondition::from_value).collect();
-        FieldFilters(res)
-    }
-
-    fn empty() -> Self {
-        FieldFilters(Vec::new())
-    }
-
-    fn is_empty(&self) -> bool {
-        self.0.len() == 0
-    }
-
-    fn to_direct_filters(&self) -> Self {
-        let res: Vec<FilterCondition> = self.0.iter().filter(|x| !x.is_reference()).cloned().collect();
-        FieldFilters(res)
-    }
-}
 
 #[derive(Debug)]
 #[derive(Clone)]
-pub struct TableFilters(Vec<FilterCondition>);
+pub struct TableFilters(HashMap<String, Vec<FilterCondition>>);
 
 impl TableFilters {
-    fn from_value(value: &config::Value) -> Self {
-        let res: Vec<FilterCondition> = value.clone().into_array().unwrap().into_iter().map(FilterCondition::from_value).collect();
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn get_filtered_fields(&self) -> Vec<String> {
+        self.0.keys().cloned().collect()
+    }
+
+    pub fn test(&self, value_per_field: HashMap<String, String>) -> bool {
+        for (field, value) in value_per_field {
+            if !self.test_single_field(&field, &value) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn from_conditions(conditions: &[FilterCondition]) -> Self {
+        let res: HashMap<String, Vec<FilterCondition>> = conditions.iter().map(|cond| {
+            (cond.field.clone(), cond.to_owned())
+        }).into_group_map();
+
         TableFilters(res)
+    }
+
+    fn from_config_value(value: &config::Value) -> Self {
+        let conditions: Vec<FilterCondition> = value.clone().into_array().unwrap().into_iter().map(FilterCondition::from_config_value).collect();
+        TableFilters::from_conditions(&conditions)
+    }
+
+    fn get_conditions(&self) -> Vec<FilterCondition> {
+        self.0.values().flatten().cloned().collect()
     }
 
     fn empty() -> Self {
-        TableFilters(Vec::new())
+        TableFilters(HashMap::new())
     }
 
-    fn is_empty(&self) -> bool {
-        self.0.len() == 0
+    fn test_single_field(&self, field: &str, value: &str) -> bool {
+        let Some(conditions) = self.0.get(field) else { return true };
+
+        for condition in conditions {
+            if !condition.test(value) {
+                return false;
+            }
+        }
+        true
     }
 
     fn to_direct_filters(&self) -> Self {
-        let res: Vec<FilterCondition> = self.0.iter().filter(|x| !x.is_reference()).cloned().collect();
-        TableFilters(res)
+        let conditions: Vec<FilterCondition> = self.get_conditions().iter().filter(|x| !x.is_reference()).cloned().collect();
+        TableFilters::from_conditions(&conditions)
+    }
+
+    fn to_reference_filters(&self) -> Self {
+        let conditions: Vec<FilterCondition> = self.get_conditions().iter().filter(|x| x.is_reference()).cloned().collect();
+        TableFilters::from_conditions(&conditions)
     }
 }
 
@@ -119,13 +137,27 @@ impl TableFilters {
 pub struct FilterMap(HashMap<String, TableFilters>);
 
 impl FilterMap {
-    fn from_value(value: &HashMap<String, config::Value>) -> Self {
-        let res: HashMap<String, TableFilters> = value.iter().map(|(k, v)| (k.to_string(), TableFilters::from_value(v))).collect();
+    fn from_config_value(value: &HashMap<String, config::Value>) -> Self {
+        let res: HashMap<String, TableFilters> = value.iter()
+            .map(|(k, v)| (k.clone(), TableFilters::from_config_value(v)))
+            .filter(|(_, v)| !v.is_empty())
+            .collect();
         FilterMap(res)
     }
 
     fn to_direct_filters(&self) -> Self {
-        let res: HashMap<String, TableFilters> = self.0.iter().map(|(k, v)| (k.clone(), v.to_direct_filters())).collect();
+        let res: HashMap<String, TableFilters> = self.0.iter()
+            .map(|(k, v)| (k.clone(), v.to_direct_filters()))
+            .filter(|(_, v)| !v.is_empty())
+            .collect();
+        FilterMap(res)
+    }
+
+    fn to_reference_filters(&self) -> Self {
+        let res: HashMap<String, TableFilters> = self.0.iter()
+            .map(|(k, v)| (k.clone(), v.to_reference_filters()))
+            .filter(|(_, v)| !v.is_empty())
+            .collect();
         FilterMap(res)
     }
 
@@ -139,36 +171,12 @@ impl FilterMap {
     }
 }
 
-// #[derive(Debug)]
-// #[derive(Clone)]
-// pub struct TableFilters {
-//     items: Vec<FilterCondition>,
-// }
-//
-// impl TableFilters {
-//     pub fn from_value(value: &config::Value) -> Self {
-//         TableFilters {
-//             items: value.clone().into_array().unwrap().into_iter().map(FilterCondition::from_value).collect()
-//         }
-//     }
-//
-//     pub fn to_direct_filters(&self) -> Self {
-//         TableFilters {
-//             items: self.items.clone()
-//                 .into_iter()
-//                 .filter(|x| !x.is_reference())
-//                 .collect()
-//         }
-//     }
-// }
-
 #[derive(Debug)]
 pub struct Config {
     pub working_dir_path: PathBuf,
     pub schema_file: PathBuf,
     pub requested_tables: HashSet<String>,
     pub direct_filters_per_table: FilterMap,
-    pub filters_per_table: HashMap<String, Vec<FilterCondition>>,
     pub references_per_table: HashMap<String, Vec<String>>,
 }
 
@@ -214,11 +222,7 @@ impl Config {
             })
             .into_group_map();
 
-        // let res: HashMap<String, TableFilters> = settings.get_table("filter_inserts")
-        //     .expect("no key 'filter_inserts' in config")
-        //     .iter().map(|(k, v)| (k.to_string(), TableFilters::from_value(v))).collect();
-
-        let res = FilterMap::from_value(
+        let res = FilterMap::from_config_value(
             &settings.get_table("filter_inserts").expect("no key 'filter_inserts' in config"),
         );
         dbg!(&res);
@@ -226,12 +230,14 @@ impl Config {
         let direct_filters_per_table = res.to_direct_filters();
         dbg!(&direct_filters_per_table);
 
+        let reference_filters_per_table = res.to_reference_filters();
+        dbg!(&reference_filters_per_table);
+
         let schema_file = working_dir_path.join("schema.sql");
         Config {
             schema_file: schema_file.to_path_buf(),
             working_dir_path: working_dir_path.to_path_buf(),
             requested_tables,
-            filters_per_table,
             direct_filters_per_table,
             references_per_table,
         }

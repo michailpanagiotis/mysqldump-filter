@@ -4,12 +4,11 @@ use std::path::{Path, PathBuf};
 
 use crate::sql_statement::Statement;
 use crate::io_utils::{WriterType, LineWriter, combine_files, read_sql};
-use crate::config::{Config, FilterCondition, FilterMap, TableFilters};
+use crate::config::{Config, FilterMap, TableFilters};
 
 #[derive(Debug)]
 struct TableInfo {
     filepath: PathBuf,
-    filters: Vec<FilterCondition>,
     direct_filters: TableFilters,
     references: HashMap<String, HashSet<String>>,
     insert_statement_sample: Option<Statement>,
@@ -20,7 +19,6 @@ impl TableInfo {
     fn new(
         table: &String,
         working_dir: &Path,
-        filters: Option<&Vec<FilterCondition>>,
         direct_filters: TableFilters,
         references: Option<&Vec<String>>,
     ) -> TableInfo {
@@ -29,7 +27,6 @@ impl TableInfo {
 
         TableInfo {
             filepath,
-            filters: match filters { Some(f) => f.clone(), None => Vec::new() },
             direct_filters,
             references: match references { Some(r) => {
                 HashMap::from_iter(r.iter().map(|r| (r.clone(), HashSet::new())))
@@ -46,7 +43,7 @@ impl TableInfo {
     fn should_drop_statement(&mut self, statement: &Statement) -> bool {
         if !statement.is_insert(){ return false };
 
-        if  !self.filters.is_empty() && self.value_position_per_field.is_none() {
+        if  !self.direct_filters.is_empty() && self.value_position_per_field.is_none() {
             self.insert_statement_sample = Some(statement.clone());
             self.value_position_per_field = statement.get_field_positions();
         }
@@ -55,12 +52,14 @@ impl TableInfo {
 
         let values = statement.get_values();
 
-        let failed_filters = self.filters.iter().filter(|f| {
-            let position = value_position_per_field[&f.field];
-            !f.test(&values[position])
-        });
+        let fields = self.direct_filters.get_filtered_fields();
 
-        failed_filters.count() > 0
+        let value_per_field: HashMap<String, String> = HashMap::from_iter(fields.iter().map(|f| {
+            let position = value_position_per_field[f];
+            (f.clone(), values[position].clone())
+        }));
+
+        self.direct_filters.test(value_per_field)
     }
 
     fn capture_references(&mut self, statement: &Statement) {
@@ -87,14 +86,12 @@ impl TableDataWriter {
     fn new(
         table: &String,
         working_dir: &Path,
-        filters_per_table: &HashMap<String, Vec<FilterCondition>>,
         direct_filters_per_table: &FilterMap,
         references_per_table: &HashMap<String, Vec<String>>,
     ) -> TableDataWriter {
         let table_info = TableInfo::new(
             table,
             working_dir,
-            filters_per_table.get(table),
             direct_filters_per_table.get(table),
             references_per_table.get(table),
         );
@@ -137,7 +134,6 @@ impl Parser<'_> {
         self.writer_per_table.insert(table.to_string(), TableDataWriter::new(
             table,
             &self.config.working_dir_path,
-            &self.config.filters_per_table,
             &self.config.direct_filters_per_table,
             &self.config.references_per_table,
         ));
