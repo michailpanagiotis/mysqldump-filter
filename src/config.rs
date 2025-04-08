@@ -6,7 +6,7 @@ use nom::{
   branch::alt,
   combinator::rest,
 };
-use std::{collections::{HashMap, HashSet}, iter::Filter};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
@@ -68,34 +68,64 @@ impl FilterCondition {
 }
 
 #[derive(Debug)]
-#[derive(Clone)]
-pub struct Filters {
-    items: Vec<FilterCondition>,
-}
+pub struct TableFilters(Vec<FilterCondition>);
 
-impl Filters {
-    pub fn from_value(value: &config::Value) -> Self {
-        Filters {
-            items: value.clone().into_array().unwrap().into_iter().map(FilterCondition::from_value).collect()
-        }
+#[derive(Debug)]
+pub struct FilterMap(HashMap<String, TableFilters>);
+
+impl TableFilters {
+    fn from_value(value: &config::Value) -> Self {
+        let res: Vec<FilterCondition> = value.clone().into_array().unwrap().into_iter().map(FilterCondition::from_value).collect();
+        TableFilters(res)
     }
 
-    pub fn to_direct_filters(&self) -> Self {
-        Filters {
-            items: self.items.clone()
-                .into_iter()
-                .filter(|x| !x.is_reference())
-                .collect()
-        }
+    fn to_direct_filters(&self) -> Self {
+        let res: Vec<FilterCondition> = self.0.iter().filter(|x| !x.is_reference()).map(|x| x.clone()).collect();
+        TableFilters(res)
     }
 }
+
+impl FilterMap {
+    fn from_value(value: &HashMap<String, config::Value>) -> Self {
+        let res: HashMap<String, TableFilters> = value.iter().map(|(k, v)| (k.to_string(), TableFilters::from_value(v))).collect();
+        FilterMap(res)
+    }
+
+    fn to_direct_filters(&self) -> Self {
+        let res: HashMap<String, TableFilters> = self.0.iter().map(|(k, v)| (k.clone(), v.to_direct_filters())).collect();
+        FilterMap(res)
+    }
+}
+
+// #[derive(Debug)]
+// #[derive(Clone)]
+// pub struct TableFilters {
+//     items: Vec<FilterCondition>,
+// }
+//
+// impl TableFilters {
+//     pub fn from_value(value: &config::Value) -> Self {
+//         TableFilters {
+//             items: value.clone().into_array().unwrap().into_iter().map(FilterCondition::from_value).collect()
+//         }
+//     }
+//
+//     pub fn to_direct_filters(&self) -> Self {
+//         TableFilters {
+//             items: self.items.clone()
+//                 .into_iter()
+//                 .filter(|x| !x.is_reference())
+//                 .collect()
+//         }
+//     }
+// }
 
 #[derive(Debug)]
 pub struct Config {
     pub working_dir_path: PathBuf,
     pub schema_file: PathBuf,
     pub requested_tables: HashSet<String>,
-    pub direct_filters_per_table: HashMap<String, Vec<FilterCondition>>,
+    pub direct_filters_per_table: FilterMap,
     pub filters_per_table: HashMap<String, Vec<FilterCondition>>,
     pub references_per_table: HashMap<String, Vec<String>>,
 }
@@ -142,14 +172,17 @@ impl Config {
             })
             .into_group_map();
 
-        let res: HashMap<String, Filters> = settings.get_table("filter_inserts")
-            .expect("no key 'filter_inserts' in config")
-            .iter().map(|(k, v)| (k.to_string(), Filters::from_value(v))).collect();
+        // let res: HashMap<String, TableFilters> = settings.get_table("filter_inserts")
+        //     .expect("no key 'filter_inserts' in config")
+        //     .iter().map(|(k, v)| (k.to_string(), TableFilters::from_value(v))).collect();
+
+        let res = FilterMap::from_value(
+            &settings.get_table("filter_inserts").expect("no key 'filter_inserts' in config"),
+        );
         dbg!(&res);
 
-        let direct_filters_per_table: HashMap<String, Vec<FilterCondition>> = HashMap::from_iter(filters_per_table.clone().into_iter().map(|(k, v)| {
-            (k, v.into_iter().filter(|x| !x.is_reference()).collect())
-        }));
+        let direct_filters_per_table = res.to_direct_filters();
+        dbg!(&direct_filters_per_table);
 
         let schema_file = working_dir_path.join("schema.sql");
         Config {
