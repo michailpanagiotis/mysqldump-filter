@@ -4,12 +4,13 @@ use std::path::{Path, PathBuf};
 
 use crate::sql_statement::Statement;
 use crate::io_utils::{WriterType, LineWriter, combine_files, read_sql};
-use crate::config::{Config, FilterCondition};
+use crate::config::{Config, FilterCondition, FilterMap, TableFilters};
 
 #[derive(Debug)]
 struct TableInfo {
     filepath: PathBuf,
     filters: Vec<FilterCondition>,
+    direct_filters: TableFilters,
     references: HashMap<String, HashSet<String>>,
     insert_statement_sample: Option<Statement>,
     value_position_per_field: Option<HashMap<String, usize>>,
@@ -20,6 +21,7 @@ impl TableInfo {
         table: &String,
         working_dir: &Path,
         filters: Option<&Vec<FilterCondition>>,
+        direct_filters: TableFilters,
         references: Option<&Vec<String>>,
     ) -> TableInfo {
         let filepath = working_dir.join(table).with_extension("sql");
@@ -28,6 +30,7 @@ impl TableInfo {
         TableInfo {
             filepath,
             filters: match filters { Some(f) => f.clone(), None => Vec::new() },
+            direct_filters,
             references: match references { Some(r) => {
                 HashMap::from_iter(r.iter().map(|r| (r.clone(), HashSet::new())))
             }, None => HashMap::new() },
@@ -85,12 +88,14 @@ impl TableDataWriter {
         table: &String,
         working_dir: &Path,
         filters_per_table: &HashMap<String, Vec<FilterCondition>>,
+        direct_filters_per_table: &FilterMap,
         references_per_table: &HashMap<String, Vec<String>>,
     ) -> TableDataWriter {
         let table_info = TableInfo::new(
             table,
             working_dir,
             filters_per_table.get(table),
+            direct_filters_per_table.get(table),
             references_per_table.get(table),
         );
         let writer = table_info.get_writer();
@@ -133,6 +138,7 @@ impl Parser<'_> {
             table,
             &self.config.working_dir_path,
             &self.config.filters_per_table,
+            &self.config.direct_filters_per_table,
             &self.config.references_per_table,
         ));
     }

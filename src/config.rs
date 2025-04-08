@@ -68,10 +68,8 @@ impl FilterCondition {
 }
 
 #[derive(Debug)]
+#[derive(Clone)]
 pub struct TableFilters(Vec<FilterCondition>);
-
-#[derive(Debug)]
-pub struct FilterMap(HashMap<String, TableFilters>);
 
 impl TableFilters {
     fn from_value(value: &config::Value) -> Self {
@@ -79,11 +77,22 @@ impl TableFilters {
         TableFilters(res)
     }
 
+    fn empty() -> Self {
+        TableFilters(Vec::new())
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.len() == 0
+    }
+
     fn to_direct_filters(&self) -> Self {
-        let res: Vec<FilterCondition> = self.0.iter().filter(|x| !x.is_reference()).map(|x| x.clone()).collect();
+        let res: Vec<FilterCondition> = self.0.iter().filter(|x| !x.is_reference()).cloned().collect();
         TableFilters(res)
     }
 }
+
+#[derive(Debug)]
+pub struct FilterMap(HashMap<String, TableFilters>);
 
 impl FilterMap {
     fn from_value(value: &HashMap<String, config::Value>) -> Self {
@@ -94,6 +103,15 @@ impl FilterMap {
     fn to_direct_filters(&self) -> Self {
         let res: HashMap<String, TableFilters> = self.0.iter().map(|(k, v)| (k.clone(), v.to_direct_filters())).collect();
         FilterMap(res)
+    }
+
+    pub fn get(&self, key: &str) -> TableFilters {
+        match self.0.get(key) {
+            Some(x) => {
+                x.clone()
+            },
+            None => TableFilters::empty()
+        }
     }
 }
 
