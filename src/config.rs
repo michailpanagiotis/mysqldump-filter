@@ -8,6 +8,7 @@ use nom::{
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use crate::sql_statement::Statement;
 
 #[derive(Debug)]
 #[derive(Clone)]
@@ -75,15 +76,15 @@ impl FilterCondition {
 
 #[derive(Debug)]
 #[derive(Clone)]
-pub struct TableFilters(HashMap<String, Vec<FilterCondition>>);
+pub struct TableFilters {
+    per_field: HashMap<String, Vec<FilterCondition>>,
+    filtered_fields: Vec<String>,
+    positions: Option<HashMap<String, usize>>
+}
 
 impl TableFilters {
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    pub fn get_filtered_fields(&self) -> Vec<String> {
-        self.0.keys().cloned().collect()
+        self.per_field.is_empty()
     }
 
     pub fn test(&self, value_per_field: HashMap<String, String>) -> bool {
@@ -100,7 +101,8 @@ impl TableFilters {
             (cond.field.clone(), cond.to_owned())
         }).into_group_map();
 
-        TableFilters(res)
+        let filtered_fields = res.keys().cloned().collect();
+        TableFilters{ per_field: res, filtered_fields, positions: None }
     }
 
     fn from_config_value(value: &config::Value) -> Self {
@@ -111,11 +113,11 @@ impl TableFilters {
     }
 
     fn get_direct_conditions(&self) -> Vec<FilterCondition> {
-        self.0.values().flatten().filter(|x| !x.is_reference()).cloned().collect()
+        self.per_field.values().flatten().filter(|x| !x.is_reference()).cloned().collect()
     }
 
     fn get_reference_conditions(&self) -> Vec<FilterCondition> {
-        self.0.values().flatten().filter(|x| x.is_reference()).cloned().collect()
+        self.per_field.values().flatten().filter(|x| x.is_reference()).cloned().collect()
     }
 
     fn get_references(&self) -> Vec<(String, String)> {
@@ -123,11 +125,11 @@ impl TableFilters {
     }
 
     fn empty() -> Self {
-        TableFilters(HashMap::new())
+        TableFilters{ per_field: HashMap::new(), filtered_fields: Vec::new(), positions: None }
     }
 
     fn test_single_field(&self, field: &str, value: &str) -> bool {
-        let Some(conditions) = self.0.get(field) else { return true };
+        let Some(conditions) = self.per_field.get(field) else { return true };
 
         for condition in conditions {
             if !condition.test(value) {
@@ -145,6 +147,23 @@ impl TableFilters {
     pub fn to_reference_filters(&self) -> Self {
         let conditions: Vec<FilterCondition> = self.get_reference_conditions();
         TableFilters::from_conditions(&conditions)
+    }
+
+    pub fn test_statement(&mut self, statement: &Statement) -> bool {
+        if !statement.is_insert(){ return true };
+
+        if  !self.is_empty() && self.positions.is_none() {
+            self.positions = statement.get_field_positions();
+        }
+
+        let Some(ref value_position_per_field) = self.positions else { return true };
+
+        let value_per_field = statement.get_values(
+            &self.filtered_fields,
+            value_position_per_field,
+        );
+
+        self.test(value_per_field)
     }
 }
 

@@ -11,9 +11,7 @@ struct TableInfo {
     filepath: PathBuf,
     direct_filters: TableFilters,
     reference_filters: TableFilters,
-    filtered_fields: Vec<String>,
     references: HashMap<String, HashSet<String>>,
-    insert_statement_sample: Option<Statement>,
     value_position_per_field: Option<HashMap<String, usize>>,
 }
 
@@ -31,11 +29,9 @@ impl TableInfo {
             filepath,
             direct_filters: filters.to_direct_filters(),
             reference_filters: filters.to_reference_filters(),
-            filtered_fields: filters.get_filtered_fields(),
             references: match references { Some(r) => {
                 HashMap::from_iter(r.iter().map(|r| (r.clone(), HashSet::new())))
             }, None => HashMap::new() },
-            insert_statement_sample: None,
             value_position_per_field: None,
         }
     }
@@ -45,21 +41,7 @@ impl TableInfo {
     }
 
     fn should_drop_statement(&mut self, statement: &Statement) -> bool {
-        if !statement.is_insert(){ return false };
-
-        if  !self.direct_filters.is_empty() && self.value_position_per_field.is_none() {
-            self.insert_statement_sample = Some(statement.clone());
-            self.value_position_per_field = statement.get_field_positions();
-        }
-
-        let Some(ref value_position_per_field) = self.value_position_per_field else { return false };
-
-        let value_per_field = statement.get_values(
-            &self.filtered_fields,
-            value_position_per_field,
-        );
-
-        self.direct_filters.test(value_per_field)
+        !self.direct_filters.test_statement(statement)
     }
 
     fn capture_references(&mut self, statement: &Statement) {
