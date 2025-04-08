@@ -6,8 +6,40 @@ use crate::sql_statement::{FieldPositions, Statement};
 use crate::io_utils::{WriterType, LineWriter, combine_files, read_sql};
 use crate::config::{Config, FilterMap, TableFilters};
 
+
+#[derive(Debug)]
+struct ReferenceTracker {
+    references: HashMap<String, HashSet<String>>,
+}
+
+impl ReferenceTracker {
+    fn new() -> Self {
+        ReferenceTracker {
+            references: HashMap::new(),
+
+        }
+    }
+
+    fn get_key(&mut self, table: &String, field: &str) -> String {
+        table.to_owned() + "." + field
+    }
+
+    fn insert(&mut self, table: &String, field: &str, value: &String) {
+        let key: String = self.get_key(table, field);
+        match self.references.get_mut(&key) {
+            Some(x) => {
+                x.insert(value.to_string());
+            },
+            None => {
+                self.references.insert(key, HashSet::from([value.to_string()]));
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 struct InsertTracker {
+    table: String,
     direct_filters: TableFilters,
     reference_filters: TableFilters,
     references: HashMap<String, HashSet<String>>,
@@ -16,11 +48,13 @@ struct InsertTracker {
 
 impl InsertTracker {
     fn new(
+        table: &String,
         filters: &TableFilters,
         references: &[String],
         field_positions: FieldPositions,
     ) -> InsertTracker {
         InsertTracker {
+            table: table.to_string(),
             direct_filters: filters.to_direct_filters(),
             reference_filters: filters.to_reference_filters(),
             references: HashMap::from_iter(references.iter().map(|r| (r.clone(), HashSet::new()))),
@@ -28,9 +62,7 @@ impl InsertTracker {
         }
     }
 
-    fn should_drop_statement(&self, statement: &Statement) -> bool {
-        if !statement.is_insert(){ return false };
-
+    fn should_drop_statement(&self, statement: &Statement, reference_tracker: &ReferenceTracker) -> bool {
         let value_per_field = self.field_positions.get_values(
             statement,
             self.direct_filters.get_filtered_fields(),
@@ -39,22 +71,18 @@ impl InsertTracker {
         !self.direct_filters.test(value_per_field)
     }
 
-    fn capture_references(&mut self, statement: &Statement) {
-        if !statement.is_insert(){ return };
-
+    fn capture_references(&mut self, statement: &Statement, reference_tracker: &mut ReferenceTracker) {
         for (field, set) in self.references.iter_mut() {
             let value = self.field_positions.get_value(statement, field);
             set.insert(value.clone());
+            reference_tracker.insert(&self.table, field, &value);
         }
-    }
-
-    fn flush(&self) {
-        dbg!(&self.references);
     }
 }
 
 #[derive(Debug)]
 struct TableDataWriter {
+    table: String,
     filepath: PathBuf,
     writer: WriterType,
     insert_tracker: Option<InsertTracker>,
@@ -74,6 +102,7 @@ impl TableDataWriter {
         let writer = LineWriter::new(&filepath);
 
         TableDataWriter {
+            table: table.clone(),
             filepath,
             writer,
             insert_tracker: None,
@@ -85,18 +114,18 @@ impl TableDataWriter {
         }
     }
 
-    fn on_new_statement(&mut self, statement: &Statement) {
+    fn on_new_statement(&mut self, statement: &Statement, reference_tracker: &mut ReferenceTracker) {
         if statement.is_insert() {
             if self.insert_tracker.is_none() {
                 let field_positions = statement.get_field_positions().expect("cannot find positions");
 
                 self.insert_tracker = Some(InsertTracker::new(
-                    &self.filters, &self.references, field_positions,
+                    &self.table, &self.filters, &self.references, field_positions,
                 ))
             }
             let Some(ref mut insert_tracker) = self.insert_tracker else { return };
-            if !insert_tracker.should_drop_statement(statement) {
-                insert_tracker.capture_references(statement);
+            if !insert_tracker.should_drop_statement(statement, reference_tracker) {
+                insert_tracker.capture_references(statement, reference_tracker);
                 self.writer.write_line(statement.as_bytes()).expect("Unable to write data");
             }
         } else {
@@ -106,15 +135,13 @@ impl TableDataWriter {
 
     fn flush(&mut self) {
         self.writer.flush().expect("Cannot flush buffer");
-        if let Some(ref x) = self.insert_tracker {
-            x.flush();
-        }
     }
 }
 
 #[derive(Debug)]
 pub struct Parser<'a> {
     config: &'a Config,
+    reference_tracker: ReferenceTracker,
     writer_per_table: HashMap<String, TableDataWriter>,
     schema_writer: WriterType,
 }
@@ -123,6 +150,7 @@ impl Parser<'_> {
     pub fn new(config: &Config) -> Parser {
         Parser{
             config,
+            reference_tracker: ReferenceTracker::new(),
             writer_per_table: HashMap::new(),
             schema_writer: LineWriter::new(&config.schema_file),
         }
@@ -147,7 +175,7 @@ impl Parser<'_> {
                     self.register_table(table);
                 }
                 let info = self.writer_per_table.get_mut(table).expect("Cannot find table info");
-                info.on_new_statement(statement);
+                info.on_new_statement(statement, &mut self.reference_tracker);
             },
         };
     }
@@ -157,6 +185,7 @@ impl Parser<'_> {
         for info in self.writer_per_table.values_mut() {
             info.flush();
         }
+        dbg!(&self.reference_tracker);
     }
 
     fn get_data_files(&mut self) -> Vec<&Path> {
