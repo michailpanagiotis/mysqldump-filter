@@ -11,6 +11,32 @@ use nom::{
 };
 
 #[derive(Debug)]
+#[derive(Clone)]
+pub struct FieldPositions(HashMap<String, usize>);
+
+impl FieldPositions {
+    fn new(insert_statement: &str) -> Self {
+        let mut parser = preceded(
+            take_until("("), preceded(take_until("`"), take_until(")"))
+        ).and_then(
+          separated_list0(
+              tag(", "),
+              delimited(char('`'), is_not("`"), char('`')),
+          )
+        );
+        let res: IResult<&str, Vec<&str>> = parser.parse(insert_statement);
+        let (_, fields) = res.expect("cannot parse fields");
+        FieldPositions(HashMap::from_iter(
+            fields.iter().enumerate().map(|(idx, item)| (item.to_string(), idx))
+        ))
+    }
+
+    fn get_position(&self, field: &str) -> usize {
+        self.0[field]
+    }
+}
+
+#[derive(Debug)]
 #[derive(PartialEq)]
 #[derive(Clone)]
 enum StatementType {
@@ -48,23 +74,11 @@ impl Statement {
         self.line.as_bytes()
     }
 
-    pub fn get_field_positions(&self) -> Option<HashMap::<String, usize>> {
+    pub fn get_field_positions(&self) -> Option<FieldPositions> {
         if !self.is_insert() {
             return None;
         }
-        let mut parser = preceded(
-            take_until("("), preceded(take_until("`"), take_until(")"))
-        ).and_then(
-          separated_list0(
-              tag(", "),
-              delimited(char('`'), is_not("`"), char('`')),
-          )
-        );
-        let res: IResult<&str, Vec<&str>> = parser.parse(&self.line);
-        let (_, fields) = res.expect("cannot parse fields");
-        Some(HashMap::from_iter(
-            fields.iter().enumerate().map(|(idx, item)| (item.to_string(), idx))
-        ))
+        Some(FieldPositions::new(&self.line))
     }
 
     pub fn get_all_values(&self) -> Vec<String> {
@@ -92,11 +106,11 @@ impl Statement {
         values.iter().map(|item| item.to_string()).collect()
     }
 
-    pub fn get_values(&self, fields: &Vec<String>, field_positions: &HashMap<String, usize>) -> HashMap<String, String> {
+    pub fn get_values(&self, fields: &[String], field_positions: &FieldPositions) -> HashMap<String, String> {
         let values = self.get_all_values();
 
         let value_per_field: HashMap<String, String> = HashMap::from_iter(fields.iter().map(|f| {
-            let position = field_positions[f];
+            let position = field_positions.get_position(f);
             (f.clone(), values[position].clone())
         }));
 

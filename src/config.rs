@@ -8,7 +8,7 @@ use nom::{
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use crate::sql_statement::Statement;
+use crate::sql_statement::{FieldPositions, Statement};
 
 #[derive(Debug)]
 #[derive(Clone)]
@@ -76,7 +76,7 @@ impl FilterCondition {
 #[derive(Debug)]
 #[derive(Clone)]
 pub struct TableFilters {
-    positions: Option<HashMap<String, usize>>,
+    positions: Option<FieldPositions>,
     filtered_fields: Vec<String>,
     filters_per_field: HashMap<String, Vec<FilterCondition>>,
 }
