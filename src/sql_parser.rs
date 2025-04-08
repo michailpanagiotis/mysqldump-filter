@@ -7,26 +7,24 @@ use crate::io_utils::{WriterType, LineWriter, combine_files, read_sql};
 use crate::config::{Config, FilterMap, TableFilters};
 
 #[derive(Debug)]
-struct TableInfo {
-    filepath: PathBuf,
+struct InsertTracker {
     direct_filters: TableFilters,
     reference_filters: TableFilters,
     references: HashMap<String, HashSet<String>>,
     field_positions: Option<FieldPositions>,
 }
 
-impl TableInfo {
+impl InsertTracker {
     fn new(
         table: &String,
         working_dir: &Path,
         filters: TableFilters,
         references: Option<&Vec<String>>,
-    ) -> TableInfo {
+    ) -> InsertTracker {
         let filepath = working_dir.join(table).with_extension("sql");
         println!("Reading table {} into {}", table, filepath.display());
 
-        TableInfo {
-            filepath,
+        InsertTracker {
             direct_filters: filters.to_direct_filters(),
             reference_filters: filters.to_reference_filters(),
             references: match references { Some(r) => {
@@ -34,10 +32,6 @@ impl TableInfo {
             }, None => HashMap::new() },
             field_positions: None,
         }
-    }
-
-    fn get_writer(&self) -> WriterType {
-        LineWriter::new(&self.filepath)
     }
 
     fn should_drop_statement(&mut self, statement: &Statement) -> bool {
@@ -70,8 +64,9 @@ impl TableInfo {
 
 #[derive(Debug)]
 struct TableDataWriter {
+    filepath: PathBuf,
     writer: WriterType,
-    table_info: TableInfo,
+    insert_tracker: InsertTracker,
 }
 
 impl TableDataWriter {
@@ -81,28 +76,36 @@ impl TableDataWriter {
         filters_per_table: &FilterMap,
         references_per_table: &HashMap<String, Vec<String>>,
     ) -> TableDataWriter {
-        let table_info = TableInfo::new(
+        let filepath = working_dir.join(table).with_extension("sql");
+        println!("Reading table {} into {}", table, filepath.display());
+        let writer = LineWriter::new(&filepath);
+
+        let insert_tracker = InsertTracker::new(
             table,
             working_dir,
             filters_per_table.get(table),
             references_per_table.get(table),
         );
-        let writer = table_info.get_writer();
         TableDataWriter {
+            filepath,
             writer,
-            table_info,
+            insert_tracker,
         }
     }
 
     fn on_new_statement(&mut self, statement: &Statement) {
-        if !self.table_info.should_drop_statement(statement) {
-            self.table_info.capture_references(statement);
+        if statement.is_insert() {
+            if !self.insert_tracker.should_drop_statement(statement) {
+                self.insert_tracker.capture_references(statement);
+                self.writer.write_line(statement.as_bytes()).expect("Unable to write data");
+            }
+        } else {
             self.writer.write_line(statement.as_bytes()).expect("Unable to write data");
         }
     }
 
     fn flush(&mut self) {
-        dbg!(&self.table_info.references);
+        dbg!(&self.insert_tracker.references);
         self.writer.flush().expect("Cannot flush buffer");
     }
 }
@@ -155,7 +158,7 @@ impl Parser<'_> {
     }
 
     fn get_data_files(&mut self) -> Vec<&Path> {
-        self.writer_per_table.values().map(|x| x.table_info.filepath.as_path()).collect::<Vec<&Path>>()
+        self.writer_per_table.values().map(|x| x.filepath.as_path()).collect::<Vec<&Path>>()
     }
 
     pub fn parse_input_file(&mut self, input_file: &Path, output_file: &Path) {
