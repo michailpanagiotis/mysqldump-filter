@@ -73,18 +73,17 @@ impl FilterCondition {
     }
 }
 
-
 #[derive(Debug)]
 #[derive(Clone)]
 pub struct TableFilters {
-    per_field: HashMap<String, Vec<FilterCondition>>,
+    positions: Option<HashMap<String, usize>>,
     filtered_fields: Vec<String>,
-    positions: Option<HashMap<String, usize>>
+    filters_per_field: HashMap<String, Vec<FilterCondition>>,
 }
 
 impl TableFilters {
     pub fn is_empty(&self) -> bool {
-        self.per_field.is_empty()
+        self.filters_per_field.is_empty()
     }
 
     pub fn test(&self, value_per_field: HashMap<String, String>) -> bool {
@@ -102,7 +101,7 @@ impl TableFilters {
         }).into_group_map();
 
         let filtered_fields = res.keys().cloned().collect();
-        TableFilters{ per_field: res, filtered_fields, positions: None }
+        TableFilters{ positions: None, filtered_fields, filters_per_field: res }
     }
 
     fn from_config_value(value: &config::Value) -> Self {
@@ -113,11 +112,11 @@ impl TableFilters {
     }
 
     fn get_direct_conditions(&self) -> Vec<FilterCondition> {
-        self.per_field.values().flatten().filter(|x| !x.is_reference()).cloned().collect()
+        self.filters_per_field.values().flatten().filter(|x| !x.is_reference()).cloned().collect()
     }
 
     fn get_reference_conditions(&self) -> Vec<FilterCondition> {
-        self.per_field.values().flatten().filter(|x| x.is_reference()).cloned().collect()
+        self.filters_per_field.values().flatten().filter(|x| x.is_reference()).cloned().collect()
     }
 
     fn get_references(&self) -> Vec<(String, String)> {
@@ -125,11 +124,11 @@ impl TableFilters {
     }
 
     fn empty() -> Self {
-        TableFilters{ per_field: HashMap::new(), filtered_fields: Vec::new(), positions: None }
+        TableFilters{ positions: None, filtered_fields: Vec::new(), filters_per_field: HashMap::new(),  }
     }
 
     fn test_single_field(&self, field: &str, value: &str) -> bool {
-        let Some(conditions) = self.per_field.get(field) else { return true };
+        let Some(conditions) = self.filters_per_field.get(field) else { return true };
 
         for condition in conditions {
             if !condition.test(value) {

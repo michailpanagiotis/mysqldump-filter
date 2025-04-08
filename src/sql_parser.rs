@@ -92,6 +92,7 @@ impl TableDataWriter {
     }
 
     fn flush(&mut self) {
+        dbg!(&self.table_info.references);
         self.writer.flush().expect("Cannot flush buffer");
     }
 }
