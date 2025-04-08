@@ -11,41 +11,29 @@ struct InsertTracker {
     direct_filters: TableFilters,
     reference_filters: TableFilters,
     references: HashMap<String, HashSet<String>>,
-    field_positions: Option<FieldPositions>,
+    field_positions: FieldPositions,
 }
 
 impl InsertTracker {
     fn new(
-        table: &String,
-        working_dir: &Path,
-        filters: TableFilters,
-        references: Option<&Vec<String>>,
+        filters: &TableFilters,
+        references: &[String],
+        field_positions: FieldPositions,
     ) -> InsertTracker {
-        let filepath = working_dir.join(table).with_extension("sql");
-        println!("Reading table {} into {}", table, filepath.display());
-
         InsertTracker {
             direct_filters: filters.to_direct_filters(),
             reference_filters: filters.to_reference_filters(),
-            references: match references { Some(r) => {
-                HashMap::from_iter(r.iter().map(|r| (r.clone(), HashSet::new())))
-            }, None => HashMap::new() },
-            field_positions: None,
+            references: HashMap::from_iter(references.iter().map(|r| (r.clone(), HashSet::new()))),
+            field_positions,
         }
     }
 
-    fn should_drop_statement(&mut self, statement: &Statement) -> bool {
+    fn should_drop_statement(&self, statement: &Statement) -> bool {
         if !statement.is_insert(){ return false };
-
-        if self.field_positions.is_none() {
-            self.field_positions = statement.get_field_positions();
-        }
-
-        let Some(ref value_position_per_field) = self.field_positions else { return false };
 
         let value_per_field = statement.get_values(
             self.direct_filters.get_filtered_fields(),
-            value_position_per_field,
+            &self.field_positions,
         );
 
         !self.direct_filters.test(value_per_field)
@@ -53,12 +41,15 @@ impl InsertTracker {
 
     fn capture_references(&mut self, statement: &Statement) {
         if !statement.is_insert(){ return };
-        let Some(ref field_positions) = self.field_positions else { return };
 
         for (field, set) in self.references.iter_mut() {
-            let value = field_positions.get_value(statement, field);
+            let value = self.field_positions.get_value(statement, field);
             set.insert(value.clone());
         }
+    }
+
+    fn flush(&self) {
+        dbg!(&self.references);
     }
 }
 
@@ -66,7 +57,9 @@ impl InsertTracker {
 struct TableDataWriter {
     filepath: PathBuf,
     writer: WriterType,
-    insert_tracker: InsertTracker,
+    insert_tracker: Option<InsertTracker>,
+    filters: TableFilters,
+    references: Vec<String>,
 }
 
 impl TableDataWriter {
@@ -80,23 +73,30 @@ impl TableDataWriter {
         println!("Reading table {} into {}", table, filepath.display());
         let writer = LineWriter::new(&filepath);
 
-        let insert_tracker = InsertTracker::new(
-            table,
-            working_dir,
-            filters_per_table.get(table),
-            references_per_table.get(table),
-        );
         TableDataWriter {
             filepath,
             writer,
-            insert_tracker,
+            insert_tracker: None,
+            filters: filters_per_table.get(table),
+            references: match references_per_table.get(table) {
+                Some(x) => x.clone(),
+                None => Vec::new(),
+            },
         }
     }
 
     fn on_new_statement(&mut self, statement: &Statement) {
         if statement.is_insert() {
-            if !self.insert_tracker.should_drop_statement(statement) {
-                self.insert_tracker.capture_references(statement);
+            if self.insert_tracker.is_none() {
+                let field_positions = statement.get_field_positions().expect("cannot find positions");
+
+                self.insert_tracker = Some(InsertTracker::new(
+                    &self.filters, &self.references, field_positions,
+                ))
+            }
+            let Some(ref mut insert_tracker) = self.insert_tracker else { return };
+            if !insert_tracker.should_drop_statement(statement) {
+                insert_tracker.capture_references(statement);
                 self.writer.write_line(statement.as_bytes()).expect("Unable to write data");
             }
         } else {
@@ -105,8 +105,10 @@ impl TableDataWriter {
     }
 
     fn flush(&mut self) {
-        dbg!(&self.insert_tracker.references);
         self.writer.flush().expect("Cannot flush buffer");
+        if let Some(ref x) = self.insert_tracker {
+            x.flush();
+        }
     }
 }
 
