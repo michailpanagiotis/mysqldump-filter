@@ -41,7 +41,20 @@ impl TableInfo {
     }
 
     fn should_drop_statement(&mut self, statement: &Statement) -> bool {
-        !self.direct_filters.test_statement(statement)
+        if !statement.is_insert(){ return false };
+
+        if self.field_positions.is_none() {
+            self.field_positions = statement.get_field_positions();
+        }
+
+        let Some(ref value_position_per_field) = self.field_positions else { return false };
+
+        let value_per_field = statement.get_values(
+            self.direct_filters.get_filtered_fields(),
+            value_position_per_field,
+        );
+
+        !self.direct_filters.test(value_per_field)
     }
 
     fn capture_references(&mut self, statement: &Statement) {

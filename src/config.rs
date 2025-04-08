@@ -8,7 +8,6 @@ use nom::{
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use crate::sql_statement::{FieldPositions, Statement};
 
 #[derive(Debug)]
 #[derive(Clone)]
@@ -76,7 +75,6 @@ impl FilterCondition {
 #[derive(Debug)]
 #[derive(Clone)]
 pub struct TableFilters {
-    positions: Option<FieldPositions>,
     filtered_fields: Vec<String>,
     filters_per_field: HashMap<String, Vec<FilterCondition>>,
 }
@@ -84,6 +82,10 @@ pub struct TableFilters {
 impl TableFilters {
     pub fn is_empty(&self) -> bool {
         self.filters_per_field.is_empty()
+    }
+
+    pub fn get_filtered_fields(&self) -> &Vec<String> {
+        &self.filtered_fields
     }
 
     pub fn test(&self, value_per_field: HashMap<String, String>) -> bool {
@@ -101,7 +103,7 @@ impl TableFilters {
         }).into_group_map();
 
         let filtered_fields = res.keys().cloned().collect();
-        TableFilters{ positions: None, filtered_fields, filters_per_field: res }
+        TableFilters{ filtered_fields, filters_per_field: res }
     }
 
     fn from_config_value(value: &config::Value) -> Self {
@@ -124,7 +126,7 @@ impl TableFilters {
     }
 
     fn empty() -> Self {
-        TableFilters{ positions: None, filtered_fields: Vec::new(), filters_per_field: HashMap::new(),  }
+        TableFilters{ filtered_fields: Vec::new(), filters_per_field: HashMap::new(),  }
     }
 
     fn test_single_field(&self, field: &str, value: &str) -> bool {
@@ -146,23 +148,6 @@ impl TableFilters {
     pub fn to_reference_filters(&self) -> Self {
         let conditions: Vec<FilterCondition> = self.get_reference_conditions();
         TableFilters::from_conditions(&conditions)
-    }
-
-    pub fn test_statement(&mut self, statement: &Statement) -> bool {
-        if !statement.is_insert(){ return true };
-
-        if  !self.is_empty() && self.positions.is_none() {
-            self.positions = statement.get_field_positions();
-        }
-
-        let Some(ref value_position_per_field) = self.positions else { return true };
-
-        let value_per_field = statement.get_values(
-            &self.filtered_fields,
-            value_position_per_field,
-        );
-
-        self.test(value_per_field)
     }
 }
 
