@@ -65,6 +65,11 @@ impl FilterCondition {
     fn is_reference(&self) -> bool {
         self.operator == FilterOperator::References
     }
+
+    fn get_reference_parts(&self) -> (String, String) {
+        let parts: Vec<&str> = self.value.split(".").collect();
+        (parts[0].to_string(), parts[1].to_string())
+    }
 }
 
 
@@ -107,6 +112,14 @@ impl TableFilters {
         self.0.values().flatten().cloned().collect()
     }
 
+    fn get_reference_conditions(&self) -> Vec<FilterCondition> {
+        self.0.values().flatten().filter(|x| x.is_reference()).cloned().collect()
+    }
+
+    fn get_references(&self) -> Vec<(String, String)> {
+        self.get_reference_conditions().iter().map(|x| x.get_reference_parts()).collect()
+    }
+
     fn empty() -> Self {
         TableFilters(HashMap::new())
     }
@@ -128,7 +141,7 @@ impl TableFilters {
     }
 
     fn to_reference_filters(&self) -> Self {
-        let conditions: Vec<FilterCondition> = self.get_conditions().iter().filter(|x| x.is_reference()).cloned().collect();
+        let conditions: Vec<FilterCondition> = self.get_reference_conditions();
         TableFilters::from_conditions(&conditions)
     }
 }
@@ -137,28 +150,36 @@ impl TableFilters {
 pub struct FilterMap(HashMap<String, TableFilters>);
 
 impl FilterMap {
-    fn from_config_value(value: &HashMap<String, config::Value>) -> Self {
-        let res: HashMap<String, TableFilters> = value.iter()
-            .map(|(k, v)| (k.clone(), TableFilters::from_config_value(v)))
+    fn from_iter(iter: impl Iterator<Item=(String, TableFilters)>) -> Self {
+        let res: HashMap<String, TableFilters> = iter
             .filter(|(_, v)| !v.is_empty())
             .collect();
         FilterMap(res)
+    }
+
+    fn from_config_value(value: &HashMap<String, config::Value>) -> Self {
+        FilterMap::from_iter(
+            value.iter().map(|(k, v)| (k.clone(), TableFilters::from_config_value(v)))
+        )
     }
 
     fn to_direct_filters(&self) -> Self {
-        let res: HashMap<String, TableFilters> = self.0.iter()
-            .map(|(k, v)| (k.clone(), v.to_direct_filters()))
-            .filter(|(_, v)| !v.is_empty())
-            .collect();
-        FilterMap(res)
+        FilterMap::from_iter(
+            self.0.iter().map(|(k, v)| (k.clone(), v.to_direct_filters()))
+        )
     }
 
     fn to_reference_filters(&self) -> Self {
-        let res: HashMap<String, TableFilters> = self.0.iter()
-            .map(|(k, v)| (k.clone(), v.to_reference_filters()))
-            .filter(|(_, v)| !v.is_empty())
-            .collect();
-        FilterMap(res)
+        FilterMap::from_iter(
+            self.0.iter().map(|(k, v)| (k.clone(), v.to_reference_filters()))
+        )
+    }
+
+    fn get_references(&self) -> HashMap<String, Vec<String>> {
+        self.0.values()
+            .flat_map(|v| v.get_references())
+            .unique()
+            .into_group_map()
     }
 
     pub fn get(&self, key: &str) -> TableFilters {
@@ -195,43 +216,15 @@ impl Config {
             .expect("no key 'allow_data_on_tables' in config")
             .iter().map(|x| x.to_string()).collect();
 
-        let filters_per_table: HashMap<String, Vec<FilterCondition>>= settings
-            .get_table("filter_inserts")
-            .expect("no key 'filter_inserts' in config")
-            .into_iter()
-            .map(|(key, value)| (
-                key,
-                value
-                    .into_array()
-                    .expect("invalid value")
-                    .into_iter()
-                    .map(|x| FilterCondition::new(x.to_string()))
-                    .collect())
-            )
-            .collect();
-
-        let references_per_table: HashMap<String, Vec<String>> = filters_per_table
-            .values()
-            .flatten()
-            .filter(|x| x.is_reference())
-            .map(|x| x.value.clone())
-            .unique()
-            .map(|x| {
-                let parts: Vec<&str> = x.split(".").collect();
-                (parts[0].to_string(), parts[1].to_string())
-            })
-            .into_group_map();
-
         let res = FilterMap::from_config_value(
             &settings.get_table("filter_inserts").expect("no key 'filter_inserts' in config"),
         );
         dbg!(&res);
 
         let direct_filters_per_table = res.to_direct_filters();
-        dbg!(&direct_filters_per_table);
-
         let reference_filters_per_table = res.to_reference_filters();
-        dbg!(&reference_filters_per_table);
+
+        let references_per_table = res.get_references();
 
         let schema_file = working_dir_path.join("schema.sql");
         Config {
