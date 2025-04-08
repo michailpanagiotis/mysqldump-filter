@@ -54,12 +54,10 @@ impl TableInfo {
 
         let Some(ref value_position_per_field) = self.value_position_per_field else { return false };
 
-        let values = statement.get_values();
-
-        let value_per_field: HashMap<String, String> = HashMap::from_iter(self.filtered_fields.iter().map(|f| {
-            let position = value_position_per_field[f];
-            (f.clone(), values[position].clone())
-        }));
+        let value_per_field = statement.get_values(
+            &self.filtered_fields,
+            value_position_per_field,
+        );
 
         self.direct_filters.test(value_per_field)
     }
@@ -68,7 +66,7 @@ impl TableInfo {
         if !statement.is_insert(){ return };
         let Some(ref value_position_per_field) = self.value_position_per_field else { return };
 
-        let values = statement.get_values();
+        let values = statement.get_all_values();
 
         for (field, set) in self.references.iter_mut() {
             let position = value_position_per_field[field];

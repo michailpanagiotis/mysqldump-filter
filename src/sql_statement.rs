@@ -67,7 +67,7 @@ impl Statement {
         ))
     }
 
-    pub fn get_values(&self) -> Vec<String> {
+    pub fn get_all_values(&self) -> Vec<String> {
         let mut parser = preceded((take_until("VALUES ("), tag("VALUES (")), take_until(");")).and_then(
             separated_list1(
                 one_of(",)"),
@@ -90,5 +90,16 @@ impl Statement {
         let res: IResult<&str, Vec<&str>> = parser.parse(&self.line);
         let (_, values) = res.expect("cannot parse values");
         values.iter().map(|item| item.to_string()).collect()
+    }
+
+    pub fn get_values(&self, fields: &Vec<String>, field_positions: &HashMap<String, usize>) -> HashMap<String, String> {
+        let values = self.get_all_values();
+
+        let value_per_field: HashMap<String, String> = HashMap::from_iter(fields.iter().map(|f| {
+            let position = field_positions[f];
+            (f.clone(), values[position].clone())
+        }));
+
+        value_per_field
     }
 }
