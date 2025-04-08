@@ -31,9 +31,9 @@ impl InsertTracker {
     fn should_drop_statement(&self, statement: &Statement) -> bool {
         if !statement.is_insert(){ return false };
 
-        let value_per_field = statement.get_values(
+        let value_per_field = self.field_positions.get_values(
+            statement,
             self.direct_filters.get_filtered_fields(),
-            &self.field_positions,
         );
 
         !self.direct_filters.test(value_per_field)

@@ -40,6 +40,17 @@ impl FieldPositions {
         let position = self.0[field];
         values[position].clone()
     }
+
+    pub fn get_values(&self, statement: &Statement, fields: &[String]) -> HashMap<String, String> {
+        let values = statement.get_all_values();
+
+        let value_per_field: HashMap<String, String> = HashMap::from_iter(fields.iter().map(|f| {
+            let position = self.get_position(f);
+            (f.clone(), values[position].clone())
+        }));
+
+        value_per_field
+    }
 }
 
 #[derive(Debug)]
@@ -112,16 +123,5 @@ impl Statement {
         let res: IResult<&str, Vec<&str>> = parser.parse(&self.line);
         let (_, values) = res.expect("cannot parse values");
         values.iter().map(|item| item.to_string()).collect()
-    }
-
-    pub fn get_values(&self, fields: &[String], field_positions: &FieldPositions) -> HashMap<String, String> {
-        let values = self.get_all_values();
-
-        let value_per_field: HashMap<String, String> = HashMap::from_iter(fields.iter().map(|f| {
-            let position = field_positions.get_position(f);
-            (f.clone(), values[position].clone())
-        }));
-
-        value_per_field
     }
 }
