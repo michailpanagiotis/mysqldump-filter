@@ -201,19 +201,15 @@ impl Parser<'_> {
         dbg!(&self.reference_tracker);
     }
 
-    fn get_data_files(&mut self) -> Vec<&Path> {
-        self.writer_per_table.values().map(|x| x.filepath.as_path()).collect::<Vec<&Path>>()
-    }
-
     pub fn parse_input_file(&mut self, input_file: &Path, output_file: &Path) {
         for (table, line) in read_sql(input_file, &self.config.requested_tables) {
             let statement = Statement::new(&table, &line);
             self.on_new_statement(&statement);
         }
         self.on_input_end();
+
         combine_files(
-            &self.config.schema_file,
-            self.get_data_files().into_iter(),
+            std::iter::once(self.config.schema_file.clone()).chain(self.writer_per_table.values().map(|x| x.filepath.clone())),
             output_file,
         );
     }
