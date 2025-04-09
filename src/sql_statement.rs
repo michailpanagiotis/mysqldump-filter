@@ -86,15 +86,13 @@ impl Statement {
        }
     }
 
+    fn parse_lines<I: Iterator<Item=String>> (table: &String, lines: I) -> impl Iterator<Item = Statement> {
+        lines.map(|l| Statement::new(&Some(table.clone()), l.as_str()))
+    }
+
     pub fn from_lines<I: Iterator<Item=String>> (statements: I) {
         let mut current_table: Option<String> = None;
         let res = statements
-            // .map(move |line| {
-            //     if line.starts_with("-- Dumping data for table") {
-            //         current_table = Some(TABLE_DUMP_RE.captures(&line).unwrap().get(1).unwrap().as_str().to_string());
-            //     }
-            //     Statement::new(&current_table, line.as_str())
-            // })
             .chunk_by(move |line| {
                 if line.starts_with("-- Dumping data for table") {
                     current_table = Some(TABLE_DUMP_RE.captures(&line).unwrap().get(1).unwrap().as_str().to_string());
@@ -107,9 +105,7 @@ impl Statement {
 
         for (key, group) in res.into_iter() {
             dbg!(&key);
-            // for b in group {
-            //     dbg!(&b);
-            // }
+            Statement::parse_lines(&key, group);
         }
     }
 
