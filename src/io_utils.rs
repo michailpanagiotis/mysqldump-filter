@@ -68,12 +68,7 @@ pub fn read_sql(sqldump_filepath: &Path, requested_tables: &HashSet<String>) -> 
 }
 
 pub fn split_sql(sqldump_filepath: &Path, requested_tables: &HashSet<String>) {
-    for _ in sql_statement::Statement::from_lines(
+    sql_statement::Statement::from_lines(
         read_dump(sqldump_filepath)
-    )
-            .filter(
-                |statement| !statement.is_insert() || statement.table_contained_in(requested_tables)
-            ) {
-        println!(".");
-    }
+    );
 }

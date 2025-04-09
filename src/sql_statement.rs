@@ -86,14 +86,31 @@ impl Statement {
        }
     }
 
-    pub fn from_lines<I: Iterator<Item=String>> (statements: I) -> impl Iterator<Item=Statement> {
+    pub fn from_lines<I: Iterator<Item=String>> (statements: I) {
         let mut current_table: Option<String> = None;
-        statements.map(move |line| {
-            if line.starts_with("-- Dumping data for table") {
-                current_table = Some(TABLE_DUMP_RE.captures(&line).unwrap().get(1).unwrap().as_str().to_string());
-            }
-            Statement::new(&current_table, line.as_str())
-        }).into_iter()
+        let res = statements
+            // .map(move |line| {
+            //     if line.starts_with("-- Dumping data for table") {
+            //         current_table = Some(TABLE_DUMP_RE.captures(&line).unwrap().get(1).unwrap().as_str().to_string());
+            //     }
+            //     Statement::new(&current_table, line.as_str())
+            // })
+            .chunk_by(move |line| {
+                if line.starts_with("-- Dumping data for table") {
+                    current_table = Some(TABLE_DUMP_RE.captures(&line).unwrap().get(1).unwrap().as_str().to_string());
+                }
+                match current_table {
+                    Some(ref table) => table.to_string(),
+                    None => "INFORMATION_SCHEMA".to_string(),
+                }
+            });
+
+        for (key, group) in res.into_iter() {
+            dbg!(&key);
+            // for b in group {
+            //     dbg!(&b);
+            // }
+        }
     }
 
     pub fn is_insert(&self) -> bool {
