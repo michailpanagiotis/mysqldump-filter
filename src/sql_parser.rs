@@ -93,9 +93,7 @@ impl InsertTracker {
 
 #[derive(Debug)]
 struct TableDataWriter {
-    insert_tracker: Option<InsertTracker>,
-    filters: TableFilters,
-    references: Vec<String>,
+    insert_tracker: InsertTracker,
 }
 
 impl TableDataWriter {
@@ -103,14 +101,22 @@ impl TableDataWriter {
         table: &String,
         filters_per_table: &FilterMap,
         references_per_table: &HashMap<String, Vec<String>>,
+        statement: &Statement,
     ) -> TableDataWriter {
+
+        let field_positions = statement.get_field_positions().expect("cannot find positions");
+
+        let filters = filters_per_table.get(table);
+        let references = match references_per_table.get(table) {
+            Some(x) => x.clone(),
+            None => Vec::new(),
+        };
+        let insert_tracker = InsertTracker::new(
+            &filters, &references, field_positions,
+        );
+
         TableDataWriter {
-            insert_tracker: None,
-            filters: filters_per_table.get(table),
-            references: match references_per_table.get(table) {
-                Some(x) => x.clone(),
-                None => Vec::new(),
-            },
+            insert_tracker,
         }
     }
 
@@ -119,19 +125,11 @@ impl TableDataWriter {
             return true;
         }
 
-        let insert_tracker = self.insert_tracker.get_or_insert({
-            let field_positions = statement.get_field_positions().expect("cannot find positions");
-
-            InsertTracker::new(
-                &self.filters, &self.references, field_positions,
-            )
-        });
-
-        if insert_tracker.should_drop_statement(statement, reference_tracker) {
+        if self.insert_tracker.should_drop_statement(statement, reference_tracker) {
             return false;
         }
 
-        insert_tracker.capture_references(statement, reference_tracker);
+        self.insert_tracker.capture_references(statement, reference_tracker);
         true
     }
 }
@@ -158,7 +156,7 @@ impl Parser<'_> {
         }
     }
 
-    fn register_table(&mut self, table: &String) {
+    fn register_table(&mut self, table: &String, statement: &Statement) {
         let filepath = self.config.working_dir_path.join(table).with_extension("sql");
         self.filepaths.push(filepath.clone());
         println!("Reading table {} into {}", table, filepath.display());
@@ -167,6 +165,7 @@ impl Parser<'_> {
             table,
             &self.config.filters_per_table,
             &self.config.references_per_table,
+            statement,
         ));
     }
 
@@ -178,7 +177,7 @@ impl Parser<'_> {
             },
             Some(table) => {
                 if !self.data_writer_per_table.contains_key(table) {
-                    self.register_table(table);
+                    self.register_table(table, &statement);
                 }
                 let info = self.data_writer_per_table.get_mut(table).expect("Cannot find table info");
                 if info.should_keep_statement(&statement, &mut self.reference_tracker) {
