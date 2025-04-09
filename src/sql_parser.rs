@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::sql_statement::{FieldPositions, Statement};
-use crate::io_utils::{WriterType, LineWriter, combine_files, read_sql};
+use crate::io_utils::{WriterType, LineWriter, combine_files, read_sql, split_sql};
 use crate::config::{Config, FilterMap, TableFilters};
 
 #[derive(Debug)]
@@ -167,14 +167,15 @@ impl Parser<'_> {
     }
 
     pub fn parse_input_file(&mut self, input_file: &Path, output_file: &Path) {
-        for (table, line) in read_sql(input_file, &self.config.requested_tables) {
-            self.on_new_line(table, line);
-        }
-        self.on_input_end();
-
-        combine_files(
-            self.filepaths.iter(),
-            output_file,
-        );
+        split_sql(input_file, &self.config.requested_tables);
+        // for (table, line) in read_sql(input_file, &self.config.requested_tables) {
+        //     self.on_new_line(table, line);
+        // }
+        // self.on_input_end();
+        //
+        // combine_files(
+        //     self.filepaths.iter(),
+        //     output_file,
+        // );
     }
 }

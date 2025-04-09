@@ -6,6 +6,8 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufWriter};
 use std::path::{Path, PathBuf};
 
+use crate::sql_statement;
+
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
 }
@@ -14,7 +16,7 @@ pub type WriterType = io::BufWriter<File>;
 
 pub trait LineWriter {
     fn new(filepath: &Path) -> Self;
-    fn write_line(&mut self, bytes: &[u8]) -> Result<(), std::io::Error> ;
+    fn write_line(&mut self, bytes: &[u8]) -> Result<(), std::io::Error>;
 }
 
 impl LineWriter for WriterType {
@@ -44,6 +46,11 @@ pub fn combine_files<'a, I: Iterator<Item=&'a PathBuf>>(all_files: I, output: &P
     }
 }
 
+pub fn read_dump(sqldump_filepath: &Path) -> impl Iterator<Item = String> {
+    let file = File::open(sqldump_filepath).expect("Cannot open file");
+    io::BufReader::new(file).lines().map_while(Result::ok)
+}
+
 pub fn read_sql(sqldump_filepath: &Path, requested_tables: &HashSet<String>) -> impl Iterator<Item = (Option<String>, String)> {
     let mut current_table: Option<String> = None;
     let annotate_with_table = move |line: String| {
@@ -58,4 +65,15 @@ pub fn read_sql(sqldump_filepath: &Path, requested_tables: &HashSet<String>) -> 
         .map_while(Result::ok)
         .map(annotate_with_table)
         .filter(|(table, _)| table.is_none() || requested_tables.contains(table.as_ref().unwrap()))
+}
+
+pub fn split_sql(sqldump_filepath: &Path, requested_tables: &HashSet<String>) {
+    for _ in sql_statement::Statement::from_lines(
+        read_dump(sqldump_filepath)
+    )
+            .filter(
+                |statement| !statement.is_insert() || statement.table_contained_in(requested_tables)
+            ) {
+        println!(".");
+    }
 }

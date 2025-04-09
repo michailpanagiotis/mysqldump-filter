@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use lazy_static::lazy_static;
+use itertools::Itertools;
 use nom::multi::separated_list1;
 use nom::{
   IResult,
@@ -9,6 +10,12 @@ use nom::{
   bytes::complete::{escaped, is_not, take_until, tag, take_till},
   sequence::{delimited, preceded},
 };
+use regex::Regex;
+use std::collections::{HashMap, HashSet};
+
+lazy_static! {
+    static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
+}
 
 #[derive(Debug)]
 #[derive(Clone)]
@@ -79,6 +86,16 @@ impl Statement {
        }
     }
 
+    pub fn from_lines<I: Iterator<Item=String>> (statements: I) -> impl Iterator<Item=Statement> {
+        let mut current_table: Option<String> = None;
+        statements.map(move |line| {
+            if line.starts_with("-- Dumping data for table") {
+                current_table = Some(TABLE_DUMP_RE.captures(&line).unwrap().get(1).unwrap().as_str().to_string());
+            }
+            Statement::new(&current_table, line.as_str())
+        }).into_iter()
+    }
+
     pub fn is_insert(&self) -> bool {
         self.r#type == StatementType::Insert
     }
@@ -121,5 +138,12 @@ impl Statement {
         let res: IResult<&str, Vec<&str>> = parser.parse(&self.line);
         let (_, values) = res.expect("cannot parse values");
         values.iter().map(|item| item.to_string()).collect()
+    }
+
+    pub fn table_contained_in(&self, tables: &HashSet<String>) -> bool {
+        if !self.is_insert() {
+            return false;
+        }
+        tables.contains(self.table.as_ref().unwrap())
     }
 }
