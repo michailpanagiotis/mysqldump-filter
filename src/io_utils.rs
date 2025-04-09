@@ -35,7 +35,7 @@ impl LineWriter for WriterType {
     }
 }
 
-pub fn combine_files<I: Iterator<Item=PathBuf>>(all_files: I, output: &Path) {
+pub fn combine_files<'a, I: Iterator<Item=&'a PathBuf>>(all_files: I, output: &Path) {
     println!("Combining files");
     let mut output_file = File::create(output).expect("cannot create output file");
     for f in all_files {
