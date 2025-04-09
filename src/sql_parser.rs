@@ -51,33 +51,25 @@ struct InsertTracker {
 
 impl InsertTracker {
     fn new(
-        filters: &TableFilters,
-        references: &[String],
-        field_positions: FieldPositions,
-    ) -> InsertTracker {
+        table: &String,
+        filters_per_table: &FilterMap,
+        references_per_table: &HashMap<String, Vec<String>>,
+        statement: &Statement,
+    ) -> Self {
+
+        let field_positions = statement.get_field_positions().expect("cannot find positions");
+
+        let filters = filters_per_table.get(table);
+        let references = match references_per_table.get(table) {
+            Some(x) => x.clone(),
+            None => Vec::new(),
+        };
         InsertTracker {
             direct_filters: filters.to_direct_filters(),
             reference_filters: filters.to_reference_filters(),
             references: HashMap::from_iter(references.iter().map(|r| (r.clone(), HashSet::new()))),
             field_positions,
         }
-    }
-
-    fn should_drop_statement(&self, statement: &Statement, reference_tracker: &ReferenceTracker) -> bool {
-        let value_per_field = self.field_positions.get_values(
-            statement,
-            self.direct_filters.get_filtered_fields(),
-        );
-
-        if !self.direct_filters.test(&value_per_field) {
-            return false;
-        }
-
-        if reference_tracker.has_completed() {
-            return self.reference_filters.test(&value_per_field);
-        }
-
-        true
     }
 
     fn capture_references(&mut self, statement: &Statement, reference_tracker: &mut ReferenceTracker) {
@@ -89,47 +81,26 @@ impl InsertTracker {
             }
         }
     }
-}
-
-#[derive(Debug)]
-struct TableDataWriter {
-    insert_tracker: InsertTracker,
-}
-
-impl TableDataWriter {
-    fn new(
-        table: &String,
-        filters_per_table: &FilterMap,
-        references_per_table: &HashMap<String, Vec<String>>,
-        statement: &Statement,
-    ) -> TableDataWriter {
-
-        let field_positions = statement.get_field_positions().expect("cannot find positions");
-
-        let filters = filters_per_table.get(table);
-        let references = match references_per_table.get(table) {
-            Some(x) => x.clone(),
-            None => Vec::new(),
-        };
-        let insert_tracker = InsertTracker::new(
-            &filters, &references, field_positions,
-        );
-
-        TableDataWriter {
-            insert_tracker,
-        }
-    }
 
     fn should_keep_statement(&mut self, statement: &Statement, reference_tracker: &mut ReferenceTracker) -> bool {
         if !statement.is_insert() {
             return true;
         }
 
-        if self.insert_tracker.should_drop_statement(statement, reference_tracker) {
+        let value_per_field = self.field_positions.get_values(
+            statement,
+            self.direct_filters.get_filtered_fields(),
+        );
+
+        if !self.direct_filters.test(&value_per_field) {
             return false;
         }
 
-        self.insert_tracker.capture_references(statement, reference_tracker);
+        if reference_tracker.has_completed() && !self.reference_filters.test(&value_per_field) {
+            return false;
+        }
+
+        self.capture_references(statement, reference_tracker);
         true
     }
 }
@@ -138,7 +109,7 @@ impl TableDataWriter {
 pub struct Parser<'a> {
     config: &'a Config,
     reference_tracker: ReferenceTracker,
-    data_writer_per_table: HashMap<String, TableDataWriter>,
+    insert_tracker_per_table: HashMap<String, InsertTracker>,
     schema_writer: WriterType,
     writer_per_table: HashMap<String, WriterType>,
     filepaths: Vec<PathBuf>,
@@ -149,7 +120,7 @@ impl Parser<'_> {
         Parser{
             config,
             reference_tracker: ReferenceTracker::new(),
-            data_writer_per_table: HashMap::new(),
+            insert_tracker_per_table: HashMap::new(),
             schema_writer: LineWriter::new(&config.schema_file),
             writer_per_table: HashMap::new(),
             filepaths: Vec::from([config.schema_file.clone()]),
@@ -161,7 +132,7 @@ impl Parser<'_> {
         self.filepaths.push(filepath.clone());
         println!("Reading table {} into {}", table, filepath.display());
         self.writer_per_table.insert(table.clone(), LineWriter::new(&filepath));
-        self.data_writer_per_table.insert(table.to_string(), TableDataWriter::new(
+        self.insert_tracker_per_table.insert(table.to_string(), InsertTracker::new(
             table,
             &self.config.filters_per_table,
             &self.config.references_per_table,
@@ -176,10 +147,10 @@ impl Parser<'_> {
                 self.schema_writer.write_line(statement.as_bytes()).expect("Unable to write data");
             },
             Some(table) => {
-                if !self.data_writer_per_table.contains_key(table) {
+                if !self.insert_tracker_per_table.contains_key(table) {
                     self.register_table(table, &statement);
                 }
-                let info = self.data_writer_per_table.get_mut(table).expect("Cannot find table info");
+                let info = self.insert_tracker_per_table.get_mut(table).expect("Cannot find table info");
                 if info.should_keep_statement(&statement, &mut self.reference_tracker) {
                     self.writer_per_table.get_mut(table).unwrap().write_line(statement.as_bytes()).expect("Unable to write data");
                 }
