@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use itertools::Itertools;
 
 use crate::sql_statement::{FieldPositions, Statement};
-use crate::io_utils::{WriterType, LineWriter, combine_files, read_sql};
+use crate::io_utils::{WriterType, LineWriter, combine_files};
 use crate::config::{Config, FilterMap, TableFilters};
 
 #[derive(Debug)]
@@ -113,9 +113,6 @@ pub struct Parser<'a> {
     config: &'a Config,
     reference_tracker: ReferenceTracker,
     insert_tracker_per_table: HashMap<String, InsertTracker>,
-    schema_writer: WriterType,
-    writer_per_table: HashMap<String, WriterType>,
-    filepaths: Vec<PathBuf>,
 }
 
 impl Parser<'_> {
@@ -124,17 +121,10 @@ impl Parser<'_> {
             config,
             reference_tracker: ReferenceTracker::new(),
             insert_tracker_per_table: HashMap::new(),
-            schema_writer: LineWriter::new(&config.schema_file),
-            writer_per_table: HashMap::new(),
-            filepaths: Vec::from([config.schema_file.clone()]),
         }
     }
 
     fn register_table(&mut self, table: &String, statement: &Statement) {
-        let filepath = self.config.working_dir_path.join(table).with_extension("sql");
-        self.filepaths.push(filepath.clone());
-        println!("Reading table {} into {}", table, filepath.display());
-        self.writer_per_table.insert(table.clone(), LineWriter::new(&filepath));
         self.insert_tracker_per_table.insert(table.to_string(), InsertTracker::new(
             table,
             &self.config.filters_per_table,
@@ -152,6 +142,9 @@ impl Parser<'_> {
                 if (!statement.is_insert()) {
                     return false;
                 }
+                if !self.config.requested_tables.contains(table) {
+                    return false;
+                }
                 if !self.insert_tracker_per_table.contains_key(table) {
                     self.register_table(table, &statement);
                 }
@@ -164,57 +157,41 @@ impl Parser<'_> {
         return false;
     }
 
-    fn on_new_statement(&mut self, statement: Statement) {
-        match statement.get_table() {
-            None => {
-                self.schema_writer.write_line(statement.as_bytes()).expect("Unable to write data");
-            },
-            Some(table) => {
-                if !self.insert_tracker_per_table.contains_key(table) {
-                    self.register_table(table, &statement);
-                }
-                let info = self.insert_tracker_per_table.get_mut(table).expect("Cannot find table info");
-                if info.should_keep_statement(&statement, &mut self.reference_tracker) {
-                    self.writer_per_table.get_mut(table).unwrap().write_line(statement.as_bytes()).expect("Unable to write data");
-                }
-            },
-        };
-    }
-
-    fn get_writer(&mut self, table: Option<String>) -> WriterType {
-        let filepath = match (table) {
+    fn get_path(&self, table: &Option<String>) -> PathBuf {
+        match table {
             Some(x) => self.config.working_dir_path.join(x).with_extension("sql"),
             None => self.config.schema_file.clone()
-        };
-        self.filepaths.push(filepath.clone());
-        println!("Writing into {}", filepath.display());
-        LineWriter::new(&filepath)
-    }
-
-    fn on_input_end(&mut self) {
-        self.schema_writer.flush().expect("Unable to flush schema file");
-        for writer in self.writer_per_table.values_mut() {
-            writer.flush().expect("Cannot flush buffer");
         }
-        dbg!(&self.reference_tracker);
     }
 
     pub fn parse_input_file(&mut self, input_file: &Path, output_file: &Path) {
+        let mut filepaths: Vec<PathBuf> = Vec::new();
         for (table, statements) in Statement::from_file(input_file).chunk_by(|statement| {
             statement.table.clone()
         }).into_iter() {
-            let mut writer = self.get_writer(table);
+            let filepath = self.get_path(&table);
+
+            match table {
+                Some(x) => println!("Writing table {} into {}", x, filepath.display()),
+                None => println!("Wriing schema into {}", filepath.display())
+            }
+
+            let mut writer: WriterType = LineWriter::new(&filepath);
+            filepaths.push(filepath);
+
             for statement in statements {
                 if self.should_keep_statement(&statement) {
                     writer.write_line(statement.as_bytes()).expect("Unable to write data");
                 }
             }
+
+            writer.flush().expect("Cannot flush buffer");
         }
 
-        self.on_input_end();
+        dbg!(&self.reference_tracker);
 
         combine_files(
-            self.filepaths.iter(),
+            filepaths.iter(),
             output_file,
         );
     }
