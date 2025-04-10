@@ -12,6 +12,9 @@ use nom::{
 };
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
+use std::fs::File;
+use std::io::{self, BufRead};
+use std::path::Path;
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -77,6 +80,8 @@ pub struct Statement {
 }
 
 impl Statement {
+    const SCHEMA_TABLE: &str = "INFORMATION_SCHEMA";
+
     pub fn new(table: &Option<String>, line: &str) -> Self {
        let statement_type = if line.starts_with("INSERT") { StatementType::Insert } else { StatementType::Unknown };
        Statement {
@@ -86,28 +91,51 @@ impl Statement {
        }
     }
 
+    pub fn from_file(sqldump_filepath: &Path) -> impl Iterator<Item = Statement> + use<> {
+        let mut current_table: Option<String> = None;
+        let annotate_with_table = move |line: String| {
+            if line.starts_with("-- Dumping data for table") {
+                let table = TABLE_DUMP_RE.captures(&line).unwrap().get(1).unwrap().as_str().to_string();
+                current_table = Some(table);
+            }
+            Statement::new(&current_table, &line)
+        };
+        let file = File::open(sqldump_filepath).expect("Cannot open file");
+        io::BufReader::new(file).lines()
+            .map_while(Result::ok)
+            .map(annotate_with_table)
+
+    }
+
     fn parse_lines<I: Iterator<Item=String>> (table: &String, lines: I) -> impl Iterator<Item = Statement> {
         lines.map(|l| Statement::new(&Some(table.clone()), l.as_str()))
     }
 
-    pub fn from_lines<I: Iterator<Item=String>> (statements: I) {
-        let mut current_table: Option<String> = None;
-        let res = statements
-            .chunk_by(move |line| {
-                if line.starts_with("-- Dumping data for table") {
-                    current_table = Some(TABLE_DUMP_RE.captures(&line).unwrap().get(1).unwrap().as_str().to_string());
-                }
-                match current_table {
-                    Some(ref table) => table.to_string(),
-                    None => "INFORMATION_SCHEMA".to_string(),
-                }
-            });
-
-        for (key, group) in res.into_iter() {
-            dbg!(&key);
-            Statement::parse_lines(&key, group);
+    fn get_table_from_line<'b, 'c>(line: &'b str, current_table: &'c mut Option<String>) -> String
+        where 'c: 'b
+    {
+        if line.starts_with("-- Dumping data for table") {
+            current_table.clone_from(
+                &Some(TABLE_DUMP_RE.captures(&line).unwrap().get(1).unwrap().as_str().to_string())
+            );
+        }
+        match current_table {
+            Some(table) => table.to_string(),
+            None => Statement::SCHEMA_TABLE.to_string(),
         }
     }
+
+    // pub fn from_lines(statements: impl Iterator<Item=String> + 'static) -> impl IntoIterator<Item=(String, impl IntoIterator<Item=String>)>
+    // {
+    //     let mut current_table: Option<String> = None;
+    //     let binding = statements.chunk_by(move |line| {
+    //         Statement::get_table_from_line(&line, &mut current_table)
+    //     }).into_iter();
+    //
+    //     let it = binding.into_iter();
+    //
+    //     it
+    // }
 
     pub fn is_insert(&self) -> bool {
         self.r#type == StatementType::Insert

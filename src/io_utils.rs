@@ -46,8 +46,8 @@ pub fn combine_files<'a, I: Iterator<Item=&'a PathBuf>>(all_files: I, output: &P
     }
 }
 
-pub fn read_dump(sqldump_filepath: &Path) -> impl Iterator<Item = String> {
-    let file = File::open(sqldump_filepath).expect("Cannot open file");
+pub fn read_dump(sqldump_filepath: PathBuf) -> impl Iterator<Item = String> {
+    let file = File::open(&sqldump_filepath).expect("Cannot open file");
     io::BufReader::new(file).lines().map_while(Result::ok)
 }
 
@@ -65,10 +65,4 @@ pub fn read_sql(sqldump_filepath: &Path, requested_tables: &HashSet<String>) -> 
         .map_while(Result::ok)
         .map(annotate_with_table)
         .filter(|(table, _)| table.is_none() || requested_tables.contains(table.as_ref().unwrap()))
-}
-
-pub fn split_sql(sqldump_filepath: &Path, requested_tables: &HashSet<String>) {
-    sql_statement::Statement::from_lines(
-        read_dump(sqldump_filepath)
-    );
 }

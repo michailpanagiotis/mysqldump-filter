@@ -2,8 +2,10 @@ use std::io::Write;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use itertools::Itertools;
+
 use crate::sql_statement::{FieldPositions, Statement};
-use crate::io_utils::{WriterType, LineWriter, combine_files, read_sql, split_sql};
+use crate::io_utils::{WriterType, LineWriter, combine_files, read_sql};
 use crate::config::{Config, FilterMap, TableFilters};
 
 #[derive(Debug)]
@@ -57,6 +59,7 @@ impl InsertTracker {
         statement: &Statement,
     ) -> Self {
 
+        dbg!(statement);
         let field_positions = statement.get_field_positions().expect("cannot find positions");
 
         let filters = filters_per_table.get(table);
@@ -140,8 +143,28 @@ impl Parser<'_> {
         ));
     }
 
-    fn on_new_line(&mut self, table: Option<String>, line: String) {
-        let statement = Statement::new(&table, &line);
+    fn should_keep_statement(&mut self, statement: &Statement) -> bool {
+        match statement.get_table() {
+            None => {
+                return true;
+            },
+            Some(table) => {
+                if (!statement.is_insert()) {
+                    return false;
+                }
+                if !self.insert_tracker_per_table.contains_key(table) {
+                    self.register_table(table, &statement);
+                }
+                let info = self.insert_tracker_per_table.get_mut(table).expect("Cannot find table info");
+                if info.should_keep_statement(&statement, &mut self.reference_tracker) {
+                    return true;
+                }
+            },
+        };
+        return false;
+    }
+
+    fn on_new_statement(&mut self, statement: Statement) {
         match statement.get_table() {
             None => {
                 self.schema_writer.write_line(statement.as_bytes()).expect("Unable to write data");
@@ -158,6 +181,16 @@ impl Parser<'_> {
         };
     }
 
+    fn get_writer(&mut self, table: Option<String>) -> WriterType {
+        let filepath = match (table) {
+            Some(x) => self.config.working_dir_path.join(x).with_extension("sql"),
+            None => self.config.schema_file.clone()
+        };
+        self.filepaths.push(filepath.clone());
+        println!("Writing into {}", filepath.display());
+        LineWriter::new(&filepath)
+    }
+
     fn on_input_end(&mut self) {
         self.schema_writer.flush().expect("Unable to flush schema file");
         for writer in self.writer_per_table.values_mut() {
@@ -167,15 +200,22 @@ impl Parser<'_> {
     }
 
     pub fn parse_input_file(&mut self, input_file: &Path, output_file: &Path) {
-        split_sql(input_file, &self.config.requested_tables);
-        // for (table, line) in read_sql(input_file, &self.config.requested_tables) {
-        //     self.on_new_line(table, line);
-        // }
-        // self.on_input_end();
-        //
-        // combine_files(
-        //     self.filepaths.iter(),
-        //     output_file,
-        // );
+        for (table, statements) in Statement::from_file(input_file).chunk_by(|statement| {
+            statement.table.clone()
+        }).into_iter() {
+            let mut writer = self.get_writer(table);
+            for statement in statements {
+                if self.should_keep_statement(&statement) {
+                    writer.write_line(statement.as_bytes()).expect("Unable to write data");
+                }
+            }
+        }
+
+        self.on_input_end();
+
+        combine_files(
+            self.filepaths.iter(),
+            output_file,
+        );
     }
 }
