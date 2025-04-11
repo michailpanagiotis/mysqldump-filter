@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use itertools::Itertools;
 
-use crate::sql_statement::{FieldPositions, Statement};
+use crate::sql_statement::{FieldPositions, Statement, TableStatements};
 use crate::io_utils::{WriterType, combine_files};
 use crate::config::{Config, FilterMap, TableFilters};
 
@@ -75,7 +75,7 @@ impl InsertTracker {
     }
 
     fn capture_references(&mut self, statement: &Statement, reference_tracker: &mut ReferenceTracker) {
-        if let Some(ref table) = statement.table {
+        if let Some(ref table) = statement.get_table() {
             for (field, set) in self.references.iter_mut() {
                 let value = self.field_positions.get_value(statement, field);
                 set.insert(value.clone());
@@ -141,38 +141,49 @@ impl Parser<'_> {
                 if !statement.is_insert() {
                     return false;
                 }
-                if !self.config.requested_tables.contains(table) {
+                if !self.config.requested_tables.contains(&table) {
                     return false;
                 }
-                if !self.insert_tracker_per_table.contains_key(table) {
-                    self.register_table(table, &statement);
+                if !self.insert_tracker_per_table.contains_key(&table) {
+                    self.register_table(&table, statement);
                 }
-                let info = self.insert_tracker_per_table.get_mut(table).expect("Cannot find table info");
-                if info.should_keep_statement(&statement, &mut self.reference_tracker) {
+                let info = self.insert_tracker_per_table.get_mut(&table).expect("Cannot find table info");
+                if info.should_keep_statement(statement, &mut self.reference_tracker) {
                     return true;
                 }
             },
         };
-        return false;
+        false
+    }
+
+    fn parse_statements<I: IntoIterator<Item=Statement>>(&mut self, table: &Option<String>, statements: I) -> PathBuf {
+        let mut writer = WriterType::new(
+            table,
+            &self.config.working_dir_path,
+            &self.config.schema_file,
+        );
+
+        for statement in statements.into_iter().filter(|statement| self.should_keep_statement(statement)) {
+            writer.write_line(statement.as_bytes()).expect("Unable to write data");
+        }
+
+        writer.flush().expect("Cannot flush buffer");
+        writer.get_filepath()
     }
 
     pub fn parse_input_file(&mut self, input_file: &Path, output_file: &Path) {
         let mut filepaths: Vec<PathBuf> = Vec::new();
-        for (table, statements) in Statement::from_file(input_file).chunk_by(|statement| {
-            statement.table.clone()
-        }).into_iter() {
-            let mut writer = WriterType::new(
-                &table,
-                &self.config.working_dir_path,
-                &self.config.schema_file,
-            );
+        for (table, statements) in Statement::from_file(input_file).chunk_by(Statement::get_table).into_iter() {
+            let st = TableStatements::new(&table, statements);
+            let mut writer = st.get_writer(&self.config.working_dir_path, &self.config.schema_file);
 
-            for statement in statements.into_iter().filter(|statement| self.should_keep_statement(statement)) {
+            for statement in st.filter(|statement| self.should_keep_statement(statement)) {
                 writer.write_line(statement.as_bytes()).expect("Unable to write data");
             }
 
             writer.flush().expect("Cannot flush buffer");
 
+            // let filepath = self.parse_statements(&table, statements);
             filepaths.push(writer.get_filepath());
         }
 

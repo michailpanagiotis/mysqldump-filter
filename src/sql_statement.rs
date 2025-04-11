@@ -1,5 +1,4 @@
 use lazy_static::lazy_static;
-use itertools::Itertools;
 use nom::multi::separated_list1;
 use nom::{
   IResult,
@@ -11,10 +10,12 @@ use nom::{
   sequence::{delimited, preceded},
 };
 use regex::Regex;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use crate::io_utils::WriterType;
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -74,14 +75,12 @@ enum StatementType {
 #[derive(Debug)]
 #[derive(Clone)]
 pub struct Statement {
-    pub line: String,
-    pub table: Option<String>,
+    line: String,
+    table: Option<String>,
     r#type: StatementType,
 }
 
 impl Statement {
-    const SCHEMA_TABLE: &str = "INFORMATION_SCHEMA";
-
     pub fn new(table: &Option<String>, line: &str) -> Self {
        let statement_type = if line.starts_with("INSERT") { StatementType::Insert } else { StatementType::Unknown };
        Statement {
@@ -107,42 +106,12 @@ impl Statement {
 
     }
 
-    fn parse_lines<I: Iterator<Item=String>> (table: &String, lines: I) -> impl Iterator<Item = Statement> {
-        lines.map(|l| Statement::new(&Some(table.clone()), l.as_str()))
-    }
-
-    fn get_table_from_line<'b, 'c>(line: &'b str, current_table: &'c mut Option<String>) -> String
-        where 'c: 'b
-    {
-        if line.starts_with("-- Dumping data for table") {
-            current_table.clone_from(
-                &Some(TABLE_DUMP_RE.captures(&line).unwrap().get(1).unwrap().as_str().to_string())
-            );
-        }
-        match current_table {
-            Some(table) => table.to_string(),
-            None => Statement::SCHEMA_TABLE.to_string(),
-        }
-    }
-
-    // pub fn from_lines(statements: impl Iterator<Item=String> + 'static) -> impl IntoIterator<Item=(String, impl IntoIterator<Item=String>)>
-    // {
-    //     let mut current_table: Option<String> = None;
-    //     let binding = statements.chunk_by(move |line| {
-    //         Statement::get_table_from_line(&line, &mut current_table)
-    //     }).into_iter();
-    //
-    //     let it = binding.into_iter();
-    //
-    //     it
-    // }
-
     pub fn is_insert(&self) -> bool {
         self.r#type == StatementType::Insert
     }
 
-    pub fn get_table(&self) -> Option<&String> {
-        self.table.as_ref()
+    pub fn get_table(&self) -> Option<String> {
+        self.table.clone()
     }
 
     pub fn as_bytes(&self) -> &[u8] {
@@ -180,11 +149,31 @@ impl Statement {
         let (_, values) = res.expect("cannot parse values");
         values.iter().map(|item| item.to_string()).collect()
     }
+}
 
-    pub fn table_contained_in(&self, tables: &HashSet<String>) -> bool {
-        if !self.is_insert() {
-            return false;
+pub struct TableStatements<'a, I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> {
+    table: Option<String>,
+    pub inner: itertools::Group<'a, Option<String>, I, F>,
+}
+
+impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> TableStatements<'_, I, F> {
+    pub fn new<'a, 'b>(table: &Option<String>, statements: itertools::Group<'b, Option<String>, I, F>) -> TableStatements<'a, I, F>
+      where 'b: 'a
+    {
+        TableStatements {
+            table: table.clone(),
+            inner: statements,
         }
-        tables.contains(self.table.as_ref().unwrap())
+    }
+
+    pub fn get_writer(&self, working_dir: &Path, default: &PathBuf) -> WriterType {
+        WriterType::new(
+            &self.table,
+            working_dir, default,
+        )
+    }
+
+    pub fn filter<T: FnMut(&Statement) -> bool>(self, predicate: T) -> impl Iterator<Item=Statement> {
+        self.inner.filter(predicate)
     }
 }
