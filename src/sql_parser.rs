@@ -1,11 +1,10 @@
-use std::io::Write;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use itertools::Itertools;
 
 use crate::sql_statement::{FieldPositions, Statement};
-use crate::io_utils::{WriterType, LineWriter, combine_files};
+use crate::io_utils::{WriterType, combine_files};
 use crate::config::{Config, FilterMap, TableFilters};
 
 #[derive(Debug)]
@@ -139,7 +138,7 @@ impl Parser<'_> {
                 return true;
             },
             Some(table) => {
-                if (!statement.is_insert()) {
+                if !statement.is_insert() {
                     return false;
                 }
                 if !self.config.requested_tables.contains(table) {
@@ -157,42 +156,28 @@ impl Parser<'_> {
         return false;
     }
 
-    fn get_path(&self, table: &Option<String>) -> PathBuf {
-        match table {
-            Some(x) => self.config.working_dir_path.join(x).with_extension("sql"),
-            None => self.config.schema_file.clone()
-        }
-    }
-
     pub fn parse_input_file(&mut self, input_file: &Path, output_file: &Path) {
         let mut filepaths: Vec<PathBuf> = Vec::new();
         for (table, statements) in Statement::from_file(input_file).chunk_by(|statement| {
             statement.table.clone()
         }).into_iter() {
-            let filepath = self.get_path(&table);
+            let mut writer = WriterType::new(
+                &table,
+                &self.config.working_dir_path,
+                &self.config.schema_file,
+            );
 
-            match table {
-                Some(x) => println!("Writing table {} into {}", x, filepath.display()),
-                None => println!("Wriing schema into {}", filepath.display())
-            }
-
-            let mut writer: WriterType = LineWriter::new(&filepath);
-            filepaths.push(filepath);
-
-            for statement in statements {
-                if self.should_keep_statement(&statement) {
-                    writer.write_line(statement.as_bytes()).expect("Unable to write data");
-                }
+            for statement in statements.into_iter().filter(|statement| self.should_keep_statement(statement)) {
+                writer.write_line(statement.as_bytes()).expect("Unable to write data");
             }
 
             writer.flush().expect("Cannot flush buffer");
+
+            filepaths.push(writer.get_filepath());
         }
 
         dbg!(&self.reference_tracker);
 
-        combine_files(
-            filepaths.iter(),
-            output_file,
-        );
+        combine_files(filepaths.iter(), output_file);
     }
 }

@@ -1,39 +1,54 @@
 use lazy_static::lazy_static;
 use regex::Regex;
-use std::collections::HashSet;
 use std::io::Write;
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufRead, BufWriter};
+use std::io::{self, BufWriter};
 use std::path::{Path, PathBuf};
 
-use crate::sql_statement;
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
 }
 
-pub type WriterType = io::BufWriter<File>;
-
-pub trait LineWriter {
-    fn new(filepath: &Path) -> Self;
-    fn write_line(&mut self, bytes: &[u8]) -> Result<(), std::io::Error>;
+pub struct WriterType {
+    table: Option<String>,
+    filepath: PathBuf,
+    inner: io::BufWriter<File>
 }
 
-impl LineWriter for WriterType {
-    fn new(filename: &Path) -> Self {
-        File::create(filename).expect("Unable to create file");
+impl WriterType {
+    pub fn new(table: &Option<String>, working_dir: &Path, default: &PathBuf) -> Self {
+        let filepath = match table {
+            Some(x) => working_dir.join(x).with_extension("sql"),
+            None => default.clone()
+        };
+
+        File::create(&filepath).expect("Unable to create file");
         let file = OpenOptions::new()
             .append(true)
-            .open(filename)
+            .open(&filepath)
             .expect("Unable to open file");
 
-        BufWriter::new(file)
+        WriterType {
+            filepath: filepath.to_path_buf(),
+            table: table.clone(),
+            inner: BufWriter::new(file)
+        }
     }
 
-    fn write_line(&mut self, bytes: &[u8]) -> Result<(), std::io::Error> {
-        self.write_all(bytes)?;
-        self.write_all(b"\n")?;
+    pub fn write_line(&mut self, bytes: &[u8]) -> Result<(), std::io::Error> {
+        self.inner.write_all(bytes)?;
+        self.inner.write_all(b"\n")?;
         Ok(())
+    }
+
+    pub fn flush(&mut self) -> Result<(), std::io::Error> {
+        self.inner.flush()?;
+        Ok(())
+    }
+
+    pub fn get_filepath(&self) -> PathBuf {
+        self.filepath.clone()
     }
 }
 
@@ -44,25 +59,4 @@ pub fn combine_files<'a, I: Iterator<Item=&'a PathBuf>>(all_files: I, output: &P
         let mut input = File::open(f).expect("cannot open file");
         io::copy(&mut input, &mut output_file).expect("cannot copy file");
     }
-}
-
-pub fn read_dump(sqldump_filepath: PathBuf) -> impl Iterator<Item = String> {
-    let file = File::open(&sqldump_filepath).expect("Cannot open file");
-    io::BufReader::new(file).lines().map_while(Result::ok)
-}
-
-pub fn read_sql(sqldump_filepath: &Path, requested_tables: &HashSet<String>) -> impl Iterator<Item = (Option<String>, String)> {
-    let mut current_table: Option<String> = None;
-    let annotate_with_table = move |line: String| {
-        if line.starts_with("-- Dumping data for table") {
-            let table = TABLE_DUMP_RE.captures(&line).unwrap().get(1).unwrap().as_str().to_string();
-            current_table = Some(table);
-        }
-        (current_table.clone(), line)
-    };
-    let file = File::open(sqldump_filepath).expect("Cannot open file");
-    io::BufReader::new(file).lines()
-        .map_while(Result::ok)
-        .map(annotate_with_table)
-        .filter(|(table, _)| table.is_none() || requested_tables.contains(table.as_ref().unwrap()))
 }
