@@ -5,22 +5,22 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter};
 use std::path::{Path, PathBuf};
 
+use crate::sql_statement::Statement;
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
 }
 
-pub struct WriterType {
-    table: Option<String>,
+pub struct SQLWriter {
     filepath: PathBuf,
     inner: io::BufWriter<File>
 }
 
-impl WriterType {
-    pub fn new(table: &Option<String>, working_dir: &Path, default: &PathBuf) -> Self {
+impl SQLWriter {
+    pub fn new(table: &Option<String>, working_dir: &Path, default: &Path) -> Self {
         let filepath = match table {
             Some(x) => working_dir.join(x).with_extension("sql"),
-            None => default.clone()
+            None => working_dir.join(default)
         };
 
         File::create(&filepath).expect("Unable to create file");
@@ -29,15 +29,23 @@ impl WriterType {
             .open(&filepath)
             .expect("Unable to open file");
 
-        WriterType {
+        SQLWriter {
             filepath: filepath.to_path_buf(),
-            table: table.clone(),
             inner: BufWriter::new(file)
         }
     }
 
-    pub fn write_line(&mut self, bytes: &[u8]) -> Result<(), std::io::Error> {
-        self.inner.write_all(bytes)?;
+    pub fn combine_files<'a, I: Iterator<Item=&'a PathBuf>>(all_files: I, output: &Path) {
+        println!("Combining files");
+        let mut output_file = File::create(output).expect("cannot create output file");
+        for f in all_files {
+            let mut input = File::open(f).expect("cannot open file");
+            io::copy(&mut input, &mut output_file).expect("cannot copy file");
+        }
+    }
+
+    pub fn write_statement(&mut self, statement: &Statement) -> Result<(), std::io::Error> {
+        self.inner.write_all(statement.as_bytes())?;
         self.inner.write_all(b"\n")?;
         Ok(())
     }
@@ -49,14 +57,5 @@ impl WriterType {
 
     pub fn get_filepath(&self) -> PathBuf {
         self.filepath.clone()
-    }
-}
-
-pub fn combine_files<'a, I: Iterator<Item=&'a PathBuf>>(all_files: I, output: &Path) {
-    println!("Combining files");
-    let mut output_file = File::create(output).expect("cannot create output file");
-    for f in all_files {
-        let mut input = File::open(f).expect("cannot open file");
-        io::copy(&mut input, &mut output_file).expect("cannot copy file");
     }
 }

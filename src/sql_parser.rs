@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use itertools::Itertools;
 
 use crate::sql_statement::{FieldPositions, Statement, TableStatements};
-use crate::io_utils::{WriterType, combine_files};
+use crate::io_utils::SQLWriter;
 use crate::config::{Config, FilterMap, TableFilters};
 
 #[derive(Debug)]
@@ -57,8 +57,6 @@ impl InsertTracker {
         references_per_table: &HashMap<String, Vec<String>>,
         statement: &Statement,
     ) -> Self {
-
-        dbg!(statement);
         let field_positions = statement.get_field_positions().expect("cannot find positions");
 
         let filters = filters_per_table.get(table);
@@ -156,21 +154,6 @@ impl Parser<'_> {
         false
     }
 
-    fn parse_statements<I: IntoIterator<Item=Statement>>(&mut self, table: &Option<String>, statements: I) -> PathBuf {
-        let mut writer = WriterType::new(
-            table,
-            &self.config.working_dir_path,
-            &self.config.schema_file,
-        );
-
-        for statement in statements.into_iter().filter(|statement| self.should_keep_statement(statement)) {
-            writer.write_line(statement.as_bytes()).expect("Unable to write data");
-        }
-
-        writer.flush().expect("Cannot flush buffer");
-        writer.get_filepath()
-    }
-
     pub fn parse_input_file(&mut self, input_file: &Path, output_file: &Path) {
         let mut filepaths: Vec<PathBuf> = Vec::new();
         for (table, statements) in Statement::from_file(input_file).chunk_by(Statement::get_table).into_iter() {
@@ -178,17 +161,16 @@ impl Parser<'_> {
             let mut writer = st.get_writer(&self.config.working_dir_path, &self.config.schema_file);
 
             for statement in st.filter(|statement| self.should_keep_statement(statement)) {
-                writer.write_line(statement.as_bytes()).expect("Unable to write data");
+                writer.write_statement(&statement).expect("Unable to write data");
             }
 
             writer.flush().expect("Cannot flush buffer");
 
-            // let filepath = self.parse_statements(&table, statements);
             filepaths.push(writer.get_filepath());
         }
 
         dbg!(&self.reference_tracker);
 
-        combine_files(filepaths.iter(), output_file);
+        SQLWriter::combine_files(filepaths.iter(), output_file);
     }
 }

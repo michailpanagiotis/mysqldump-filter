@@ -15,7 +15,7 @@ use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 
-use crate::io_utils::WriterType;
+use crate::io_utils::SQLWriter;
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -166,8 +166,8 @@ impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> TableStat
         }
     }
 
-    pub fn get_writer(&self, working_dir: &Path, default: &PathBuf) -> WriterType {
-        WriterType::new(
+    pub fn get_writer(&self, working_dir: &Path, default: &Path) -> SQLWriter {
+        SQLWriter::new(
             &self.table,
             working_dir, default,
         )
