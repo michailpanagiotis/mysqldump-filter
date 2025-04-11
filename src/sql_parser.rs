@@ -108,7 +108,6 @@ impl InsertTracker {
 #[derive(Debug)]
 pub struct Parser<'a> {
     config: &'a Config,
-    reference_tracker: ReferenceTracker,
     insert_tracker_per_table: HashMap<String, InsertTracker>,
 }
 
@@ -116,7 +115,6 @@ impl Parser<'_> {
     pub fn new(config: &Config) -> Parser {
         Parser{
             config,
-            reference_tracker: ReferenceTracker::new(),
             insert_tracker_per_table: HashMap::new(),
         }
     }
@@ -130,7 +128,12 @@ impl Parser<'_> {
         ));
     }
 
-    fn should_keep_statement(&mut self, statement: &Statement) -> bool {
+    fn should_keep_statement(
+        &mut self,
+        statement: &Statement,
+        requested_tables: &HashSet<String>,
+        reference_tracker: &mut ReferenceTracker,
+    ) -> bool {
         match statement.get_table() {
             None => {
                 return true;
@@ -139,14 +142,14 @@ impl Parser<'_> {
                 if !statement.is_insert() {
                     return false;
                 }
-                if !self.config.requested_tables.contains(&table) {
+                if !requested_tables.contains(&table) {
                     return false;
                 }
                 if !self.insert_tracker_per_table.contains_key(&table) {
                     self.register_table(&table, statement);
                 }
                 let info = self.insert_tracker_per_table.get_mut(&table).expect("Cannot find table info");
-                if info.should_keep_statement(statement, &mut self.reference_tracker) {
+                if info.should_keep_statement(statement, reference_tracker) {
                     return true;
                 }
             },
@@ -156,11 +159,16 @@ impl Parser<'_> {
 
     pub fn parse_input_file(&mut self, input_file: &Path, output_file: &Path) {
         let mut filepaths: Vec<PathBuf> = Vec::new();
+        let reference_tracker = &mut ReferenceTracker::new();
         for (table, statements) in Statement::from_file(input_file).chunk_by(Statement::get_table).into_iter() {
             let st = TableStatements::new(&table, statements);
             let mut writer = st.get_writer(&self.config.working_dir_path, &self.config.schema_file);
 
-            for statement in st.filter(|statement| self.should_keep_statement(statement)) {
+            for statement in st.filter(|statement| self.should_keep_statement(
+                statement,
+                &self.config.requested_tables,
+                reference_tracker,
+            )) {
                 writer.write_statement(&statement).expect("Unable to write data");
             }
 
@@ -169,7 +177,7 @@ impl Parser<'_> {
             filepaths.push(writer.get_filepath());
         }
 
-        dbg!(&self.reference_tracker);
+        dbg!(&reference_tracker);
 
         SQLWriter::combine_files(filepaths.iter(), output_file);
     }
