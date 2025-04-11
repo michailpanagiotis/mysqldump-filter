@@ -13,7 +13,7 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::io_utils::SQLWriter;
 
