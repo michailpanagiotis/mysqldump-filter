@@ -13,7 +13,7 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::io_utils::SQLWriter;
 
@@ -153,6 +153,7 @@ impl Statement {
 
 pub struct TableStatements<'a, I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> {
     table: Option<String>,
+    field_positions: Option<FieldPositions>,
     pub inner: itertools::Group<'a, Option<String>, I, F>,
 }
 
@@ -162,6 +163,7 @@ impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> TableStat
     {
         TableStatements {
             table: table.clone(),
+            field_positions: None,
             inner: statements,
         }
     }
@@ -175,5 +177,15 @@ impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> TableStat
 
     pub fn filter<T: FnMut(&Statement) -> bool>(self, predicate: T) -> impl Iterator<Item=Statement> {
         self.inner.filter(predicate)
+    }
+
+    pub fn scan<T: FnMut(&Statement) -> bool>(self, predicate: T, working_dir: &Path, default: &Path) -> PathBuf {
+        let mut writer = self.get_writer(working_dir, default);
+
+        for statement in self.filter(predicate) {
+            writer.write_statement(&statement).expect("Unable to write data");
+        }
+        writer.flush().expect("Cannot flush buffer");
+        writer.get_filepath()
     }
 }

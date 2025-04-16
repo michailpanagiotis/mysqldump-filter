@@ -23,7 +23,7 @@ impl SQLWriter {
             None => working_dir.join(default)
         };
 
-        File::create(&filepath).expect("Unable to create file");
+        File::create(&filepath).expect(format!("Unable to create file {}", &filepath.display()).as_str());
         let file = OpenOptions::new()
             .append(true)
             .open(&filepath)

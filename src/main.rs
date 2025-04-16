@@ -22,6 +22,7 @@ struct Cli {
 
 
 fn main() {
+    println!("HELLO");
     let cli = Cli::parse();
     let input_file = std::env::current_dir().unwrap().to_path_buf().join(cli.input);
     let output_file = std::env::current_dir().unwrap().to_path_buf().join(cli.output);

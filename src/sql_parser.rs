@@ -8,7 +8,7 @@ use crate::io_utils::SQLWriter;
 use crate::config::{Config, FilterMap, TableFilters};
 
 #[derive(Debug)]
-struct ReferenceTracker {
+pub struct ReferenceTracker {
     references: HashMap<String, HashSet<String>>,
     is_complete: bool,
 }
@@ -83,10 +83,6 @@ impl InsertTracker {
     }
 
     fn should_keep_statement(&mut self, statement: &Statement, reference_tracker: &mut ReferenceTracker) -> bool {
-        if !statement.is_insert() {
-            return true;
-        }
-
         let value_per_field = self.field_positions.get_values(
             statement,
             self.direct_filters.get_filtered_fields(),
@@ -100,7 +96,6 @@ impl InsertTracker {
             return false;
         }
 
-        self.capture_references(statement, reference_tracker);
         true
     }
 }
@@ -136,7 +131,7 @@ impl Parser<'_> {
     ) -> bool {
         match statement.get_table() {
             None => {
-                return true;
+                true
             },
             Some(table) => {
                 if !statement.is_insert() {
@@ -150,11 +145,13 @@ impl Parser<'_> {
                 }
                 let info = self.insert_tracker_per_table.get_mut(&table).expect("Cannot find table info");
                 if info.should_keep_statement(statement, reference_tracker) {
-                    return true;
+                    info.capture_references(statement, reference_tracker);
+                    true
+                } else {
+                    false
                 }
             },
-        };
-        false
+        }
     }
 
     pub fn parse_input_file(&mut self, input_file: &Path, output_file: &Path) {
@@ -162,19 +159,19 @@ impl Parser<'_> {
         let reference_tracker = &mut ReferenceTracker::new();
         for (table, statements) in Statement::from_file(input_file).chunk_by(Statement::get_table).into_iter() {
             let st = TableStatements::new(&table, statements);
-            let mut writer = st.get_writer(&self.config.working_dir_path, &self.config.schema_file);
+            let working_dir_path = &self.config.working_dir_path.clone();
+            let schema_file = &self.config.schema_file.clone();
+            let filepath = st.scan(
+                |statement| self.should_keep_statement(
+                    statement,
+                    &self.config.requested_tables,
+                    reference_tracker,
+                ),
+                working_dir_path,
+                schema_file,
+            );
 
-            for statement in st.filter(|statement| self.should_keep_statement(
-                statement,
-                &self.config.requested_tables,
-                reference_tracker,
-            )) {
-                writer.write_statement(&statement).expect("Unable to write data");
-            }
-
-            writer.flush().expect("Cannot flush buffer");
-
-            filepaths.push(writer.get_filepath());
+            filepaths.push(filepath);
         }
 
         dbg!(&reference_tracker);
