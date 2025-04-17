@@ -3,6 +3,7 @@ use crate::sql_statement::{FieldPositions, Statement};
 use crate::config::{FilterMap, TableFilters};
 
 #[derive(Debug)]
+#[derive(Clone)]
 struct TableReferences {
     table: String,
     values_per_field: HashMap<String, HashSet<String>>,
@@ -41,7 +42,6 @@ impl TableReferences {
 
 #[derive(Debug)]
 pub struct ReferenceTracker {
-    references: HashMap<String, HashSet<String>>,
     table_references: HashMap<String, TableReferences>,
     is_complete: bool,
 }
@@ -49,7 +49,6 @@ pub struct ReferenceTracker {
 impl ReferenceTracker {
     pub fn new() -> Self {
         ReferenceTracker {
-            references: HashMap::new(),
             table_references: HashMap::new(),
             is_complete: false,
         }
@@ -57,24 +56,21 @@ impl ReferenceTracker {
 
     pub fn from_iter<'a, I: Iterator<Item=&'a ReferenceTracker>>(ref_trackers: I) -> Self {
         let mut references: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut table_references: HashMap<String, TableReferences> = HashMap::new();
 
         for tracker in ref_trackers {
             for (table, tref) in &tracker.table_references {
                 for (field, value) in tref.to_canonical_entries() {
                     references.insert(field, value);
                 }
+                table_references.insert(table.clone(), tref.clone());
             }
         }
 
         ReferenceTracker {
-            references,
-            table_references: HashMap::new(),
+            table_references,
             is_complete: true,
         }
-    }
-
-    pub fn get_key(&mut self, table: &String, field: &str) -> String {
-        table.to_owned() + "." + field
     }
 
     pub fn has_completed(&self) -> bool {
@@ -83,16 +79,6 @@ impl ReferenceTracker {
 
 
     pub fn insert(&mut self, table: &String, field: &str, value: &String) {
-        let key: String = self.get_key(table, field);
-        match self.references.get_mut(&key) {
-            Some(x) => {
-                x.insert(value.to_string());
-            },
-            None => {
-                self.references.insert(key, HashSet::from([value.to_string()]));
-            }
-        }
-
         match self.table_references.get_mut(table) {
             Some(x) => {
                 x.insert(field, value);
