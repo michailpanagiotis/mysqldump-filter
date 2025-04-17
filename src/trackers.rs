@@ -3,8 +3,46 @@ use crate::sql_statement::{FieldPositions, Statement};
 use crate::config::{FilterMap, TableFilters};
 
 #[derive(Debug)]
+struct TableReferences {
+    table: String,
+    values_per_field: HashMap<String, HashSet<String>>,
+    is_complete: bool,
+}
+
+impl TableReferences {
+    pub fn new(table: &String) -> Self {
+        TableReferences {
+            table: table.clone(),
+            values_per_field: HashMap::new(),
+            is_complete: false,
+        }
+    }
+
+    pub fn has_completed(&self) -> bool {
+        self.is_complete
+    }
+
+    pub fn insert(&mut self, field: &str, value: &String) {
+        match self.values_per_field.get_mut(field) {
+            Some(x) => {
+                x.insert(value.to_string());
+            },
+            None => {
+                self.values_per_field.insert(field.to_string(), HashSet::from([value.to_string()]));
+            }
+        }
+    }
+
+    pub fn to_canonical_entries(&self) -> impl Iterator<Item=(String, HashSet<String>)> {
+        self.values_per_field.iter().map(|(field, value)| (self.table.to_owned() + "." + field, value.clone()))
+    }
+}
+
+
+#[derive(Debug)]
 pub struct ReferenceTracker {
     references: HashMap<String, HashSet<String>>,
+    table_references: HashMap<String, TableReferences>,
     is_complete: bool,
 }
 
@@ -12,21 +50,25 @@ impl ReferenceTracker {
     pub fn new() -> Self {
         ReferenceTracker {
             references: HashMap::new(),
+            table_references: HashMap::new(),
             is_complete: false,
         }
     }
 
     pub fn from_iter<'a, I: Iterator<Item=&'a ReferenceTracker>>(ref_trackers: I) -> Self {
-        let mut references = HashMap::new();
+        let mut references: HashMap<String, HashSet<String>> = HashMap::new();
 
         for tracker in ref_trackers {
-            for (key, value) in &tracker.references {
-                references.insert(key.to_string(), value.clone());
+            for (table, tref) in &tracker.table_references {
+                for (field, value) in tref.to_canonical_entries() {
+                    references.insert(field, value);
+                }
             }
         }
 
         ReferenceTracker {
             references,
+            table_references: HashMap::new(),
             is_complete: true,
         }
     }
@@ -48,6 +90,17 @@ impl ReferenceTracker {
             },
             None => {
                 self.references.insert(key, HashSet::from([value.to_string()]));
+            }
+        }
+
+        match self.table_references.get_mut(table) {
+            Some(x) => {
+                x.insert(field, value);
+            },
+            None => {
+                let mut refs = TableReferences::new(table);
+                refs.insert(field, value);
+                self.table_references.insert(table.clone(), refs);
             }
         }
     }
