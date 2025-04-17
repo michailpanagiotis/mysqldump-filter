@@ -99,20 +99,25 @@ impl Statement {
        }
     }
 
-    pub fn from_file(sqldump_filepath: &Path) -> impl Iterator<Item = Statement> + use<> {
+    pub fn from_file(sqldump_filepath: &Path, requested_tables: &HashSet<String>) -> impl Iterator<Item = Statement> + use<> {
         let mut current_table: Option<String> = None;
+        let valid_tables = requested_tables.clone();
         let annotate_with_table = move |line: String| {
             if line.starts_with("-- Dumping data for table") {
                 let table = TABLE_DUMP_RE.captures(&line).unwrap().get(1).unwrap().as_str().to_string();
                 current_table = Some(table);
             }
-            Statement::new(&current_table, &line)
+            if let Some(ref t) = current_table {
+                if !valid_tables.contains(t) {
+                    return None
+                }
+            }
+            Some(Statement::new(&current_table, &line))
         };
         let file = File::open(sqldump_filepath).expect("Cannot open file");
         io::BufReader::new(file).lines()
             .map_while(Result::ok)
-            .map(annotate_with_table)
-
+            .flat_map(annotate_with_table)
     }
 
     pub fn is_insert(&self) -> bool {
@@ -169,7 +174,6 @@ impl Statement {
 
 pub struct TableStatements<'a, I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> {
     table: Option<String>,
-    field_positions: Option<FieldPositions>,
     pub inner: itertools::Group<'a, Option<String>, I, F>,
 }
 
@@ -179,7 +183,6 @@ impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> TableStat
     {
         TableStatements {
             table: table.clone(),
-            field_positions: None,
             inner: statements,
         }
     }
@@ -191,14 +194,14 @@ impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> TableStat
         )
     }
 
-    pub fn filter<T: FnMut(&Statement) -> bool>(self, predicate: T) -> impl Iterator<Item=Statement> {
-        self.inner.filter(predicate)
+    pub fn filter<T: FnMut(&Statement) -> bool>(self, mut predicate: T) -> impl Iterator<Item=Statement> {
+        self.inner.filter(move |statement| predicate(statement))
     }
 
     pub fn scan<T: FnMut(&Statement) -> bool>(self, predicate: T, working_dir: &Path, default: &Path, referenced_fields: &HashSet<String>) -> (Option<TableReferences>, PathBuf) {
         let mut writer = self.get_writer(working_dir, default);
 
-        let mut ref_tracker: Option<TableReferences> = match self.table.is_some() && referenced_fields.len() > 0 {
+        let mut ref_tracker: Option<TableReferences> = match self.table.is_some() && !referenced_fields.is_empty() {
             true => Some(TableReferences::new(self.table.as_ref().unwrap(), referenced_fields)),
             false => None,
         };

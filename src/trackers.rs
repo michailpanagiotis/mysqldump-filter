@@ -112,17 +112,13 @@ impl InsertTracker {
         }
     }
 
-    pub fn should_keep_statement(&mut self, statement: &Statement, reference_tracker: &mut ReferenceTracker) -> bool {
+    pub fn should_keep_statement(&mut self, statement: &Statement) -> bool {
         let value_per_field = self.field_positions.get_values(
             statement,
             self.direct_filters.get_filtered_fields(),
         );
 
         if !self.direct_filters.test(&value_per_field) {
-            return false;
-        }
-
-        if reference_tracker.has_completed() && !self.reference_filters.test(&value_per_field) {
             return false;
         }
 

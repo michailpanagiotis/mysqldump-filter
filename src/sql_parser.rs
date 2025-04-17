@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 
 use itertools::Itertools;
 
-use crate::sql_statement::{FieldPositions, Statement, TableStatements};
+use crate::sql_statement::{Statement, TableStatements};
 use crate::io_utils::SQLWriter;
 use crate::trackers::{InsertTracker, ReferenceTracker, TableReferences};
-use crate::config::{Config, FilterMap, TableFilters};
+use crate::config::Config;
 
 #[derive(Debug)]
 pub struct Parser<'a> {
@@ -31,12 +31,7 @@ impl Parser<'_> {
         ));
     }
 
-    fn should_keep_statement(
-        &mut self,
-        statement: &Statement,
-        requested_tables: &HashSet<String>,
-        reference_tracker: &mut ReferenceTracker,
-    ) -> bool {
+    fn should_keep_statement(&mut self, statement: &Statement) -> bool {
         match statement.get_table() {
             None => {
                 true
@@ -45,27 +40,19 @@ impl Parser<'_> {
                 if !statement.is_insert() {
                     return false;
                 }
-                if !requested_tables.contains(&table) {
-                    return false;
-                }
                 if !self.insert_tracker_per_table.contains_key(&table) {
                     self.register_table(&table, statement);
                 }
                 let info = self.insert_tracker_per_table.get_mut(&table).expect("Cannot find table info");
-                if info.should_keep_statement(statement, reference_tracker) {
-                    true
-                } else {
-                    false
-                }
+                info.should_keep_statement(statement)
             },
         }
     }
 
     pub fn parse_input_file(&mut self, input_file: &Path, output_file: &Path) {
         let mut filepaths: Vec<PathBuf> = Vec::new();
-        let reference_tracker = &mut ReferenceTracker::new(&HashSet::new());
         let mut reference_trackers: Vec<TableReferences> = Vec::new();
-        for (table, statements) in Statement::from_file(input_file).chunk_by(Statement::get_table).into_iter() {
+        for (table, statements) in Statement::from_file(input_file, &self.config.requested_tables).chunk_by(Statement::get_table).into_iter() {
             let st = TableStatements::new(&table, statements);
             let working_dir_path = &self.config.working_dir_path.clone();
             let schema_file = &self.config.schema_file.clone();
@@ -84,11 +71,7 @@ impl Parser<'_> {
             }
 
             let (ref_tracker, filepath) = st.scan(
-                |statement| self.should_keep_statement(
-                    statement,
-                    &self.config.requested_tables,
-                    reference_tracker,
-                ),
+                |statement| self.should_keep_statement(statement),
                 working_dir_path,
                 schema_file,
                 &referenced_fields,
