@@ -65,11 +65,11 @@ impl FieldPositions {
     }
 
     pub fn filtered(&mut self, fields: &HashSet<String>) -> Self {
-        FieldPositions(
-            HashMap::from_iter(
-                self.0.iter().filter(|(key, _)| fields.contains(key.to_owned())).map(|(key, value)| (key.clone(), value.clone()))
-            )
-        )
+        FieldPositions(HashMap::from_iter(
+            self.0.iter()
+                .filter(|(key, _)| fields.contains(*key))
+                .map(|(key, value)| (key.clone(), *value))
+        ))
     }
 }
 
