@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use crate::sql_statement::{FieldPositions, Statement};
-use crate::config::{FilterMap, TableFilters};
+use crate::config::TableFilters;
 
 #[derive(Debug)]
 #[derive(Clone)]
@@ -84,6 +84,7 @@ impl ReferenceTracker {
 
 #[derive(Debug)]
 pub struct InsertTracker {
+    table: String,
     direct_filters: TableFilters,
     reference_filters: TableFilters,
     field_positions: Option<FieldPositions>,
@@ -92,18 +93,26 @@ pub struct InsertTracker {
 impl InsertTracker {
     pub fn new(
         table: &str,
-        filters_per_table: &FilterMap,
+        filters: &Option<TableFilters>,
     ) -> Self {
-        let filters = filters_per_table.get(table);
+        let mut borrowed = filters.clone();
+        let concrete_filters = borrowed.get_or_insert(TableFilters::empty());
 
         InsertTracker {
-            direct_filters: filters.to_direct_filters(),
-            reference_filters: filters.to_reference_filters(),
+            table: table.to_string(),
+            direct_filters: concrete_filters.to_direct_filters(),
+            reference_filters: concrete_filters.to_reference_filters(),
             field_positions: None,
         }
     }
 
     pub fn should_keep_statement(&mut self, statement: &Statement) -> bool {
+        if let Some(ref t) = statement.get_table() {
+            if t != &self.table {
+                return true;
+            }
+        }
+
         if self.field_positions.is_none() {
             self.field_positions = statement.get_filtered_field_positions(self.direct_filters.get_filtered_fields());
         }

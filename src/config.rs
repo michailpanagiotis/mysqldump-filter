@@ -125,7 +125,7 @@ impl TableFilters {
         self.get_reference_conditions().iter().map(|x| x.get_reference_parts()).collect()
     }
 
-    fn empty() -> Self {
+    pub fn empty() -> Self {
         TableFilters{ filtered_fields: HashSet::new(), filters_per_field: HashMap::new(),  }
     }
 

@@ -16,7 +16,8 @@ use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 
 use crate::io_utils::SQLWriter;
-use crate::trackers::TableReferences;
+use crate::config::TableFilters;
+use crate::trackers::{InsertTracker, TableReferences};
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -174,15 +175,28 @@ impl Statement {
 
 pub struct TableStatements<'a, I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> {
     table: Option<String>,
+    insert_tracker: Option<InsertTracker>,
     pub inner: itertools::Group<'a, Option<String>, I, F>,
 }
 
 impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> TableStatements<'_, I, F> {
-    pub fn new<'a, 'b>(table: &Option<String>, statements: itertools::Group<'b, Option<String>, I, F>) -> TableStatements<'a, I, F>
+    pub fn new<'a, 'b>(
+        table: &Option<String>,
+        statements: itertools::Group<'b, Option<String>, I, F>,
+        filters: &Option<TableFilters>,
+    ) -> TableStatements<'a, I, F>
       where 'b: 'a
     {
+
+        let insert_tracker = table.clone().map(|t| InsertTracker::new(
+            &t,
+            &filters,
+        ));
+
+
         TableStatements {
             table: table.clone(),
+            insert_tracker,
             inner: statements,
         }
     }

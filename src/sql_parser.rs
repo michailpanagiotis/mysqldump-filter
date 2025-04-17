@@ -11,40 +11,32 @@ use crate::config::Config;
 #[derive(Debug)]
 pub struct Parser<'a> {
     config: &'a Config,
-    insert_tracker_per_table: HashMap<String, InsertTracker>,
 }
 
 impl Parser<'_> {
     pub fn new(config: &Config) -> Parser {
         Parser{
             config,
-            insert_tracker_per_table: HashMap::new(),
         }
     }
 
-    fn register_table(&mut self, table: &String, statement: &Statement) {
-        self.insert_tracker_per_table.insert(table.to_string(), InsertTracker::new(
-            table,
-            &self.config.filters_per_table,
-        ));
-    }
-
-    fn should_keep_statement(&mut self, statement: &Statement) -> bool {
-        let table = statement.get_table().expect("expecting a table");
-        if !self.insert_tracker_per_table.contains_key(&table) {
-            self.register_table(&table, statement);
+    fn should_keep_statement(statement: &Statement, insert_tracker: &mut Option<InsertTracker>) -> bool {
+        if let Some(info) = insert_tracker {
+            info.should_keep_statement(statement)
+        } else {
+            true
         }
-        let info = self.insert_tracker_per_table.get_mut(&table).expect("Cannot find table info");
-        info.should_keep_statement(statement)
     }
 
     pub fn parse_input_file(&mut self, input_file: &Path, output_file: &Path) {
         let mut filepaths: Vec<PathBuf> = Vec::new();
         let mut reference_trackers: Vec<TableReferences> = Vec::new();
         for (table, statements) in Statement::from_file(input_file, &self.config.requested_tables).chunk_by(Statement::get_table).into_iter() {
-            let st = TableStatements::new(&table, statements);
+            let filters = table.clone().map(|t| self.config.filters_per_table.get(&t));
             let working_dir_path = &self.config.working_dir_path.clone();
             let schema_file = &self.config.schema_file.clone();
+
+            let st = TableStatements::new(&table, statements, &filters);
 
             let referenced_fields = match table {
                 None => HashSet::new(),
@@ -55,12 +47,24 @@ impl Parser<'_> {
                     }
                 }
             };
+            let mut insert_tracker = table.clone().map(|t| InsertTracker::new(
+                &t,
+                &filters,
+            ));
+
+
             if table.is_some() {
                 println!("Parsing table {}", &table.unwrap());
             }
 
             let (ref_tracker, filepath) = st.scan(
-                |statement| self.should_keep_statement(statement),
+                |statement| {
+                    if let Some(info) = &mut insert_tracker {
+                        info.should_keep_statement(statement)
+                    } else {
+                        true
+                    }
+                },
                 working_dir_path,
                 schema_file,
                 &referenced_fields,
