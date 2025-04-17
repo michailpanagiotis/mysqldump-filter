@@ -5,7 +5,7 @@ use itertools::Itertools;
 
 use crate::sql_statement::{FieldPositions, Statement, TableStatements};
 use crate::io_utils::SQLWriter;
-use crate::trackers::{InsertTracker, ReferenceTracker};
+use crate::trackers::{InsertTracker, ReferenceTracker, TableReferences};
 use crate::config::{Config, FilterMap, TableFilters};
 
 #[derive(Debug)]
@@ -65,16 +65,27 @@ impl Parser<'_> {
 
     pub fn parse_input_file(&mut self, input_file: &Path, output_file: &Path) {
         let mut filepaths: Vec<PathBuf> = Vec::new();
-        let reference_tracker = &mut ReferenceTracker::new();
-        let reference_trackers: Vec<&ReferenceTracker> = Vec::new();
+        let reference_tracker = &mut ReferenceTracker::new(&HashSet::new());
+        let mut reference_trackers: Vec<TableReferences> = Vec::new();
         for (table, statements) in Statement::from_file(input_file).chunk_by(Statement::get_table).into_iter() {
             let st = TableStatements::new(&table, statements);
+            let working_dir_path = &self.config.working_dir_path.clone();
+            let schema_file = &self.config.schema_file.clone();
+
+            let referenced_fields = match table {
+                None => HashSet::new(),
+                Some(ref t) => {
+                    match self.config.references_per_table.get(t) {
+                        Some(x) => HashSet::from_iter(x.iter().cloned()),
+                        None => HashSet::new(),
+                    }
+                }
+            };
             if table.is_some() {
                 println!("Parsing table {}", &table.unwrap());
             }
-            let working_dir_path = &self.config.working_dir_path.clone();
-            let schema_file = &self.config.schema_file.clone();
-            let filepath = st.scan(
+
+            let (ref_tracker, filepath) = st.scan(
                 |statement| self.should_keep_statement(
                     statement,
                     &self.config.requested_tables,
@@ -82,12 +93,16 @@ impl Parser<'_> {
                 ),
                 working_dir_path,
                 schema_file,
+                &referenced_fields,
             );
 
             filepaths.push(filepath);
+            if let Some(tracker) = ref_tracker {
+                reference_trackers.push(tracker);
+            }
         }
 
-        let ref_trackers = ReferenceTracker::from_iter(self.insert_tracker_per_table.values().map(|i| i.get_reference_tracker()));
+        let ref_trackers = ReferenceTracker::from_iter(reference_trackers.iter());
 
         dbg!(&ref_trackers);
 

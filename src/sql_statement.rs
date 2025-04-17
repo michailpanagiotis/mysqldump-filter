@@ -10,12 +10,13 @@ use nom::{
   sequence::{delimited, preceded},
 };
 use regex::Regex;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 
 use crate::io_utils::SQLWriter;
+use crate::trackers::TableReferences;
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -61,6 +62,14 @@ impl FieldPositions {
         }));
 
         value_per_field
+    }
+
+    pub fn filtered(&mut self, fields: &HashSet<String>) -> Self {
+        FieldPositions(
+            HashMap::from_iter(
+                self.0.iter().filter(|(key, _)| fields.contains(key.to_owned())).map(|(key, value)| (key.clone(), value.clone()))
+            )
+        )
     }
 }
 
@@ -125,6 +134,13 @@ impl Statement {
         Some(FieldPositions::new(&self.line))
     }
 
+    pub fn get_filtered_field_positions(&self, fields: &HashSet<String>) -> Option<FieldPositions> {
+        if !self.is_insert() {
+            return None;
+        }
+        Some(FieldPositions::new(&self.line).filtered(fields))
+    }
+
     pub fn get_all_values(&self) -> Vec<String> {
         let mut parser = preceded((take_until("VALUES ("), tag("VALUES (")), take_until(");")).and_then(
             separated_list1(
@@ -179,13 +195,21 @@ impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> TableStat
         self.inner.filter(predicate)
     }
 
-    pub fn scan<T: FnMut(&Statement) -> bool>(self, predicate: T, working_dir: &Path, default: &Path) -> PathBuf {
+    pub fn scan<T: FnMut(&Statement) -> bool>(self, predicate: T, working_dir: &Path, default: &Path, referenced_fields: &HashSet<String>) -> (Option<TableReferences>, PathBuf) {
         let mut writer = self.get_writer(working_dir, default);
 
+        let mut ref_tracker: Option<TableReferences> = match self.table.is_some() && referenced_fields.len() > 0 {
+            true => Some(TableReferences::new(self.table.as_ref().unwrap(), referenced_fields)),
+            false => None,
+        };
+
         for statement in self.filter(predicate) {
+            if let Some(ref mut tracker) = ref_tracker {
+                tracker.capture(&statement);
+            }
             writer.write_statement(&statement).expect("Unable to write data");
         }
         writer.flush().expect("Cannot flush buffer");
-        writer.get_filepath()
+        (ref_tracker, writer.get_filepath())
     }
 }

@@ -4,19 +4,27 @@ use crate::config::{FilterMap, TableFilters};
 
 #[derive(Debug)]
 #[derive(Clone)]
-struct TableReferences {
+pub struct TableReferences {
     table: String,
+    referenced_fields: HashSet<String>,
+    field_positions: Option<FieldPositions>,
     values_per_field: HashMap<String, HashSet<String>>,
     is_complete: bool,
 }
 
 impl TableReferences {
-    pub fn new(table: &String) -> Self {
+    pub fn new(table: &String, referenced_fields: &HashSet<String>) -> Self {
         TableReferences {
             table: table.clone(),
+            referenced_fields: referenced_fields.clone(),
+            field_positions: None,
             values_per_field: HashMap::new(),
             is_complete: false,
         }
+    }
+
+    fn get_table(&self) -> String {
+        self.table.clone()
     }
 
     pub fn has_completed(&self) -> bool {
@@ -37,37 +45,57 @@ impl TableReferences {
     pub fn to_canonical_entries(&self) -> impl Iterator<Item=(String, HashSet<String>)> {
         self.values_per_field.iter().map(|(field, value)| (self.table.to_owned() + "." + field, value.clone()))
     }
+
+    pub fn capture(&mut self, statement: &Statement) {
+        if self.field_positions.is_none() {
+            self.field_positions = statement.get_filtered_field_positions(&self.referenced_fields);
+        }
+        if let Some(ref mut pos) = self.field_positions {
+            for field in self.referenced_fields.iter() {
+                let value = pos.get_value(statement, field);
+                match self.values_per_field.get_mut(field) {
+                    Some(x) => {
+                        x.insert(value.to_string());
+                    },
+                    None => {
+                        self.values_per_field.insert(field.to_string(), HashSet::from([value.to_string()]));
+                    }
+                }
+            }
+        }
+    }
 }
 
 
 #[derive(Debug)]
 pub struct ReferenceTracker {
+    referenced_fields: HashSet<String>,
     table_references: HashMap<String, TableReferences>,
     is_complete: bool,
 }
 
 impl ReferenceTracker {
-    pub fn new() -> Self {
+    pub fn new(referenced_fields: &HashSet<String>) -> Self {
         ReferenceTracker {
+            referenced_fields: referenced_fields.clone(),
             table_references: HashMap::new(),
             is_complete: false,
         }
     }
 
-    pub fn from_iter<'a, I: Iterator<Item=&'a ReferenceTracker>>(ref_trackers: I) -> Self {
+    pub fn from_iter<'a, I: Iterator<Item=&'a TableReferences>>(table_refs: I) -> Self {
         let mut references: HashMap<String, HashSet<String>> = HashMap::new();
         let mut table_references: HashMap<String, TableReferences> = HashMap::new();
 
-        for tracker in ref_trackers {
-            for (table, tref) in &tracker.table_references {
-                for (field, value) in tref.to_canonical_entries() {
-                    references.insert(field, value);
-                }
-                table_references.insert(table.clone(), tref.clone());
+        for tref in table_refs {
+            for (field, value) in tref.to_canonical_entries() {
+                references.insert(field, value);
             }
+            table_references.insert(tref.get_table(), tref.clone());
         }
 
         ReferenceTracker {
+            referenced_fields: HashSet::new(),
             table_references,
             is_complete: true,
         }
@@ -84,7 +112,7 @@ impl ReferenceTracker {
                 x.insert(field, value);
             },
             None => {
-                let mut refs = TableReferences::new(table);
+                let mut refs = TableReferences::new(table, &self.referenced_fields);
                 refs.insert(field, value);
                 self.table_references.insert(table.clone(), refs);
             }
@@ -113,12 +141,17 @@ impl InsertTracker {
             Some(x) => x.clone(),
             None => Vec::new(),
         };
+        let referenced_fields = match references_per_table.get(table) {
+            Some(x) => HashSet::from_iter(x.iter().cloned()),
+            None => HashSet::new(),
+        };
+
         InsertTracker {
             direct_filters: filters.to_direct_filters(),
             reference_filters: filters.to_reference_filters(),
             references: HashSet::from_iter(references.iter().cloned()),
             field_positions: field_positions.clone(),
-            reference_tracker: ReferenceTracker::new(),
+            reference_tracker: ReferenceTracker::new(&referenced_fields),
         }
     }
 
