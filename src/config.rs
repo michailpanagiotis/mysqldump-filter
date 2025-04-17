@@ -75,7 +75,7 @@ impl FilterCondition {
 #[derive(Debug)]
 #[derive(Clone)]
 pub struct TableFilters {
-    filtered_fields: Vec<String>,
+    filtered_fields: HashSet<String>,
     filters_per_field: HashMap<String, Vec<FilterCondition>>,
 }
 
@@ -84,7 +84,7 @@ impl TableFilters {
         self.filters_per_field.is_empty()
     }
 
-    pub fn get_filtered_fields(&self) -> &Vec<String> {
+    pub fn get_filtered_fields(&self) -> &HashSet<String> {
         &self.filtered_fields
     }
 
@@ -126,7 +126,7 @@ impl TableFilters {
     }
 
     fn empty() -> Self {
-        TableFilters{ filtered_fields: Vec::new(), filters_per_field: HashMap::new(),  }
+        TableFilters{ filtered_fields: HashSet::new(), filters_per_field: HashMap::new(),  }
     }
 
     fn test_single_field(&self, field: &str, value: &str) -> bool {

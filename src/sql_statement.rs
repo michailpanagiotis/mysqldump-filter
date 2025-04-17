@@ -53,7 +53,7 @@ impl FieldPositions {
         values[position].clone()
     }
 
-    pub fn get_values(&self, statement: &Statement, fields: &[String]) -> HashMap<String, String> {
+    pub fn get_values(&self, statement: &Statement, fields: &HashSet<String>) -> HashMap<String, String> {
         let values = statement.get_all_values();
 
         let value_per_field: HashMap<String, String> = HashMap::from_iter(fields.iter().map(|f| {
@@ -194,11 +194,23 @@ impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> TableStat
         )
     }
 
-    pub fn filter<T: FnMut(&Statement) -> bool>(self, mut predicate: T) -> impl Iterator<Item=Statement> {
-        self.inner.filter(move |statement| predicate(statement))
+    pub fn filter_insert_statements<T: FnMut(&Statement) -> bool>(self, mut insert_predicate: T) -> impl Iterator<Item=Statement> {
+        self.inner.filter(move |statement| {
+            match statement.get_table() {
+                None => {
+                    true
+                },
+                Some(_) => {
+                    if !statement.is_insert() {
+                        return false;
+                    }
+                    insert_predicate(statement)
+                },
+            }
+        })
     }
 
-    pub fn scan<T: FnMut(&Statement) -> bool>(self, predicate: T, working_dir: &Path, default: &Path, referenced_fields: &HashSet<String>) -> (Option<TableReferences>, PathBuf) {
+    pub fn scan<T: FnMut(&Statement) -> bool>(self, insert_predicate: T, working_dir: &Path, default: &Path, referenced_fields: &HashSet<String>) -> (Option<TableReferences>, PathBuf) {
         let mut writer = self.get_writer(working_dir, default);
 
         let mut ref_tracker: Option<TableReferences> = match self.table.is_some() && !referenced_fields.is_empty() {
@@ -206,7 +218,7 @@ impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> TableStat
             false => None,
         };
 
-        for statement in self.filter(predicate) {
+        for statement in self.filter_insert_statements(insert_predicate) {
             if let Some(ref mut tracker) = ref_tracker {
                 tracker.capture(&statement);
             }

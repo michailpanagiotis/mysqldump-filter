@@ -23,30 +23,19 @@ impl Parser<'_> {
     }
 
     fn register_table(&mut self, table: &String, statement: &Statement) {
-        let field_positions = statement.get_field_positions().expect("cannot find positions");
         self.insert_tracker_per_table.insert(table.to_string(), InsertTracker::new(
             table,
             &self.config.filters_per_table,
-            &field_positions,
         ));
     }
 
     fn should_keep_statement(&mut self, statement: &Statement) -> bool {
-        match statement.get_table() {
-            None => {
-                true
-            },
-            Some(table) => {
-                if !statement.is_insert() {
-                    return false;
-                }
-                if !self.insert_tracker_per_table.contains_key(&table) {
-                    self.register_table(&table, statement);
-                }
-                let info = self.insert_tracker_per_table.get_mut(&table).expect("Cannot find table info");
-                info.should_keep_statement(statement)
-            },
+        let table = statement.get_table().expect("expecting a table");
+        if !self.insert_tracker_per_table.contains_key(&table) {
+            self.register_table(&table, statement);
         }
+        let info = self.insert_tracker_per_table.get_mut(&table).expect("Cannot find table info");
+        info.should_keep_statement(statement)
     }
 
     pub fn parse_input_file(&mut self, input_file: &Path, output_file: &Path) {

@@ -59,14 +59,6 @@ pub struct ReferenceTracker {
 }
 
 impl ReferenceTracker {
-    pub fn new(referenced_fields: &HashSet<String>) -> Self {
-        ReferenceTracker {
-            referenced_fields: referenced_fields.clone(),
-            table_references: HashMap::new(),
-            is_complete: false,
-        }
-    }
-
     pub fn from_iter<'a, I: Iterator<Item=&'a TableReferences>>(table_refs: I) -> Self {
         let mut references: HashMap<String, HashSet<String>> = HashMap::new();
         let mut table_references: HashMap<String, TableReferences> = HashMap::new();
@@ -94,32 +86,39 @@ impl ReferenceTracker {
 pub struct InsertTracker {
     direct_filters: TableFilters,
     reference_filters: TableFilters,
-    field_positions: FieldPositions,
+    field_positions: Option<FieldPositions>,
 }
 
 impl InsertTracker {
     pub fn new(
         table: &str,
         filters_per_table: &FilterMap,
-        field_positions: &FieldPositions,
     ) -> Self {
         let filters = filters_per_table.get(table);
 
         InsertTracker {
             direct_filters: filters.to_direct_filters(),
             reference_filters: filters.to_reference_filters(),
-            field_positions: field_positions.clone(),
+            field_positions: None,
         }
     }
 
     pub fn should_keep_statement(&mut self, statement: &Statement) -> bool {
-        let value_per_field = self.field_positions.get_values(
-            statement,
-            self.direct_filters.get_filtered_fields(),
-        );
+        if self.field_positions.is_none() {
+            self.field_positions = statement.get_filtered_field_positions(self.direct_filters.get_filtered_fields());
+        }
 
-        if !self.direct_filters.test(&value_per_field) {
-            return false;
+        if let Some(ref mut pos) = self.field_positions {
+            let value_per_field = pos.get_values(
+                statement,
+                self.direct_filters.get_filtered_fields(),
+            );
+
+            if !self.direct_filters.test(&value_per_field) {
+                return false;
+            }
+
+            return true;
         }
 
         true
