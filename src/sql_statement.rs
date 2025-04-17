@@ -182,8 +182,8 @@ pub struct TableStatements<'a, I: Iterator<Item=Statement>, F: Fn(&Statement) ->
 impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> TableStatements<'_, I, F> {
     pub fn new<'a, 'b>(
         table: &Option<String>,
-        statements: itertools::Group<'b, Option<String>, I, F>,
         filters: &Option<TableFilters>,
+        statements: itertools::Group<'b, Option<String>, I, F>,
     ) -> TableStatements<'a, I, F>
       where 'b: 'a
     {
@@ -224,13 +224,23 @@ impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> TableStat
         })
     }
 
-    pub fn scan<T: FnMut(&Statement) -> bool>(self, insert_predicate: T, working_dir: &Path, default: &Path, referenced_fields: &HashSet<String>) -> (Option<TableReferences>, PathBuf) {
+    pub fn scan<T: FnMut(&Statement) -> bool>(
+        self,
+        insert_predicate: T,
+        working_dir: &Path,
+        default: &Path,
+        referenced_fields: &HashSet<String>,
+    ) -> (Option<TableReferences>, PathBuf) {
         let mut writer = self.get_writer(working_dir, default);
 
         let mut ref_tracker: Option<TableReferences> = match self.table.is_some() && !referenced_fields.is_empty() {
             true => Some(TableReferences::new(self.table.as_ref().unwrap(), referenced_fields)),
             false => None,
         };
+
+        if let Some(table) = &self.table {
+            println!("Parsing table {}", &table);
+        }
 
         for statement in self.filter_insert_statements(insert_predicate) {
             if let Some(ref mut tracker) = ref_tracker {

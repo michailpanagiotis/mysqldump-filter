@@ -36,7 +36,7 @@ impl Parser<'_> {
             let working_dir_path = &self.config.working_dir_path.clone();
             let schema_file = &self.config.schema_file.clone();
 
-            let st = TableStatements::new(&table, statements, &filters);
+            let st = TableStatements::new(&table, &filters, statements);
 
             let referenced_fields = match table {
                 None => HashSet::new(),
@@ -51,11 +51,6 @@ impl Parser<'_> {
                 &t,
                 &filters,
             ));
-
-
-            if table.is_some() {
-                println!("Parsing table {}", &table.unwrap());
-            }
 
             let (ref_tracker, filepath) = st.scan(
                 |statement| {
