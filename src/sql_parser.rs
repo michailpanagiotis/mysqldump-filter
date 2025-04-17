@@ -8,7 +8,7 @@ use crate::io_utils::SQLWriter;
 use crate::config::{Config, FilterMap, TableFilters};
 
 #[derive(Debug)]
-pub struct ReferenceTracker {
+struct ReferenceTracker {
     references: HashMap<String, HashSet<String>>,
     is_complete: bool,
 }
@@ -55,10 +55,8 @@ impl InsertTracker {
         table: &String,
         filters_per_table: &FilterMap,
         references_per_table: &HashMap<String, Vec<String>>,
-        statement: &Statement,
+        field_positions: &FieldPositions,
     ) -> Self {
-        let field_positions = statement.get_field_positions().expect("cannot find positions");
-
         let filters = filters_per_table.get(table);
         let references = match references_per_table.get(table) {
             Some(x) => x.clone(),
@@ -68,7 +66,7 @@ impl InsertTracker {
             direct_filters: filters.to_direct_filters(),
             reference_filters: filters.to_reference_filters(),
             references: HashMap::from_iter(references.iter().map(|r| (r.clone(), HashSet::new()))),
-            field_positions,
+            field_positions: field_positions.clone(),
         }
     }
 
@@ -115,11 +113,12 @@ impl Parser<'_> {
     }
 
     fn register_table(&mut self, table: &String, statement: &Statement) {
+        let field_positions = statement.get_field_positions().expect("cannot find positions");
         self.insert_tracker_per_table.insert(table.to_string(), InsertTracker::new(
             table,
             &self.config.filters_per_table,
             &self.config.references_per_table,
-            statement,
+            &field_positions,
         ));
     }
 
