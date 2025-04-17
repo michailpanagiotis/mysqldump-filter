@@ -5,98 +5,8 @@ use itertools::Itertools;
 
 use crate::sql_statement::{FieldPositions, Statement, TableStatements};
 use crate::io_utils::SQLWriter;
+use crate::trackers::{InsertTracker, ReferenceTracker};
 use crate::config::{Config, FilterMap, TableFilters};
-
-#[derive(Debug)]
-struct ReferenceTracker {
-    references: HashMap<String, HashSet<String>>,
-    is_complete: bool,
-}
-
-impl ReferenceTracker {
-    fn new() -> Self {
-        ReferenceTracker {
-            references: HashMap::new(),
-            is_complete: false,
-        }
-    }
-
-    fn get_key(&mut self, table: &String, field: &str) -> String {
-        table.to_owned() + "." + field
-    }
-
-    fn has_completed(&self) -> bool {
-        self.is_complete
-    }
-
-    fn insert(&mut self, table: &String, field: &str, value: &String) {
-        let key: String = self.get_key(table, field);
-        match self.references.get_mut(&key) {
-            Some(x) => {
-                x.insert(value.to_string());
-            },
-            None => {
-                self.references.insert(key, HashSet::from([value.to_string()]));
-            }
-        }
-    }
-}
-
-#[derive(Debug)]
-struct InsertTracker {
-    direct_filters: TableFilters,
-    reference_filters: TableFilters,
-    references: HashMap<String, HashSet<String>>,
-    field_positions: FieldPositions,
-}
-
-impl InsertTracker {
-    fn new(
-        table: &String,
-        filters_per_table: &FilterMap,
-        references_per_table: &HashMap<String, Vec<String>>,
-        field_positions: &FieldPositions,
-    ) -> Self {
-        let filters = filters_per_table.get(table);
-        let references = match references_per_table.get(table) {
-            Some(x) => x.clone(),
-            None => Vec::new(),
-        };
-        InsertTracker {
-            direct_filters: filters.to_direct_filters(),
-            reference_filters: filters.to_reference_filters(),
-            references: HashMap::from_iter(references.iter().map(|r| (r.clone(), HashSet::new()))),
-            field_positions: field_positions.clone(),
-        }
-    }
-
-    fn capture_references(&mut self, statement: &Statement, reference_tracker: &mut ReferenceTracker) {
-        if let Some(ref table) = statement.get_table() {
-            for (field, set) in self.references.iter_mut() {
-                let value = self.field_positions.get_value(statement, field);
-                set.insert(value.clone());
-                reference_tracker.insert(table, field, &value);
-            }
-        }
-    }
-
-    fn should_keep_statement(&mut self, statement: &Statement, reference_tracker: &mut ReferenceTracker) -> bool {
-        let value_per_field = self.field_positions.get_values(
-            statement,
-            self.direct_filters.get_filtered_fields(),
-        );
-
-        if !self.direct_filters.test(&value_per_field) {
-            return false;
-        }
-
-        if reference_tracker.has_completed() && !self.reference_filters.test(&value_per_field) {
-            return false;
-        }
-
-        true
-    }
-}
 
 #[derive(Debug)]
 pub struct Parser<'a> {
@@ -144,7 +54,7 @@ impl Parser<'_> {
                 }
                 let info = self.insert_tracker_per_table.get_mut(&table).expect("Cannot find table info");
                 if info.should_keep_statement(statement, reference_tracker) {
-                    info.capture_references(statement, reference_tracker);
+                    info.capture_references(statement);
                     true
                 } else {
                     false
@@ -156,8 +66,12 @@ impl Parser<'_> {
     pub fn parse_input_file(&mut self, input_file: &Path, output_file: &Path) {
         let mut filepaths: Vec<PathBuf> = Vec::new();
         let reference_tracker = &mut ReferenceTracker::new();
+        let reference_trackers: Vec<&ReferenceTracker> = Vec::new();
         for (table, statements) in Statement::from_file(input_file).chunk_by(Statement::get_table).into_iter() {
             let st = TableStatements::new(&table, statements);
+            if table.is_some() {
+                println!("Parsing table {}", &table.unwrap());
+            }
             let working_dir_path = &self.config.working_dir_path.clone();
             let schema_file = &self.config.schema_file.clone();
             let filepath = st.scan(
@@ -173,7 +87,9 @@ impl Parser<'_> {
             filepaths.push(filepath);
         }
 
-        dbg!(&reference_tracker);
+        let ref_trackers = ReferenceTracker::from_iter(self.insert_tracker_per_table.values().map(|i| i.get_reference_tracker()));
+
+        dbg!(&ref_trackers);
 
         SQLWriter::combine_files(filepaths.iter(), output_file);
     }

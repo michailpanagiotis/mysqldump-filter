@@ -6,6 +6,7 @@ mod sql_statement;
 mod io_utils;
 mod sql_parser;
 mod config;
+mod trackers;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]

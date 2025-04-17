@@ -1,0 +1,23 @@
+{
+  "allow_data_on_tables": [ "invoice_items", "invoices", "organizations", "transactions" ],
+  "filter_inserts": {
+    "service_orders": [
+      "processed==0"
+    ],
+    "invoices": [
+      "status!=10",
+      "status!=20",
+      "status!=30",
+      "status!=40"
+    ],
+    "invoice_items": [
+      "purpose==1",
+      "organization_id->invoices.organization_id",
+      "organization_id->organizations.id"
+    ],
+    "transactions": [
+      "organization_id->invoices.organization_id",
+      "organization_id->organizations.id"
+    ]
+  }
+}

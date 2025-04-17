@@ -20,7 +20,7 @@ impl SQLWriter {
     pub fn new(table: &Option<String>, working_dir: &Path, default: &Path) -> Self {
         let filepath = match table {
             Some(x) => working_dir.join(x).with_extension("sql"),
-            None => working_dir.join(default)
+            None => default.to_path_buf()
         };
 
         File::create(&filepath).expect(format!("Unable to create file {}", &filepath.display()).as_str());
