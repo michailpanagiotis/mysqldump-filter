@@ -9,17 +9,15 @@ pub struct TableReferences {
     referenced_fields: HashSet<String>,
     field_positions: Option<FieldPositions>,
     values_per_field: HashMap<String, HashSet<String>>,
-    is_complete: bool,
 }
 
 impl TableReferences {
-    pub fn new(table: &String, referenced_fields: &HashSet<String>) -> Self {
+    pub fn new(table: &str, referenced_fields: &HashSet<String>) -> Self {
         TableReferences {
-            table: table.clone(),
+            table: table.to_string(),
             referenced_fields: referenced_fields.clone(),
             field_positions: None,
             values_per_field: HashMap::new(),
-            is_complete: false,
         }
     }
 
@@ -27,20 +25,6 @@ impl TableReferences {
         self.table.clone()
     }
 
-    pub fn has_completed(&self) -> bool {
-        self.is_complete
-    }
-
-    pub fn insert(&mut self, field: &str, value: &String) {
-        match self.values_per_field.get_mut(field) {
-            Some(x) => {
-                x.insert(value.to_string());
-            },
-            None => {
-                self.values_per_field.insert(field.to_string(), HashSet::from([value.to_string()]));
-            }
-        }
-    }
 
     pub fn to_canonical_entries(&self) -> impl Iterator<Item=(String, HashSet<String>)> {
         self.values_per_field.iter().map(|(field, value)| (self.table.to_owned() + "." + field, value.clone()))
@@ -104,63 +88,27 @@ impl ReferenceTracker {
     pub fn has_completed(&self) -> bool {
         self.is_complete
     }
-
-
-    pub fn insert(&mut self, table: &String, field: &str, value: &String) {
-        match self.table_references.get_mut(table) {
-            Some(x) => {
-                x.insert(field, value);
-            },
-            None => {
-                let mut refs = TableReferences::new(table, &self.referenced_fields);
-                refs.insert(field, value);
-                self.table_references.insert(table.clone(), refs);
-            }
-        }
-    }
 }
 
 #[derive(Debug)]
 pub struct InsertTracker {
     direct_filters: TableFilters,
     reference_filters: TableFilters,
-    references: HashSet<String>,
     field_positions: FieldPositions,
-    reference_tracker: ReferenceTracker,
 }
 
 impl InsertTracker {
     pub fn new(
-        table: &String,
+        table: &str,
         filters_per_table: &FilterMap,
-        references_per_table: &HashMap<String, Vec<String>>,
         field_positions: &FieldPositions,
     ) -> Self {
         let filters = filters_per_table.get(table);
-        let references = match references_per_table.get(table) {
-            Some(x) => x.clone(),
-            None => Vec::new(),
-        };
-        let referenced_fields = match references_per_table.get(table) {
-            Some(x) => HashSet::from_iter(x.iter().cloned()),
-            None => HashSet::new(),
-        };
 
         InsertTracker {
             direct_filters: filters.to_direct_filters(),
             reference_filters: filters.to_reference_filters(),
-            references: HashSet::from_iter(references.iter().cloned()),
             field_positions: field_positions.clone(),
-            reference_tracker: ReferenceTracker::new(&referenced_fields),
-        }
-    }
-
-    pub fn capture_references(&mut self, statement: &Statement) {
-        if let Some(ref table) = statement.get_table() {
-            for field in self.references.iter() {
-                let value = self.field_positions.get_value(statement, field);
-                self.reference_tracker.insert(table, field, &value);
-            }
         }
     }
 
@@ -179,9 +127,5 @@ impl InsertTracker {
         }
 
         true
-    }
-
-    pub fn get_reference_tracker(&self) -> &ReferenceTracker {
-        &self.reference_tracker
     }
 }

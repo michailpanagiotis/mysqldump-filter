@@ -27,7 +27,6 @@ impl Parser<'_> {
         self.insert_tracker_per_table.insert(table.to_string(), InsertTracker::new(
             table,
             &self.config.filters_per_table,
-            &self.config.references_per_table,
             &field_positions,
         ));
     }
@@ -54,7 +53,6 @@ impl Parser<'_> {
                 }
                 let info = self.insert_tracker_per_table.get_mut(&table).expect("Cannot find table info");
                 if info.should_keep_statement(statement, reference_tracker) {
-                    info.capture_references(statement);
                     true
                 } else {
                     false
