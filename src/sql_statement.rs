@@ -169,7 +169,6 @@ impl Statement {
 pub struct TableStatementsIterator<'a, I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> {
     inner: itertools::Group<'a, Option<String>, I, F>,
     insert_tracker: Option<InsertTracker>,
-    references: Option<TableReferences>,
 }
 
 impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> Iterator for TableStatementsIterator<'_, I, F> {
@@ -184,12 +183,6 @@ impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> Iterator 
             next = self.inner.next();
         }
 
-        if let Some(ref mut tracker) = self.references {
-            if let Some(ref statement) = next{
-                tracker.capture(&statement);
-            }
-        }
-
         next
     }
 }
@@ -198,7 +191,6 @@ impl<'a, I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> Table
     pub fn new(
         table: &Option<String>,
         filters: &Option<TableFilters>,
-        referenced_fields: &HashSet<String>,
         statements: itertools::Group<'a, Option<String>, I, F>,
     ) -> Self
     {
@@ -206,19 +198,10 @@ impl<'a, I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> Table
             &t,
             filters,
         ));
-        let references: Option<TableReferences> = match table.is_some() && !referenced_fields.is_empty() {
-            true => Some(TableReferences::new(table.as_ref().unwrap(), referenced_fields)),
-            false => None,
-        };
         TableStatementsIterator {
             inner: statements,
             insert_tracker,
-            references,
         }
-    }
-
-    fn get_refs(self) -> Option<TableReferences> {
-        self.references
     }
 
     fn should_keep_item(&mut self, statement: &Statement) -> bool {
@@ -269,10 +252,14 @@ impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> TableStat
     ) -> (Option<TableReferences>, PathBuf) {
         let mut writer = self.get_writer(working_dir, default);
 
+        let mut ref_tracker: Option<TableReferences> = match self.table.is_some() && !referenced_fields.is_empty() {
+            true => Some(TableReferences::new(self.table.as_ref().unwrap(), referenced_fields)),
+            false => None,
+        };
+
         let iter = TableStatementsIterator::new(
             &self.table,
             &self.filters,
-            &self.referenced_fields,
             self.inner,
         );
 
@@ -281,10 +268,13 @@ impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> TableStat
         }
 
         for statement in iter {
+            if let Some(ref mut tracker) = ref_tracker {
+                tracker.capture(&statement);
+            }
             writer.write_statement(&statement).expect("Unable to write data");
         }
         writer.flush().expect("Cannot flush buffer");
-        (iter.get_refs(), writer.get_filepath())
+        (ref_tracker, writer.get_filepath())
     }
 }
 

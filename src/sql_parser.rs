@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 
 use itertools::Itertools;
 
-use crate::sql_statement::{Statement, TableStatements, TableStatementsIterator};
+use crate::sql_statement::{Statement, TableStatements};
 use crate::io_utils::SQLWriter;
-use crate::trackers::{InsertTracker, ReferenceTracker, TableReferences};
+use crate::trackers::{ReferenceTracker, TableReferences};
 use crate::config::Config;
 
 #[derive(Debug)]
@@ -17,14 +17,6 @@ impl Parser<'_> {
     pub fn new(config: &Config) -> Parser {
         Parser{
             config,
-        }
-    }
-
-    fn should_keep_statement(statement: &Statement, insert_tracker: &mut Option<InsertTracker>) -> bool {
-        if let Some(info) = insert_tracker {
-            info.should_keep_statement(statement)
-        } else {
-            true
         }
     }
 
@@ -47,10 +39,6 @@ impl Parser<'_> {
                 }
             };
             let st = TableStatements::new(&table, &filters, &referenced_fields, statements);
-            let mut insert_tracker = table.clone().map(|t| InsertTracker::new(
-                &t,
-                &filters,
-            ));
 
             let (ref_tracker, filepath) = st.scan(
                 working_dir_path,
