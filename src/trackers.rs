@@ -32,7 +32,7 @@ impl TableReferences {
 
     pub fn capture(&mut self, statement: &Statement) {
         if self.field_positions.is_none() {
-            self.field_positions = statement.get_filtered_field_positions(&self.referenced_fields);
+            self.field_positions = statement.get_field_positions(&self.referenced_fields);
         }
         if let Some(ref mut pos) = self.field_positions {
             for field in self.referenced_fields.iter() {
@@ -114,7 +114,7 @@ impl InsertTracker {
         }
 
         if self.field_positions.is_none() {
-            self.field_positions = statement.get_filtered_field_positions(self.direct_filters.get_filtered_fields());
+            self.field_positions = statement.get_field_positions(self.direct_filters.get_filtered_fields());
         }
 
         if let Some(ref mut pos) = self.field_positions {

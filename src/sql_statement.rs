@@ -133,14 +133,7 @@ impl Statement {
         self.line.as_bytes()
     }
 
-    pub fn get_field_positions(&self) -> Option<FieldPositions> {
-        if !self.is_insert() {
-            return None;
-        }
-        Some(FieldPositions::new(&self.line))
-    }
-
-    pub fn get_filtered_field_positions(&self, fields: &HashSet<String>) -> Option<FieldPositions> {
+    pub fn get_field_positions(&self, fields: &HashSet<String>) -> Option<FieldPositions> {
         if !self.is_insert() {
             return None;
         }
