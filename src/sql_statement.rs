@@ -183,7 +183,7 @@ impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> TableStat
 
         let insert_tracker = table.clone().map(|t| InsertTracker::new(
             &t,
-            &filters,
+            filters,
         ));
 
 
