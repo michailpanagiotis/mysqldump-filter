@@ -13,12 +13,11 @@ use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, BufRead};
-use std::os::linux::raw::stat;
 use std::path::{Path, PathBuf};
 
 use crate::io_utils::SQLWriter;
 use crate::config::TableFilters;
-use crate::trackers::{InsertTracker, ReferenceTracker, TableReferences};
+use crate::trackers::{InsertTracker, TableReferences};
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -170,6 +169,7 @@ impl Statement {
 pub struct TableStatementsIterator<'a, I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> {
     inner: itertools::Group<'a, Option<String>, I, F>,
     insert_tracker: Option<InsertTracker>,
+    references: Option<TableReferences>,
 }
 
 impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> Iterator for TableStatementsIterator<'_, I, F> {
@@ -182,6 +182,12 @@ impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> Iterator 
                 break;
             }
             next = self.inner.next();
+        }
+
+        if let Some(ref mut tracker) = self.references {
+            if let Some(ref statement) = next{
+                tracker.capture(&statement);
+            }
         }
 
         next
@@ -200,10 +206,19 @@ impl<'a, I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> Table
             &t,
             filters,
         ));
+        let references: Option<TableReferences> = match table.is_some() && !referenced_fields.is_empty() {
+            true => Some(TableReferences::new(table.as_ref().unwrap(), referenced_fields)),
+            false => None,
+        };
         TableStatementsIterator {
             inner: statements,
             insert_tracker,
+            references,
         }
+    }
+
+    fn get_refs(self) -> Option<TableReferences> {
+        self.references
     }
 
     fn should_keep_item(&mut self, statement: &Statement) -> bool {
@@ -254,11 +269,6 @@ impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> TableStat
     ) -> (Option<TableReferences>, PathBuf) {
         let mut writer = self.get_writer(working_dir, default);
 
-        let mut ref_tracker: Option<TableReferences> = match self.table.is_some() && !referenced_fields.is_empty() {
-            true => Some(TableReferences::new(self.table.as_ref().unwrap(), referenced_fields)),
-            false => None,
-        };
-
         let iter = TableStatementsIterator::new(
             &self.table,
             &self.filters,
@@ -271,13 +281,10 @@ impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> TableStat
         }
 
         for statement in iter {
-            if let Some(ref mut tracker) = ref_tracker {
-                tracker.capture(&statement);
-            }
             writer.write_statement(&statement).expect("Unable to write data");
         }
         writer.flush().expect("Cannot flush buffer");
-        (ref_tracker, writer.get_filepath())
+        (iter.get_refs(), writer.get_filepath())
     }
 }
 
