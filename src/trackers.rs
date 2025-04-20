@@ -31,6 +31,9 @@ impl TableReferences {
     }
 
     pub fn capture(&mut self, statement: &Statement) {
+        if !statement.is_insert() {
+            return;
+        }
         if self.field_positions.is_none() {
             self.field_positions = statement.get_field_positions(&self.referenced_fields);
         }
@@ -107,6 +110,9 @@ impl InsertTracker {
     }
 
     pub fn should_keep_statement(&mut self, statement: &Statement) -> bool {
+        if !statement.is_insert() {
+            return true;
+        }
         if let Some(ref t) = statement.get_table() {
             if t != &self.table {
                 return true;

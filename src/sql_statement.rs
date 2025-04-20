@@ -13,11 +13,12 @@ use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, BufRead};
+use std::os::linux::raw::stat;
 use std::path::{Path, PathBuf};
 
 use crate::io_utils::SQLWriter;
 use crate::config::TableFilters;
-use crate::trackers::{InsertTracker, TableReferences};
+use crate::trackers::{InsertTracker, ReferenceTracker, TableReferences};
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -166,9 +167,58 @@ impl Statement {
     }
 }
 
+pub struct TableStatementsIterator<'a, I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> {
+    inner: itertools::Group<'a, Option<String>, I, F>,
+    insert_tracker: Option<InsertTracker>,
+}
+
+impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> Iterator for TableStatementsIterator<'_, I, F> {
+    type Item = Statement;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut next = self.inner.next();
+        while let Some(ref x) = next {
+            if self.should_keep_item(x) {
+                break;
+            }
+            next = self.inner.next();
+        }
+
+        next
+    }
+}
+
+impl<'a, I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> TableStatementsIterator<'a, I, F> {
+    pub fn new(
+        table: &Option<String>,
+        filters: &Option<TableFilters>,
+        referenced_fields: &HashSet<String>,
+        statements: itertools::Group<'a, Option<String>, I, F>,
+    ) -> Self
+    {
+        let insert_tracker = table.clone().map(|t| InsertTracker::new(
+            &t,
+            filters,
+        ));
+        TableStatementsIterator {
+            inner: statements,
+            insert_tracker,
+        }
+    }
+
+    fn should_keep_item(&mut self, statement: &Statement) -> bool {
+        if let Some(info) = &mut self.insert_tracker {
+            info.should_keep_statement(statement)
+        } else {
+            true
+        }
+    }
+}
+
 pub struct TableStatements<'a, I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> {
     table: Option<String>,
-    insert_tracker: Option<InsertTracker>,
+    filters: Option<TableFilters>,
+    referenced_fields: HashSet<String>,
     pub inner: itertools::Group<'a, Option<String>, I, F>,
 }
 
@@ -176,20 +226,15 @@ impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> TableStat
     pub fn new<'a, 'b>(
         table: &Option<String>,
         filters: &Option<TableFilters>,
+        referenced_fields: &HashSet<String>,
         statements: itertools::Group<'b, Option<String>, I, F>,
     ) -> TableStatements<'a, I, F>
       where 'b: 'a
     {
-
-        let insert_tracker = table.clone().map(|t| InsertTracker::new(
-            &t,
-            filters,
-        ));
-
-
         TableStatements {
             table: table.clone(),
-            insert_tracker,
+            filters: filters.clone(),
+            referenced_fields: referenced_fields.clone(),
             inner: statements,
         }
     }
@@ -201,25 +246,8 @@ impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> TableStat
         )
     }
 
-    pub fn filter_insert_statements<T: FnMut(&Statement) -> bool>(self, mut insert_predicate: T) -> impl Iterator<Item=Statement> {
-        self.inner.filter(move |statement| {
-            match statement.get_table() {
-                None => {
-                    true
-                },
-                Some(_) => {
-                    if !statement.is_insert() {
-                        return false;
-                    }
-                    insert_predicate(statement)
-                },
-            }
-        })
-    }
-
-    pub fn scan<T: FnMut(&Statement) -> bool>(
+    pub fn scan(
         self,
-        insert_predicate: T,
         working_dir: &Path,
         default: &Path,
         referenced_fields: &HashSet<String>,
@@ -231,11 +259,18 @@ impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> TableStat
             false => None,
         };
 
+        let iter = TableStatementsIterator::new(
+            &self.table,
+            &self.filters,
+            &self.referenced_fields,
+            self.inner,
+        );
+
         if let Some(table) = &self.table {
             println!("Parsing table {}", &table);
         }
 
-        for statement in self.filter_insert_statements(insert_predicate) {
+        for statement in iter {
             if let Some(ref mut tracker) = ref_tracker {
                 tracker.capture(&statement);
             }
@@ -245,3 +280,4 @@ impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> TableStat
         (ref_tracker, writer.get_filepath())
     }
 }
+
