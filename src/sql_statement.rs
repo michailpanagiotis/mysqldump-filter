@@ -168,6 +168,7 @@ impl Statement {
 pub struct TableStatementsIterator<'a, I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> {
     inner: itertools::Group<'a, Option<String>, I, F>,
     insert_tracker: Option<InsertTracker>,
+    ref_tracker: Option<ReferenceTracker>,
 }
 
 impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> Iterator for TableStatementsIterator<'_, I, F> {
@@ -188,22 +189,33 @@ impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> Iterator 
 
 impl<'a, I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> TableStatementsIterator<'a, I, F> {
     pub fn new(
-        insert_tracker: Option<InsertTracker>,
+        table_config: &TableConfig,
         statements: itertools::Group<'a, Option<String>, I, F>,
     ) -> Self
     {
+        let ref_tracker = table_config.get_reference_tracker();
+        let insert_tracker = table_config.get_insert_tracker();
         TableStatementsIterator {
-            inner: statements,
             insert_tracker,
+            ref_tracker,
+            inner: statements,
         }
     }
 
-    fn should_keep_item(&mut self, statement: &Statement) -> bool {
-        if let Some(info) = &mut self.insert_tracker {
-            info.should_keep_statement(statement)
-        } else {
-            true
+    fn for_each(self, mut f: impl FnMut(&Statement)) -> Option<ReferenceTracker> {
+        let mut ref_tracker = self.ref_tracker.clone();
+        for statement in self {
+            if let Some(ref mut tracker) = ref_tracker {
+                tracker.capture(&statement);
+            }
+            f(&statement);
         }
+        ref_tracker
+    }
+
+    fn should_keep_item(&mut self, statement: &Statement) -> bool {
+        let Some(info) = &mut self.insert_tracker else { return true };
+        info.should_keep_statement(statement)
     }
 }
 
@@ -213,20 +225,16 @@ pub fn scan_statements<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<
     default: &Path,
     statements: itertools::Group<Option<String>, I, F>,
 ) -> (Option<ReferenceTracker>, PathBuf) {
-    let mut writer = table_config.get_writer(working_dir, default);
-    let mut ref_tracker = table_config.get_reference_tracker();
-    let insert_tracker = table_config.get_insert_tracker();
+    let iter = TableStatementsIterator::new(table_config, statements);
 
+    let mut writer = table_config.get_writer(working_dir, default);
     if let Some(table) = &table_config.table {
         println!("Parsing table {}", &table);
     }
-
-    for statement in TableStatementsIterator::new(insert_tracker, statements) {
-        if let Some(ref mut tracker) = ref_tracker {
-            tracker.capture(&statement);
-        }
-        writer.write_statement(&statement).expect("Unable to write data");
-    }
+    let ref_tracker = iter.for_each(|statement| {
+        writer.write_statement(statement).expect("Unable to write data");
+    });
     writer.flush().expect("Cannot flush buffer");
+
     (ref_tracker, writer.get_filepath())
 }
