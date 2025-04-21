@@ -165,13 +165,13 @@ impl Statement {
     }
 }
 
-pub struct TableStatementsIterator<'a, I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> {
-    inner: itertools::Group<'a, Option<String>, I, F>,
+pub struct TableStatementsIterator<I: Iterator<Item=Statement>> {
+    inner: I,
     insert_tracker: Option<InsertTracker>,
     ref_tracker: Option<ReferenceTracker>,
 }
 
-impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> Iterator for TableStatementsIterator<'_, I, F> {
+impl<I: Iterator<Item=Statement>> Iterator for TableStatementsIterator<I> {
     type Item = Statement;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -187,10 +187,10 @@ impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> Iterator 
     }
 }
 
-impl<'a, I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> TableStatementsIterator<'a, I, F> {
+impl<I: Iterator<Item=Statement>> TableStatementsIterator<I> {
     pub fn new(
         table_config: &TableConfig,
-        statements: itertools::Group<'a, Option<String>, I, F>,
+        statements: I,
     ) -> Self
     {
         let ref_tracker = table_config.get_reference_tracker();
