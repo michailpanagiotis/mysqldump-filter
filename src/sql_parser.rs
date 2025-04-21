@@ -4,7 +4,7 @@ use itertools::Itertools;
 
 use crate::sql_statement::{Statement, TableStatements};
 use crate::io_utils::SQLWriter;
-use crate::trackers::{ReferenceTracker, TableReferences};
+use crate::trackers::TableReferences;
 use crate::config::Config;
 
 pub fn parse_input_file(config: &Config, input_file: &Path, output_file: &Path) {
@@ -24,7 +24,7 @@ pub fn parse_input_file(config: &Config, input_file: &Path, output_file: &Path) 
         }
     }
 
-    let ref_trackers = ReferenceTracker::from_iter(reference_trackers.iter());
+    let ref_trackers = TableReferences::merge(reference_trackers.iter());
 
     dbg!(&ref_trackers);
 

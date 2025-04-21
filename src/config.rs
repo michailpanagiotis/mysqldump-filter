@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::io_utils::SQLWriter;
+use crate::trackers::{InsertTracker, TableReferences};
 
 #[derive(Debug)]
 #[derive(Clone)]
@@ -276,5 +277,12 @@ impl TableConfig {
             &self.table,
             working_dir, default,
         )
+    }
+
+    pub fn get_insert_tracker(&self) -> Option<InsertTracker> {
+        self.table.clone().map(|t| InsertTracker::new(
+            &t,
+            &self.filters,
+        ))
     }
 }

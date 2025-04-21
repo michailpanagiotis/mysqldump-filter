@@ -21,10 +21,17 @@ impl TableReferences {
         }
     }
 
-    fn get_table(&self) -> String {
-        self.table.clone()
-    }
+    pub fn merge<'a, I: Iterator<Item=&'a TableReferences>>(table_refs: I) -> HashMap<String, HashSet<String>> {
+        let mut references: HashMap<String, HashSet<String>> = HashMap::new();
 
+        for tref in table_refs {
+            for (field, value) in tref.to_canonical_entries() {
+                references.insert(field, value);
+            }
+        }
+
+        references
+    }
 
     pub fn to_canonical_entries(&self) -> impl Iterator<Item=(String, HashSet<String>)> {
         self.values_per_field.iter().map(|(field, value)| (self.table.to_owned() + "." + field, value.clone()))
@@ -53,37 +60,6 @@ impl TableReferences {
     }
 }
 
-
-#[derive(Debug)]
-pub struct ReferenceTracker {
-    referenced_fields: HashSet<String>,
-    table_references: HashMap<String, TableReferences>,
-    is_complete: bool,
-}
-
-impl ReferenceTracker {
-    pub fn from_iter<'a, I: Iterator<Item=&'a TableReferences>>(table_refs: I) -> Self {
-        let mut references: HashMap<String, HashSet<String>> = HashMap::new();
-        let mut table_references: HashMap<String, TableReferences> = HashMap::new();
-
-        for tref in table_refs {
-            for (field, value) in tref.to_canonical_entries() {
-                references.insert(field, value);
-            }
-            table_references.insert(tref.get_table(), tref.clone());
-        }
-
-        ReferenceTracker {
-            referenced_fields: HashSet::new(),
-            table_references,
-            is_complete: true,
-        }
-    }
-
-    pub fn has_completed(&self) -> bool {
-        self.is_complete
-    }
-}
 
 #[derive(Debug)]
 pub struct InsertTracker {

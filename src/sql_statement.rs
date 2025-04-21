@@ -250,4 +250,3 @@ impl TableStatements {
         (ref_tracker, writer.get_filepath())
     }
 }
-
