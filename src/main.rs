@@ -8,6 +8,8 @@ mod sql_parser;
 mod config;
 mod trackers;
 
+use sql_parser::parse_input_file;
+
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Cli {
@@ -37,8 +39,7 @@ fn main() {
 
     let config = config::Config::new(&config_file, &working_dir_path);
 
-    let mut parser = sql_parser::Parser::new(&config);
-    parser.parse_input_file(input_file.as_path(), output_file.as_path());
+    parse_input_file(&config, input_file.as_path(), output_file.as_path());
 
     if let Some(dir) = temp_dir {
        let _ = dir.close();
