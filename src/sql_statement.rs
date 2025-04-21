@@ -207,32 +207,26 @@ impl<'a, I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> Table
     }
 }
 
-pub struct TableStatements {
-    pub table_config: TableConfig,
-}
+pub fn scan_statements<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>>(
+    table_config: &TableConfig,
+    working_dir: &Path,
+    default: &Path,
+    statements: itertools::Group<Option<String>, I, F>,
+) -> (Option<ReferenceTracker>, PathBuf) {
+    let mut writer = table_config.get_writer(working_dir, default);
+    let mut ref_tracker = table_config.get_reference_tracker();
+    let insert_tracker = table_config.get_insert_tracker();
 
-impl TableStatements {
-    pub fn scan<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>>(
-        self,
-        working_dir: &Path,
-        default: &Path,
-        statements: itertools::Group<Option<String>, I, F>,
-    ) -> (Option<ReferenceTracker>, PathBuf) {
-        let mut writer = self.table_config.get_writer(working_dir, default);
-        let mut ref_tracker = self.table_config.get_reference_tracker();
-        let insert_tracker = self.table_config.get_insert_tracker();
-
-        if let Some(table) = &self.table_config.table {
-            println!("Parsing table {}", &table);
-        }
-
-        for statement in TableStatementsIterator::new(insert_tracker, statements) {
-            if let Some(ref mut tracker) = ref_tracker {
-                tracker.capture(&statement);
-            }
-            writer.write_statement(&statement).expect("Unable to write data");
-        }
-        writer.flush().expect("Cannot flush buffer");
-        (ref_tracker, writer.get_filepath())
+    if let Some(table) = &table_config.table {
+        println!("Parsing table {}", &table);
     }
+
+    for statement in TableStatementsIterator::new(insert_tracker, statements) {
+        if let Some(ref mut tracker) = ref_tracker {
+            tracker.capture(&statement);
+        }
+        writer.write_statement(&statement).expect("Unable to write data");
+    }
+    writer.flush().expect("Cannot flush buffer");
+    (ref_tracker, writer.get_filepath())
 }
