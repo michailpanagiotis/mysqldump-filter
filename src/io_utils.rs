@@ -2,7 +2,7 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use std::io::Write;
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufWriter};
+use std::io::{self, BufRead, BufWriter};
 use std::path::{Path, PathBuf};
 
 use crate::sql_statement::Statement;
@@ -14,6 +14,12 @@ lazy_static! {
 pub struct SQLWriter {
     filepath: PathBuf,
     inner: io::BufWriter<File>
+}
+
+pub fn read_file(filepath: &Path) -> impl Iterator<Item=String> {
+    let file = File::open(filepath).expect("Cannot open file");
+    io::BufReader::new(file).lines()
+        .map_while(Result::ok)
 }
 
 impl SQLWriter {

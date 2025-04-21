@@ -11,12 +11,11 @@ use nom::{
 };
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
-use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 
 use crate::config::TableConfig;
 use crate::trackers::{InsertTracker, ReferenceTracker};
+use crate::io_utils::read_file;
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -99,26 +98,23 @@ impl Statement {
        }
     }
 
-    pub fn from_file(sqldump_filepath: &Path, requested_tables: &HashSet<String>) -> impl Iterator<Item = Statement> + use<> {
-        let mut current_table: Option<String> = None;
+    pub fn from_file<'a>(sqldump_filepath: &'a Path, requested_tables: &HashSet<String>) -> impl Iterator<Item = Statement> + use<'a> {
         let valid_tables = requested_tables.clone();
+
+        let mut current_table: Option<String> = None;
         let to_statement = move |line: String| {
             if line.starts_with("-- Dumping data for table") {
                 current_table = Some(
                     TABLE_DUMP_RE.captures(&line).unwrap().get(1).unwrap().as_str().to_string(),
                 );
             }
-            if let Some(ref t) = current_table {
-                if !valid_tables.contains(t) {
-                    return None
-                }
+            if current_table.as_ref().is_some_and(|t| !valid_tables.contains(t)) {
+                return None;
             }
             Some(Statement::new(&current_table, &line))
         };
-        let file = File::open(sqldump_filepath).expect("Cannot open file");
-        io::BufReader::new(file).lines()
-            .map_while(Result::ok)
-            .flat_map(to_statement)
+
+        read_file(sqldump_filepath).flat_map(to_statement)
     }
 
     pub fn is_insert(&self) -> bool {
