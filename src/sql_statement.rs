@@ -15,8 +15,8 @@ use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 
-use crate::config::{TableConfig, TableFilters};
-use crate::trackers::{InsertTracker, TableReferences};
+use crate::config::TableConfig;
+use crate::trackers::{InsertTracker, ReferenceTracker};
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -188,15 +188,10 @@ impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> Iterator 
 
 impl<'a, I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> TableStatementsIterator<'a, I, F> {
     pub fn new(
-        table: &Option<String>,
-        filters: &Option<TableFilters>,
+        insert_tracker: Option<InsertTracker>,
         statements: itertools::Group<'a, Option<String>, I, F>,
     ) -> Self
     {
-        let insert_tracker = table.clone().map(|t| InsertTracker::new(
-            &t,
-            filters,
-        ));
         TableStatementsIterator {
             inner: statements,
             insert_tracker,
@@ -222,25 +217,16 @@ impl TableStatements {
         working_dir: &Path,
         default: &Path,
         statements: itertools::Group<Option<String>, I, F>,
-    ) -> (Option<TableReferences>, PathBuf) {
+    ) -> (Option<ReferenceTracker>, PathBuf) {
         let mut writer = self.table_config.get_writer(working_dir, default);
-
-        let mut ref_tracker: Option<TableReferences> = match self.table_config.table.is_some() && !self.table_config.referenced_fields.is_empty() {
-            true => Some(TableReferences::new(self.table_config.table.as_ref().unwrap(), &self.table_config.referenced_fields)),
-            false => None,
-        };
-
-        let iter = TableStatementsIterator::new(
-            &self.table_config.table,
-            &self.table_config.filters,
-            statements,
-        );
+        let mut ref_tracker = self.table_config.get_reference_tracker();
+        let insert_tracker = self.table_config.get_insert_tracker();
 
         if let Some(table) = &self.table_config.table {
             println!("Parsing table {}", &table);
         }
 
-        for statement in iter {
+        for statement in TableStatementsIterator::new(insert_tracker, statements) {
             if let Some(ref mut tracker) = ref_tracker {
                 tracker.capture(&statement);
             }

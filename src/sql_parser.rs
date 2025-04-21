@@ -4,12 +4,12 @@ use itertools::Itertools;
 
 use crate::sql_statement::{Statement, TableStatements};
 use crate::io_utils::SQLWriter;
-use crate::trackers::TableReferences;
+use crate::trackers::ReferenceTracker;
 use crate::config::Config;
 
 pub fn parse_input_file(config: &Config, input_file: &Path, output_file: &Path) {
     let mut filepaths: Vec<PathBuf> = Vec::new();
-    let mut reference_trackers: Vec<TableReferences> = Vec::new();
+    let mut reference_trackers: Vec<ReferenceTracker> = Vec::new();
     for (table, statements) in Statement::from_file(input_file, &config.requested_tables).chunk_by(Statement::get_table).into_iter() {
         let working_dir_path = &config.working_dir_path.clone();
         let schema_file = &config.schema_file.clone();
@@ -24,7 +24,7 @@ pub fn parse_input_file(config: &Config, input_file: &Path, output_file: &Path) 
         }
     }
 
-    let ref_trackers = TableReferences::merge(reference_trackers.iter());
+    let ref_trackers = ReferenceTracker::merge(reference_trackers.iter());
 
     dbg!(&ref_trackers);
 

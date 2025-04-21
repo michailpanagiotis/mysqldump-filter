@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::io_utils::SQLWriter;
-use crate::trackers::{InsertTracker, TableReferences};
+use crate::trackers::{InsertTracker, ReferenceTracker};
 
 #[derive(Debug)]
 #[derive(Clone)]
@@ -284,5 +284,13 @@ impl TableConfig {
             &t,
             &self.filters,
         ))
+    }
+
+    pub fn get_reference_tracker(&self) -> Option<ReferenceTracker> {
+        let ref_tracker = match self.table.is_some() && !self.referenced_fields.is_empty() {
+            true => Some(ReferenceTracker::new(self.table.as_ref().unwrap(), &self.referenced_fields)),
+            false => None,
+        };
+        ref_tracker
     }
 }
