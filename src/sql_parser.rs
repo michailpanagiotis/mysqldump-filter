@@ -13,16 +13,10 @@ pub fn parse_input_file(config: &Config, input_file: &Path, output_file: &Path) 
     for (table, statements) in Statement::from_file(input_file, &config.requested_tables).chunk_by(Statement::get_table).into_iter() {
         let working_dir_path = &config.working_dir_path.clone();
         let schema_file = &config.schema_file.clone();
-        let referenced_fields = &config.get_referenced_fields(&table);
-        let filters = &config.get_filters(&table);
+        let table_config = config.get_table_config(&table);
+        let st = TableStatements{ table_config };
 
-        let st = TableStatements::new(&table, filters, referenced_fields, statements);
-
-        let (ref_tracker, filepath) = st.scan(
-            working_dir_path,
-            schema_file,
-            referenced_fields,
-        );
+        let (ref_tracker, filepath) = st.scan(working_dir_path, schema_file, statements);
 
         filepaths.push(filepath);
         if let Some(tracker) = ref_tracker {

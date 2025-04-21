@@ -15,8 +15,7 @@ use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 
-use crate::io_utils::SQLWriter;
-use crate::config::TableFilters;
+use crate::config::{TableConfig, TableFilters};
 use crate::trackers::{InsertTracker, TableReferences};
 
 lazy_static! {
@@ -213,57 +212,31 @@ impl<'a, I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> Table
     }
 }
 
-pub struct TableStatements<'a, I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> {
-    table: Option<String>,
-    filters: Option<TableFilters>,
-    referenced_fields: HashSet<String>,
-    pub inner: itertools::Group<'a, Option<String>, I, F>,
+pub struct TableStatements {
+    pub table_config: TableConfig,
 }
 
-impl<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>> TableStatements<'_, I, F> {
-    pub fn new<'a, 'b>(
-        table: &Option<String>,
-        filters: &Option<TableFilters>,
-        referenced_fields: &HashSet<String>,
-        statements: itertools::Group<'b, Option<String>, I, F>,
-    ) -> TableStatements<'a, I, F>
-      where 'b: 'a
-    {
-        TableStatements {
-            table: table.clone(),
-            filters: filters.clone(),
-            referenced_fields: referenced_fields.clone(),
-            inner: statements,
-        }
-    }
-
-    pub fn get_writer(&self, working_dir: &Path, default: &Path) -> SQLWriter {
-        SQLWriter::new(
-            &self.table,
-            working_dir, default,
-        )
-    }
-
-    pub fn scan(
+impl TableStatements {
+    pub fn scan<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>>(
         self,
         working_dir: &Path,
         default: &Path,
-        referenced_fields: &HashSet<String>,
+        statements: itertools::Group<Option<String>, I, F>,
     ) -> (Option<TableReferences>, PathBuf) {
-        let mut writer = self.get_writer(working_dir, default);
+        let mut writer = self.table_config.get_writer(working_dir, default);
 
-        let mut ref_tracker: Option<TableReferences> = match self.table.is_some() && !referenced_fields.is_empty() {
-            true => Some(TableReferences::new(self.table.as_ref().unwrap(), referenced_fields)),
+        let mut ref_tracker: Option<TableReferences> = match self.table_config.table.is_some() && !self.table_config.referenced_fields.is_empty() {
+            true => Some(TableReferences::new(self.table_config.table.as_ref().unwrap(), &self.table_config.referenced_fields)),
             false => None,
         };
 
         let iter = TableStatementsIterator::new(
-            &self.table,
-            &self.filters,
-            self.inner,
+            &self.table_config.table,
+            &self.table_config.filters,
+            statements,
         );
 
-        if let Some(table) = &self.table {
+        if let Some(table) = &self.table_config.table {
             println!("Parsing table {}", &table);
         }
 

@@ -9,6 +9,8 @@ use nom::{
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use crate::io_utils::SQLWriter;
+
 #[derive(Debug)]
 #[derive(Clone)]
 #[derive(PartialEq)]
@@ -239,5 +241,40 @@ impl Config {
                 }
             }
         }
+    }
+
+    pub fn get_table_config(&self, table: &Option<String>) -> TableConfig {
+        let referenced_fields = &self.get_referenced_fields(table);
+        let filters = &self.get_filters(table);
+        TableConfig::new(table, filters, referenced_fields)
+    }
+}
+
+#[derive(Debug)]
+pub struct TableConfig {
+    pub table: Option<String>,
+    pub filters: Option<TableFilters>,
+    pub referenced_fields: HashSet<String>,
+}
+
+impl TableConfig {
+    pub fn new(
+        table: &Option<String>,
+        filters: &Option<TableFilters>,
+        referenced_fields: &HashSet<String>,
+    ) -> TableConfig
+    {
+        TableConfig {
+            table: table.clone(),
+            filters: filters.clone(),
+            referenced_fields: referenced_fields.clone(),
+        }
+    }
+
+    pub fn get_writer(&self, working_dir: &Path, default: &Path) -> SQLWriter {
+        SQLWriter::new(
+            &self.table,
+            working_dir, default,
+        )
     }
 }
