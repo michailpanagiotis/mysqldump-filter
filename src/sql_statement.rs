@@ -1,18 +1,9 @@
 use lazy_static::lazy_static;
-use nom::multi::separated_list1;
-use nom::{
-  IResult,
-  Parser,
-  character::complete::{char, one_of, none_of},
-  branch::alt,
-  multi::separated_list0,
-  bytes::complete::{escaped, is_not, take_until, tag, take_till},
-  sequence::{delimited, preceded},
-};
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use crate::parser::{parse_insert_fields, parse_insert_values};
 use crate::config::TableConfig;
 use crate::trackers::{InsertTracker, ReferenceTracker};
 use crate::io_utils::read_file;
@@ -27,16 +18,7 @@ pub struct FieldPositions(HashMap<String, usize>);
 
 impl FieldPositions {
     fn new(insert_statement: &str) -> Self {
-        let mut parser = preceded(
-            take_until("("), preceded(take_until("`"), take_until(")"))
-        ).and_then(
-          separated_list0(
-              tag(", "),
-              delimited(char('`'), is_not("`"), char('`')),
-          )
-        );
-        let res: IResult<&str, Vec<&str>> = parser.parse(insert_statement);
-        let (_, fields) = res.expect("cannot parse fields");
+        let fields = parse_insert_fields(insert_statement);
         FieldPositions(HashMap::from_iter(
             fields.iter().enumerate().map(|(idx, item)| (item.to_string(), idx))
         ))
@@ -49,7 +31,7 @@ impl FieldPositions {
     pub fn get_value(&self, statement: &Statement, field: &String) -> String {
         let values = statement.get_all_values();
         let position = self.0[field];
-        values[position].clone()
+        values[position].to_string()
     }
 
     pub fn get_values(&self, statement: &Statement, fields: &HashSet<String>) -> HashMap<String, String> {
@@ -57,7 +39,7 @@ impl FieldPositions {
 
         let value_per_field: HashMap<String, String> = HashMap::from_iter(fields.iter().map(|f| {
             let position = self.get_position(f);
-            (f.clone(), values[position].clone())
+            (f.clone(), values[position].to_string())
         }));
 
         value_per_field
@@ -136,29 +118,9 @@ impl Statement {
         Some(FieldPositions::new(&self.line).filtered(fields))
     }
 
-    pub fn get_all_values(&self) -> Vec<String> {
-        let mut parser = preceded((take_until("VALUES ("), tag("VALUES (")), take_until(");")).and_then(
-            separated_list1(
-                one_of(",)"),
-                alt((
-                    // quoted value
-                    delimited(
-                        tag("'"),
-                        // escaped or empty
-                        alt((
-                            escaped(none_of("\\\'"), '\\', tag("'")),
-                            tag("")
-                        )),
-                        tag("'")
-                    ),
-                    // unquoted value
-                    take_till(|c| c == ','),
-                )),
-            )
-        );
-        let res: IResult<&str, Vec<&str>> = parser.parse(&self.line);
-        let (_, values) = res.expect("cannot parse values");
-        values.iter().map(|item| item.to_string()).collect()
+    pub fn get_all_values(&self) -> Vec<&str> {
+        let values = parse_insert_values(&self.line);
+        values
     }
 }
 
