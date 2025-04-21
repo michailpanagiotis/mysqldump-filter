@@ -10,7 +10,6 @@ use nom::{
   sequence::{delimited, preceded},
 };
 use regex::Regex;
-use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -99,7 +98,7 @@ impl Statement {
        }
     }
 
-    pub fn from_file<'a>(sqldump_filepath: &'a Path, requested_tables: &HashSet<String>) -> impl Iterator<Item = (String, impl Iterator<Item=Statement>)> + use<'a> {
+    pub fn from_file<'a>(sqldump_filepath: &'a Path, requested_tables: &HashSet<String>) -> impl Iterator<Item = Statement> + use<'a> {
         let valid_tables = requested_tables.clone();
 
         let mut current_table: Option<String> = None;
@@ -115,7 +114,7 @@ impl Statement {
             Some(Statement::new(&current_table, &line))
         };
 
-        read_file(sqldump_filepath).flat_map(to_statement).chunk_by(Statement::get_table).into_iter()
+        read_file(sqldump_filepath).flat_map(to_statement)
     }
 
     pub fn is_insert(&self) -> bool {

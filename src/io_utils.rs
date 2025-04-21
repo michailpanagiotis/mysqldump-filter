@@ -16,7 +16,7 @@ pub struct SQLWriter {
     inner: io::BufWriter<File>
 }
 
-pub fn read_file(filepath: &Path) -> impl Iterator<Item=String> {
+pub fn read_file(filepath: &Path) -> impl Iterator<Item=String> + use<> {
     let file = File::open(filepath).expect("Cannot open file");
     io::BufReader::new(file).lines()
         .map_while(Result::ok)
