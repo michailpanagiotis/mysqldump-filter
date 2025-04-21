@@ -102,7 +102,7 @@ impl Statement {
     pub fn from_file(sqldump_filepath: &Path, requested_tables: &HashSet<String>) -> impl Iterator<Item = Statement> + use<> {
         let mut current_table: Option<String> = None;
         let valid_tables = requested_tables.clone();
-        let annotate_with_table = move |line: String| {
+        let to_statement = move |line: String| {
             if line.starts_with("-- Dumping data for table") {
                 let table = TABLE_DUMP_RE.captures(&line).unwrap().get(1).unwrap().as_str().to_string();
                 current_table = Some(table);
@@ -117,7 +117,7 @@ impl Statement {
         let file = File::open(sqldump_filepath).expect("Cannot open file");
         io::BufReader::new(file).lines()
             .map_while(Result::ok)
-            .flat_map(annotate_with_table)
+            .flat_map(to_statement)
     }
 
     pub fn is_insert(&self) -> bool {
@@ -202,38 +202,29 @@ impl<I: Iterator<Item=Statement>> TableStatementsIterator<I> {
         }
     }
 
-    fn for_each(self, mut f: impl FnMut(&Statement)) -> Option<ReferenceTracker> {
-        let mut ref_tracker = self.ref_tracker.clone();
-        for statement in self {
-            if let Some(ref mut tracker) = ref_tracker {
-                tracker.capture(&statement);
-            }
-            f(&statement);
-        }
-        ref_tracker
-    }
-
     fn should_keep_item(&mut self, statement: &Statement) -> bool {
         let Some(info) = &mut self.insert_tracker else { return true };
         info.should_keep_statement(statement)
     }
 }
 
-pub fn scan_statements<I: Iterator<Item=Statement>, F: Fn(&Statement) -> Option<String>>(
+pub fn scan_statements<I: Iterator<Item=Statement>>(
     table_config: &TableConfig,
     working_dir: &Path,
     default: &Path,
-    statements: itertools::Group<Option<String>, I, F>,
+    statements: I,
 ) -> (Option<ReferenceTracker>, PathBuf) {
-    let iter = TableStatementsIterator::new(table_config, statements);
-
     let mut writer = table_config.get_writer(working_dir, default);
     if let Some(table) = &table_config.table {
         println!("Parsing table {}", &table);
     }
-    let ref_tracker = iter.for_each(|statement| {
-        writer.write_statement(statement).expect("Unable to write data");
-    });
+    let mut ref_tracker = table_config.get_reference_tracker();
+    for statement in statements {
+        if let Some(ref mut tracker) = ref_tracker {
+            tracker.capture(&statement);
+        }
+        writer.write_statement(&statement).expect("Unable to write data");
+    };
     writer.flush().expect("Cannot flush buffer");
 
     (ref_tracker, writer.get_filepath())

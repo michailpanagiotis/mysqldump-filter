@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use itertools::Itertools;
 
-use crate::sql_statement::{scan_statements, Statement};
+use crate::sql_statement::{scan_statements, Statement, TableStatementsIterator};
 use crate::io_utils::SQLWriter;
 use crate::trackers::ReferenceTracker;
 use crate::config::Config;
@@ -15,11 +15,13 @@ pub fn parse_input_file(config: &Config, input_file: &Path, output_file: &Path) 
         let schema_file = &config.schema_file.clone();
         let table_config = config.get_table_config(&table);
 
+        let iter = TableStatementsIterator::new(&table_config, statements);
+
         let (ref_tracker, filepath) = scan_statements(
             &table_config,
             working_dir_path,
             schema_file,
-            statements,
+            iter,
         );
 
         filepaths.push(filepath);
