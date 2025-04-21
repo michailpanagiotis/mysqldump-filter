@@ -24,21 +24,12 @@ impl Parser<'_> {
         let mut filepaths: Vec<PathBuf> = Vec::new();
         let mut reference_trackers: Vec<TableReferences> = Vec::new();
         for (table, statements) in Statement::from_file(input_file, &self.config.requested_tables).chunk_by(Statement::get_table).into_iter() {
-            let filters = table.clone().map(|t| self.config.filters_per_table.get(&t));
             let working_dir_path = &self.config.working_dir_path.clone();
             let schema_file = &self.config.schema_file.clone();
+            let referenced_fields = &self.config.get_referenced_fields(&table);
+            let filters = &self.config.get_filters(&table);
 
-
-            let referenced_fields = match table {
-                None => HashSet::new(),
-                Some(ref t) => {
-                    match self.config.references_per_table.get(t) {
-                        Some(x) => HashSet::from_iter(x.iter().cloned()),
-                        None => HashSet::new(),
-                    }
-                }
-            };
-            let st = TableStatements::new(&table, &filters, &referenced_fields, statements);
+            let st = TableStatements::new(&table, &filters, referenced_fields, statements);
 
             let (ref_tracker, filepath) = st.scan(
                 working_dir_path,

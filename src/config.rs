@@ -224,4 +224,20 @@ impl Config {
             references_per_table,
         }
     }
+
+    pub fn get_filters(&self, table: &Option<String>) -> Option<TableFilters> {
+        table.as_ref().map(|t| self.filters_per_table.get(t))
+    }
+
+    pub fn get_referenced_fields(&self, table: &Option<String>) -> HashSet<String> {
+        match table {
+            None => HashSet::new(),
+            Some(t) => {
+                match self.references_per_table.get(t) {
+                    Some(x) => HashSet::from_iter(x.iter().cloned()),
+                    None => HashSet::new(),
+                }
+            }
+        }
+    }
 }
