@@ -22,13 +22,10 @@ impl ReferenceTracker {
     }
 
     pub fn merge<'a, I: Iterator<Item=&'a ReferenceTracker>>(table_refs: I) -> HashMap<String, HashSet<String>> {
-        let mut references: HashMap<String, HashSet<String>> = HashMap::new();
-
-        for tref in table_refs {
-            for (field, value) in tref.to_canonical_entries() {
-                references.insert(field, value);
-            }
-        }
+        let references: HashMap<String, HashSet<String>> = table_refs.fold(HashMap::new(), |mut acc, curr| {
+            acc.extend(curr.to_canonical_entries());
+            acc
+        });
 
         references
     }
