@@ -4,16 +4,16 @@ use crate::config::TableFilters;
 
 #[derive(Debug)]
 #[derive(Clone)]
-pub struct TableReferences {
+pub struct ReferenceTracker {
     table: String,
     referenced_fields: HashSet<String>,
     field_positions: Option<FieldPositions>,
     values_per_field: HashMap<String, HashSet<String>>,
 }
 
-impl TableReferences {
+impl ReferenceTracker {
     pub fn new(table: &str, referenced_fields: &HashSet<String>) -> Self {
-        TableReferences {
+        ReferenceTracker {
             table: table.to_string(),
             referenced_fields: referenced_fields.clone(),
             field_positions: None,
@@ -21,7 +21,7 @@ impl TableReferences {
         }
     }
 
-    pub fn merge<'a, I: Iterator<Item=&'a TableReferences>>(table_refs: I) -> HashMap<String, HashSet<String>> {
+    pub fn merge<'a, I: Iterator<Item=&'a ReferenceTracker>>(table_refs: I) -> HashMap<String, HashSet<String>> {
         let mut references: HashMap<String, HashSet<String>> = HashMap::new();
 
         for tref in table_refs {
