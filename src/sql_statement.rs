@@ -104,8 +104,9 @@ impl Statement {
         let valid_tables = requested_tables.clone();
         let to_statement = move |line: String| {
             if line.starts_with("-- Dumping data for table") {
-                let table = TABLE_DUMP_RE.captures(&line).unwrap().get(1).unwrap().as_str().to_string();
-                current_table = Some(table);
+                current_table = Some(
+                    TABLE_DUMP_RE.captures(&line).unwrap().get(1).unwrap().as_str().to_string(),
+                );
             }
             if let Some(ref t) = current_table {
                 if !valid_tables.contains(t) {
