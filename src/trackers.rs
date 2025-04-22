@@ -103,10 +103,8 @@ impl<'a> InsertTracker<'a> {
             return false;
         }
 
-        let Some(ref refs) = self.references else { return true };
-
         dbg!("HERE");
-        if !self.reference_filters.test_values(&value_per_field) {
+        if !self.reference_filters.is_empty() && self.references.is_some_and(|x| !self.reference_filters.test_values_against_references(&value_per_field, x))  {
             return false;
         }
 

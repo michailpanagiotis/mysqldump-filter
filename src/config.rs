@@ -86,7 +86,14 @@ pub struct FieldFilters {
 
 impl FieldFilters {
     fn test_value(&self, value: &str) -> bool {
-        self.conditions.iter().all(|condition| condition.test(value))
+        self.conditions.iter().filter(|x| !x.is_reference()).all(|condition| condition.test(value))
+    }
+
+    fn test_reference<'a>(&self, value: &str, references: &'a HashMap<String, HashSet<String>>) -> bool {
+        self.conditions.iter().filter(|x| x.is_reference()).all(|condition| {
+            let Some(set) = references.get(condition.value.as_str()) else { return false };
+            return set.contains(value);
+        })
     }
 
     fn get_direct_conditions(&self) -> Vec<FilterCondition> {
@@ -118,6 +125,12 @@ impl TableFilters {
     pub fn test_values(&self, value_per_field: &HashMap<String, String>) -> bool {
         self.per_field.iter().all(|(field, field_filters)| {
             value_per_field.get(field).is_some_and(|v| field_filters.test_value(v))
+        })
+    }
+
+    pub fn test_values_against_references<'a>(&self, value_per_field: &HashMap<String, String>, references: &'a HashMap<String, HashSet<String>>) -> bool {
+        self.per_field.iter().all(|(field, field_filters)| {
+            value_per_field.get(field).is_some_and(|v| field_filters.test_reference(v, references))
         })
     }
 
