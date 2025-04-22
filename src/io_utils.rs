@@ -1,15 +1,9 @@
-use lazy_static::lazy_static;
-use regex::Regex;
 use std::io::Write;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufWriter};
 use std::path::{Path, PathBuf};
 
 use crate::sql_statement::Statement;
-
-lazy_static! {
-    static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
-}
 
 pub struct SQLWriter {
     filepath: PathBuf,
