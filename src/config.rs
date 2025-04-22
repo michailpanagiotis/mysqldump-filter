@@ -20,15 +20,17 @@ enum FilterOperator {
 #[derive(Debug)]
 #[derive(Clone)]
 struct FilterCondition {
+    table: String,
     field: String,
     operator: FilterOperator,
     value: String,
 }
 
 impl FilterCondition {
-    fn new(definition: &str) -> FilterCondition {
+    fn new(table: &str, definition: &str) -> FilterCondition {
         let (field, operator, value) = parse_filter(definition);
         FilterCondition {
+            table: table.to_string(),
             field: field.to_string(),
             operator: match operator {
                 "==" => FilterOperator::Equals,
@@ -60,6 +62,7 @@ impl FilterCondition {
 }
 
 #[derive(Debug)]
+#[derive(Default)]
 #[derive(Clone)]
 pub struct FieldFilters {
     table: String,
@@ -67,7 +70,37 @@ pub struct FieldFilters {
     conditions: Vec<FilterCondition>,
 }
 
+impl Extend<FilterCondition> for FieldFilters {
+    fn extend<T>(&mut self, conditions: T)
+       where T: IntoIterator<Item = FilterCondition> {
+        self.conditions.extend(conditions);
+        self.assert_sane();
+    }
+}
+
+impl FromIterator<FilterCondition> for FieldFilters {
+    fn from_iter<T>(iter: T) -> Self
+       where T: IntoIterator<Item = FilterCondition> {
+        let conditions: Vec<FilterCondition> = iter.into_iter().collect();
+
+        let instance = FieldFilters {
+            table: conditions[0].table.clone(),
+            field: conditions[0].field.clone(),
+            conditions,
+        };
+        instance.assert_sane();
+        instance
+    }
+}
+
 impl FieldFilters {
+    fn assert_sane(&self) {
+        let distinct: Vec<&FilterCondition> = self.conditions.iter().unique_by(|s| (&s.table, &s.field)).collect();
+        if distinct.len() > 1 {
+            panic!("conditions have different fields");
+        }
+    }
+
     fn test_value(&self, value: &str) -> bool {
         self.conditions.iter().filter(|x| !x.is_reference()).all(|condition| condition.test(value))
     }
@@ -93,18 +126,12 @@ pub struct TableFilters {
 
 impl TableFilters {
     fn new<I: Iterator<Item=String>>(table: &str, conditions: I) -> Self {
-        let res: HashMap<String, Vec<FilterCondition>> = conditions.map(|x| {
-            let cond = FilterCondition::new(&x);
+        let res: HashMap<String, FieldFilters> = conditions.map(|ref x| {
+            let cond = FilterCondition::new(table, x);
             (cond.field.clone(), cond)
-        }).into_group_map();
+        }).into_grouping_map().collect();
 
-        let res2: HashMap<String, FieldFilters> = HashMap::from_iter(res.iter().map(|(field, value)| (field.clone(), FieldFilters {
-            table: table.to_string(),
-            field: field.clone(),
-            conditions: value.clone(),
-        })));
-
-        TableFilters{ table: table.to_string(), per_field: res2 }
+        TableFilters{ table: table.to_string(), per_field: res }
     }
 
     pub fn is_empty(&self) -> bool {
