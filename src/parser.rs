@@ -1,12 +1,24 @@
 use nom::{
   IResult,
   Parser,
-  character::complete::{char, one_of, none_of},
   branch::alt,
-  multi::{separated_list0, separated_list1},
   bytes::complete::{escaped, is_not, take_until, tag, take_till},
+  character::complete::{char, one_of, none_of},
+  combinator::rest,
+  multi::{separated_list0, separated_list1},
   sequence::{delimited, preceded},
 };
+
+pub fn parse_filter(filter_definition: &str) -> (&str, &str, &str) {
+    let mut parser = (
+        is_not("!=-"),
+        alt((tag("=="), tag("!="), tag("->"))),
+        rest
+    );
+    let res: IResult<&str, (&str, &str, &str)> = parser.parse(filter_definition);
+    let (_, parsed) = res.expect("cannot parse filter condition");
+    parsed
+}
 
 pub fn parse_insert_fields(insert_statement: &str) -> Vec<&str> {
     let mut parser = preceded(

@@ -1,15 +1,9 @@
 use itertools::Itertools;
-use nom::{
-  IResult,
-  Parser,
-  bytes::complete::{is_not, tag},
-  branch::alt,
-  combinator::rest,
-};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::io_utils::SQLWriter;
+use crate::parser::parse_filter;
 use crate::trackers::{InsertTracker, ReferenceTracker};
 use crate::sql_statement::{Statement, TableStatementsIterator};
 
@@ -33,14 +27,7 @@ struct FilterCondition {
 
 impl FilterCondition {
     fn new(definition: String) -> FilterCondition {
-        let mut parser = (
-            is_not("!=-"),
-            alt((tag("=="), tag("!="), tag("->"))),
-            rest
-        );
-        let res: IResult<&str, (&str, &str, &str)> = parser.parse(&definition);
-        let (_, parsed) = res.expect("cannot parse filter condition");
-        let (field, operator, value) = parsed;
+        let (field, operator, value) = parse_filter(definition.as_str());
         FilterCondition {
             field: field.to_string(),
             operator: match operator {
@@ -89,10 +76,10 @@ impl FieldFilters {
         self.conditions.iter().filter(|x| !x.is_reference()).all(|condition| condition.test(value))
     }
 
-    fn test_reference<'a>(&self, value: &str, references: &'a HashMap<String, HashSet<String>>) -> bool {
+    fn test_reference(&self, value: &str, references: &HashMap<String, HashSet<String>>) -> bool {
         self.conditions.iter().filter(|x| x.is_reference()).all(|condition| {
             let Some(set) = references.get(condition.value.as_str()) else { return false };
-            return set.contains(value);
+            set.contains(value)
         })
     }
 
@@ -128,7 +115,7 @@ impl TableFilters {
         })
     }
 
-    pub fn test_values_against_references<'a>(&self, value_per_field: &HashMap<String, String>, references: &'a HashMap<String, HashSet<String>>) -> bool {
+    pub fn test_values_against_references(&self, value_per_field: &HashMap<String, String>, references: &HashMap<String, HashSet<String>>) -> bool {
         self.per_field.iter().all(|(field, field_filters)| {
             value_per_field.get(field).is_some_and(|v| field_filters.test_reference(v, references))
         })
