@@ -154,18 +154,18 @@ impl FromIterator<FilterCondition> for TableFilters {
 
 
 #[derive(Debug)]
-pub struct DatabaseFilters(HashMap<String, TableFilters>);
+pub struct Filters(HashMap<String, TableFilters>);
 
-impl DatabaseFilters {
+impl Filters {
     fn from_iter(iter: impl Iterator<Item=(String, TableFilters)>) -> Self {
         let res: HashMap<String, TableFilters> = iter
             .filter(|(_, v)| !v.is_empty())
             .collect();
-        DatabaseFilters(res)
+        Filters(res)
     }
 
     pub fn from_config_value(value: &HashMap<String, config::Value>) -> Self {
-        DatabaseFilters::from_iter(
+        Filters::from_iter(
             value.iter().map(|(table, conditions)| {
                 let config_conditions = conditions.clone().into_array().expect("cannot parse config array").into_iter().map(|x| {
                    FilterCondition::new(table, &x.to_string())

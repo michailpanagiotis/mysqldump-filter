@@ -4,14 +4,14 @@ use std::path::{Path, PathBuf};
 use crate::io_utils::SQLWriter;
 use crate::trackers::{InsertTracker, ReferenceTracker};
 use crate::sql_statement::{Statement, TableStatementsIterator};
-use crate::filters::{DatabaseFilters, TableFilters};
+use crate::filters::{Filters, TableFilters};
 
 #[derive(Debug)]
 pub struct Config {
     pub working_dir_path: PathBuf,
     pub schema_file: PathBuf,
     pub requested_tables: HashSet<String>,
-    pub filters_per_table: DatabaseFilters,
+    pub filters: Filters,
 }
 
 impl Config {
@@ -29,7 +29,7 @@ impl Config {
             .expect("no key 'allow_data_on_tables' in config")
             .iter().map(|x| x.to_string()).collect();
 
-        let filters_per_table = DatabaseFilters::from_config_value(
+        let filters = Filters::from_config_value(
             &settings.get_table("filter_inserts").expect("no key 'filter_inserts' in config"),
         );
 
@@ -38,19 +38,19 @@ impl Config {
             schema_file: schema_file.to_path_buf(),
             working_dir_path: working_dir_path.to_path_buf(),
             requested_tables,
-            filters_per_table,
+            filters,
         }
     }
 
     pub fn get_filters_of_table(&self, table: &Option<String>) -> Option<TableFilters> {
         let Some(t) = table else { return None };
-        self.filters_per_table.get_filters_of_table(t)
+        self.filters.get_filters_of_table(t)
     }
 
     pub fn get_referenced_fields(&self, table: &Option<String>) -> HashSet<String> {
         match table {
             None => HashSet::new(),
-            Some(t) => self.filters_per_table.get_references_of_table(t),
+            Some(t) => self.filters.get_references_of_table(t),
         }
     }
 
