@@ -52,8 +52,9 @@ impl FilterCondition {
     }
 
     fn get_reference_parts(&self) -> (String, String) {
-        let parts: Vec<&str> = self.value.split(".").collect();
-        (parts[0].to_string(), parts[1].to_string())
+        let mut parts = self.value.split(".");
+        let (Some(table), Some(field), None) = (parts.next(), parts.next(), parts.next()) else { panic!("malformatted reference field") };
+        (table.to_string(), field.to_string())
     }
 }
 
