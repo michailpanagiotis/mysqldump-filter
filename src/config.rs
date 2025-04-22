@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use crate::io_utils::SQLWriter;
 use crate::trackers::{InsertTracker, ReferenceTracker};
+use crate::sql_statement::{Statement, TableStatementsIterator};
 
 #[derive(Debug)]
 #[derive(Clone)]
@@ -248,6 +249,12 @@ impl Config {
         let referenced_fields = &self.get_referenced_fields(table);
         let filters = &self.get_filters(table);
         TableConfig::new(table, filters, referenced_fields)
+    }
+
+    pub fn get_table_iterator<I: Iterator<Item=Statement>>(&self, table: &Option<String>, statements: I) -> impl Iterator<Item=Statement> {
+        let table_config = self.get_table_config(table);
+        let insert_tracker = table_config.get_insert_tracker();
+        TableStatementsIterator::new(insert_tracker, statements)
     }
 }
 

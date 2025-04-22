@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use itertools::Itertools;
 
-use crate::sql_statement::{scan_statements, Statement, TableStatementsIterator};
+use crate::sql_statement::Statement;
 use crate::io_utils::SQLWriter;
 use crate::trackers::ReferenceTracker;
 use crate::config::Config;
@@ -15,24 +15,30 @@ pub fn parse_input_file(config: &Config, input_file: &Path, output_file: &Path) 
         let schema_file = &config.schema_file.clone();
         let table_config = config.get_table_config(&table);
 
-        let iter = TableStatementsIterator::new(&table_config, statements);
+        let iter = config.get_table_iterator(&table, statements);
 
-        let (ref_tracker, filepath) = scan_statements(
-            &table_config,
-            working_dir_path,
-            schema_file,
-            iter,
-        );
+        let mut writer = table_config.get_writer(working_dir_path, schema_file);
+        let mut ref_tracker = table_config.get_reference_tracker();
+        if let Some(table) = &table_config.table {
+            println!("Parsing table {}", &table);
+        }
+        for statement in iter {
+            if let Some(ref mut tracker) = ref_tracker {
+                tracker.capture(&statement);
+            }
+            writer.write_statement(&statement).expect("Unable to write data");
+        };
+        writer.flush().expect("Cannot flush buffer");
 
-        filepaths.push(filepath);
+        filepaths.push(writer.get_filepath());
         if let Some(tracker) = ref_tracker {
             reference_trackers.push(tracker);
         }
     }
 
-    let ref_trackers = ReferenceTracker::merge(reference_trackers.iter());
+    let references = ReferenceTracker::merge(reference_trackers.iter());
 
-    dbg!(&ref_trackers);
+    dbg!(&references);
 
     SQLWriter::combine_files(filepaths.iter(), output_file);
 }

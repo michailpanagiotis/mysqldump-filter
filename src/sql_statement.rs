@@ -1,11 +1,10 @@
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::parser::{parse_insert_fields, parse_insert_values};
-use crate::config::TableConfig;
-use crate::trackers::{InsertTracker, ReferenceTracker};
+use crate::trackers::InsertTracker;
 use crate::io_utils::read_file;
 
 lazy_static! {
@@ -127,7 +126,6 @@ impl Statement {
 pub struct TableStatementsIterator<I: Iterator<Item=Statement>> {
     inner: I,
     insert_tracker: Option<InsertTracker>,
-    ref_tracker: Option<ReferenceTracker>,
 }
 
 impl<I: Iterator<Item=Statement>> Iterator for TableStatementsIterator<I> {
@@ -148,15 +146,12 @@ impl<I: Iterator<Item=Statement>> Iterator for TableStatementsIterator<I> {
 
 impl<I: Iterator<Item=Statement>> TableStatementsIterator<I> {
     pub fn new(
-        table_config: &TableConfig,
+        insert_tracker: Option<InsertTracker>,
         statements: I,
     ) -> Self
     {
-        let ref_tracker = table_config.get_reference_tracker();
-        let insert_tracker = table_config.get_insert_tracker();
         TableStatementsIterator {
             insert_tracker,
-            ref_tracker,
             inner: statements,
         }
     }
@@ -165,26 +160,4 @@ impl<I: Iterator<Item=Statement>> TableStatementsIterator<I> {
         let Some(info) = &mut self.insert_tracker else { return true };
         info.should_keep_statement(statement)
     }
-}
-
-pub fn scan_statements<I: Iterator<Item=Statement>>(
-    table_config: &TableConfig,
-    working_dir: &Path,
-    default: &Path,
-    statements: I,
-) -> (Option<ReferenceTracker>, PathBuf) {
-    let mut writer = table_config.get_writer(working_dir, default);
-    if let Some(table) = &table_config.table {
-        println!("Parsing table {}", &table);
-    }
-    let mut ref_tracker = table_config.get_reference_tracker();
-    for statement in statements {
-        if let Some(ref mut tracker) = ref_tracker {
-            tracker.capture(&statement);
-        }
-        writer.write_statement(&statement).expect("Unable to write data");
-    };
-    writer.flush().expect("Cannot flush buffer");
-
-    (ref_tracker, writer.get_filepath())
 }
