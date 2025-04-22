@@ -74,7 +74,7 @@ impl<'a> InsertTracker<'a> {
         references: Option<&'a HashMap<String, HashSet<String>>>,
     ) -> Self {
         let mut borrowed = filters.clone();
-        let concrete_filters = borrowed.get_or_insert(TableFilters::empty(table));
+        let concrete_filters = borrowed.get_or_insert(TableFilters::empty());
 
         InsertTracker {
             table: table.to_string(),

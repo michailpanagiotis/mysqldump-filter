@@ -67,9 +67,7 @@ pub struct FieldFilters {
 }
 
 impl Extend<FilterCondition> for FieldFilters {
-    fn extend<T>(&mut self, conditions: T)
-       where T: IntoIterator<Item = FilterCondition>
-    {
+    fn extend<T: IntoIterator<Item = FilterCondition>>(&mut self, conditions: T) {
         let other = FieldFilters::from_iter(conditions);
         if other.table != self.table || other.field != self.field {
             panic!("filter conditions have different fields");
@@ -79,9 +77,7 @@ impl Extend<FilterCondition> for FieldFilters {
 }
 
 impl FromIterator<FilterCondition> for FieldFilters {
-    fn from_iter<T>(iter: T) -> Self
-       where T: IntoIterator<Item = FilterCondition>
-    {
+    fn from_iter<T: IntoIterator<Item = FilterCondition>>(iter: T) -> Self {
         let conditions: Vec<FilterCondition> = iter.into_iter().collect();
 
         let distinct: Vec<&FilterCondition> = conditions.iter().unique_by(|s| (&s.table, &s.field)).collect();
@@ -98,13 +94,6 @@ impl FromIterator<FilterCondition> for FieldFilters {
 }
 
 impl FieldFilters {
-    fn assert_sane(&self) {
-        let distinct: Vec<&FilterCondition> = self.conditions.iter().unique_by(|s| (&s.table, &s.field)).collect();
-        if distinct.len() > 1 {
-            panic!("conditions have different fields");
-        }
-    }
-
     fn test_value(&self, value: &str) -> bool {
         self.conditions.iter().filter(|x| !x.is_reference()).all(|condition| condition.test(value))
     }
@@ -124,7 +113,6 @@ impl FieldFilters {
 #[derive(Debug)]
 #[derive(Clone)]
 pub struct TableFilters {
-    table: String,
     per_field: HashMap<String, FieldFilters>,
 }
 
@@ -135,15 +123,15 @@ impl TableFilters {
             (cond.field.clone(), cond)
         }).into_grouping_map().collect();
 
-        TableFilters{ table: table.to_string(), per_field: res }
+        TableFilters{ per_field: res }
     }
 
     pub fn is_empty(&self) -> bool {
         self.per_field.is_empty()
     }
 
-    pub fn empty(table: &str) -> Self {
-        TableFilters{ table: table.to_string(), per_field: HashMap::new()  }
+    pub fn empty() -> Self {
+        TableFilters{ per_field: HashMap::new()  }
     }
 
     pub fn get_filtered_fields(&self) -> HashSet<String> {
@@ -167,15 +155,10 @@ impl TableFilters {
     }
 }
 
-impl FromIterator<FilterCondition> for HashMap<String, FieldFilters> {
-    fn from_iter<T>(iter: T) -> Self
-       where T: IntoIterator<Item = FilterCondition>
-    {
-        let mut res: HashMap<String, FieldFilters> = HashMap::new();
-        for (field, items) in &iter.into_iter().chunk_by(|x| x.field.clone()) {
-            res.insert(field, FieldFilters::from_iter(items));
+impl FromIterator<FilterCondition> for TableFilters {
+    fn from_iter<T: IntoIterator<Item = FilterCondition>>(iter: T) -> Self {
+        TableFilters {
+            per_field: iter.into_iter().chunk_by(|x| x.field.clone()).into_iter().map(|(field, items)| (field, FieldFilters::from_iter(items))).collect(),
         }
-
-        res
     }
 }
