@@ -40,10 +40,6 @@ impl FilterCondition {
         }
     }
 
-    // fn from_config_value(value: config::Value) -> Self {
-    //     FilterCondition::new(value.to_string().as_str())
-    // }
-
     fn test(&self, other_value: &str) -> bool {
         match &self.operator {
             FilterOperator::Equals => self.value == other_value,
@@ -92,7 +88,6 @@ impl FieldFilters {
 #[derive(Clone)]
 pub struct TableFilters {
     table: String,
-    filtered_fields: HashSet<String>,
     per_field: HashMap<String, FieldFilters>,
 }
 
@@ -101,8 +96,8 @@ impl TableFilters {
         self.per_field.is_empty()
     }
 
-    pub fn get_filtered_fields(&self) -> &HashSet<String> {
-        &self.filtered_fields
+    pub fn get_filtered_fields(&self) -> HashSet<String> {
+        self.per_field.values().map(|x| x.field.clone()).collect()
     }
 
     pub fn test_values(&self, value_per_field: &HashMap<String, String>) -> bool {
@@ -117,8 +112,8 @@ impl TableFilters {
         })
     }
 
-    fn from_conditions(table: &str, conditions: &[FilterCondition]) -> Self {
-        let res: HashMap<String, Vec<FilterCondition>> = conditions.iter().map(|cond| {
+    fn from_conditions<I: Iterator<Item=FilterCondition>>(table: &str, conditions: I) -> Self {
+        let res: HashMap<String, Vec<FilterCondition>> = conditions.map(|cond| {
             (cond.field.clone(), cond.to_owned())
         }).into_group_map();
 
@@ -128,15 +123,14 @@ impl TableFilters {
             conditions: value.clone(),
         })));
 
-        let filtered_fields = res.keys().cloned().collect();
-        TableFilters{ table: table.to_string(), filtered_fields, per_field: res2 }
+        TableFilters{ table: table.to_string(), per_field: res2 }
     }
 
     fn from_config_value(table: &str, value: &config::Value) -> Self {
-        let conditions: Vec<FilterCondition> = value.clone().into_array().unwrap()
+        let conditions = value.clone().into_array().unwrap()
             .into_iter()
-            .map(|x| FilterCondition::new(&x.to_string())).collect();
-        TableFilters::from_conditions(table, &conditions)
+            .map(|x| FilterCondition::new(&x.to_string()));
+        TableFilters::from_conditions(table, conditions)
     }
 
     fn get_references(&self) -> Vec<(String, String)> {
@@ -144,7 +138,7 @@ impl TableFilters {
     }
 
     pub fn empty(table: &str) -> Self {
-        TableFilters{ table: table.to_string(), filtered_fields: HashSet::new(), per_field: HashMap::new()  }
+        TableFilters{ table: table.to_string(), per_field: HashMap::new()  }
     }
 }
 

@@ -79,7 +79,7 @@ impl<'a> InsertTracker<'a> {
         InsertTracker {
             table: table.to_string(),
             filters: concrete_filters.clone(),
-            field_names: concrete_filters.get_filtered_fields().clone(),
+            field_names: concrete_filters.get_filtered_fields(),
             field_positions: None,
             references,
         }
