@@ -61,9 +61,8 @@ impl ReferenceTracker {
 #[derive(Debug)]
 pub struct InsertTracker<'a> {
     table: String,
-    direct_filters: TableFilters,
+    filters: TableFilters,
     field_names: HashSet<String>,
-    reference_filters: TableFilters,
     field_positions: Option<FieldPositions>,
     references: Option<&'a HashMap<String, HashSet<String>>>,
 }
@@ -79,9 +78,8 @@ impl<'a> InsertTracker<'a> {
 
         InsertTracker {
             table: table.to_string(),
+            filters: concrete_filters.clone(),
             field_names: concrete_filters.get_filtered_fields().clone(),
-            direct_filters: concrete_filters.to_direct_filters(),
-            reference_filters: concrete_filters.to_reference_filters(),
             field_positions: None,
             references,
         }
@@ -99,12 +97,11 @@ impl<'a> InsertTracker<'a> {
         let Some(ref pos) = self.field_positions else { return true };
 
         let value_per_field = pos.get_values(statement, &self.field_names);
-        if !self.direct_filters.test_values(&value_per_field) {
+        if !self.filters.test_values(&value_per_field) {
             return false;
         }
 
-        dbg!("HERE");
-        if !self.reference_filters.is_empty() && self.references.is_some_and(|x| !self.reference_filters.test_values_against_references(&value_per_field, x))  {
+        if self.references.is_some_and(|x| !self.filters.test_values_against_references(&value_per_field, x))  {
             return false;
         }
 

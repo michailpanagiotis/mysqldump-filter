@@ -26,8 +26,8 @@ struct FilterCondition {
 }
 
 impl FilterCondition {
-    fn new(definition: String) -> FilterCondition {
-        let (field, operator, value) = parse_filter(definition.as_str());
+    fn new(definition: &str) -> FilterCondition {
+        let (field, operator, value) = parse_filter(definition);
         FilterCondition {
             field: field.to_string(),
             operator: match operator {
@@ -40,9 +40,9 @@ impl FilterCondition {
         }
     }
 
-    fn from_config_value(value: config::Value) -> Self {
-        FilterCondition::new(value.to_string())
-    }
+    // fn from_config_value(value: config::Value) -> Self {
+    //     FilterCondition::new(value.to_string().as_str())
+    // }
 
     fn test(&self, other_value: &str) -> bool {
         match &self.operator {
@@ -83,12 +83,8 @@ impl FieldFilters {
         })
     }
 
-    fn get_direct_conditions(&self) -> Vec<FilterCondition> {
-        self.conditions.iter().filter(|x| !x.is_reference()).cloned().collect()
-    }
-
-    fn get_reference_conditions(&self) -> Vec<FilterCondition> {
-        self.conditions.iter().filter(|x| x.is_reference()).cloned().collect()
+    fn get_references(&self) -> Vec<(String, String)> {
+        self.conditions.iter().filter(|x| x.is_reference()).cloned().map(|x| x.get_reference_parts()).collect()
     }
 }
 
@@ -121,52 +117,34 @@ impl TableFilters {
         })
     }
 
-    fn from_conditions(table: &String, conditions: &[FilterCondition]) -> Self {
+    fn from_conditions(table: &str, conditions: &[FilterCondition]) -> Self {
         let res: HashMap<String, Vec<FilterCondition>> = conditions.iter().map(|cond| {
             (cond.field.clone(), cond.to_owned())
         }).into_group_map();
 
         let res2: HashMap<String, FieldFilters> = HashMap::from_iter(res.iter().map(|(field, value)| (field.clone(), FieldFilters {
-            table: table.clone(),
+            table: table.to_string(),
             field: field.clone(),
             conditions: value.clone(),
         })));
 
         let filtered_fields = res.keys().cloned().collect();
-        TableFilters{ table: table.clone(), filtered_fields, per_field: res2 }
+        TableFilters{ table: table.to_string(), filtered_fields, per_field: res2 }
     }
 
-    fn from_config_value(table: &String, value: &config::Value) -> Self {
+    fn from_config_value(table: &str, value: &config::Value) -> Self {
         let conditions: Vec<FilterCondition> = value.clone().into_array().unwrap()
             .into_iter()
-            .map(FilterCondition::from_config_value).collect();
-        TableFilters::from_conditions(&table, &conditions)
-    }
-
-    fn get_direct_conditions(&self) -> Vec<FilterCondition> {
-        self.per_field.values().flat_map(|x| x.get_direct_conditions()).collect()
-    }
-
-    fn get_reference_conditions(&self) -> Vec<FilterCondition> {
-        self.per_field.values().flat_map(|x| x.get_reference_conditions()).collect()
+            .map(|x| FilterCondition::new(&x.to_string())).collect();
+        TableFilters::from_conditions(table, &conditions)
     }
 
     fn get_references(&self) -> Vec<(String, String)> {
-        self.get_reference_conditions().iter().map(|x| x.get_reference_parts()).collect()
+        self.per_field.values().flat_map(|v| v.get_references()).collect()
     }
 
     pub fn empty(table: &str) -> Self {
         TableFilters{ table: table.to_string(), filtered_fields: HashSet::new(), per_field: HashMap::new()  }
-    }
-
-    pub fn to_direct_filters(&self) -> Self {
-        let conditions: Vec<FilterCondition> = self.get_direct_conditions();
-        TableFilters::from_conditions(&self.table, &conditions)
-    }
-
-    pub fn to_reference_filters(&self) -> Self {
-        let conditions: Vec<FilterCondition> = self.get_reference_conditions();
-        TableFilters::from_conditions(&self.table, &conditions)
     }
 }
 

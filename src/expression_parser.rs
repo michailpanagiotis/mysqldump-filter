@@ -15,7 +15,7 @@ lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
 }
 
-pub fn get_table_from_comment(sql_comment: &String) -> Option<String> {
+pub fn get_table_from_comment(sql_comment: &str) -> Option<String> {
     if sql_comment.starts_with("-- Dumping data for table") {
         return Some(
             TABLE_DUMP_RE.captures(sql_comment).unwrap().get(1).unwrap().as_str().to_string()
