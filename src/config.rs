@@ -1,25 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::io_utils::SQLWriter;
+use crate::io_utils::{read_settings, SQLWriter};
 use crate::trackers::{InsertTracker, ReferenceTracker};
 use crate::sql_statement::{Statement, TableStatementsIterator};
-use crate::filters::{Filters, TableFilters};
-
-fn read_settings(config_file: &Path) -> config::Config {
-    let settings = config::Config::builder()
-        .add_source(config::File::new(config_file.to_str().expect("invalid config path"), config::FileFormat::Json))
-        .add_source(config::Environment::with_prefix("MYSQLDUMP_FILTER"))
-        .build()
-        .unwrap();
-
-    let requested_tables: HashSet<_> = settings
-        .get_array("allow_data_on_tables")
-        .expect("no key 'allow_data_on_tables' in config")
-        .iter().map(|x| x.to_string()).collect();
-
-    settings
-}
+use crate::filters::{Filters, TableFilters, FilterCondition};
 
 #[derive(Debug)]
 pub struct Config {
@@ -34,15 +19,10 @@ impl Config {
         config_file: &Path,
         working_dir_path: &Path,
     ) -> Config {
-        let settings = read_settings(config_file);
-        let requested_tables: HashSet<_> = settings
-            .get_array("allow_data_on_tables")
-            .expect("no key 'allow_data_on_tables' in config")
-            .iter().map(|x| x.to_string()).collect();
+        let (requested_tables, filter_conditions) = read_settings(config_file);
 
-        let filters = Filters::from_config_value(
-            &settings.get_table("filter_inserts").expect("no key 'filter_inserts' in config"),
-        );
+        let it = filter_conditions.into_iter().map(|(table, condition)| FilterCondition::new(&table, &condition));
+        let filters = Filters::from_iter(it);
 
         dbg!(&filters);
 

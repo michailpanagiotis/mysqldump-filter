@@ -15,7 +15,7 @@ enum FilterOperator {
 
 #[derive(Debug)]
 #[derive(Clone)]
-struct FilterCondition {
+pub struct FilterCondition {
     table: String,
     field: String,
     operator: FilterOperator,
@@ -23,7 +23,7 @@ struct FilterCondition {
 }
 
 impl FilterCondition {
-    fn new(table: &str, definition: &str) -> FilterCondition {
+    pub fn new(table: &str, definition: &str) -> FilterCondition {
         let (field, operator, value) = parse_filter(definition);
         FilterCondition {
             table: table.to_string(),
@@ -116,10 +116,6 @@ impl FieldFilters {
 pub struct TableFilters (HashMap<String, FieldFilters>);
 
 impl TableFilters {
-    fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
     pub fn empty() -> Self {
         TableFilters(HashMap::new())
     }
@@ -158,16 +154,6 @@ impl FromIterator<FilterCondition> for TableFilters {
 pub struct Filters(HashMap<String, TableFilters>);
 
 impl Filters {
-    pub fn from_config_value(value: &HashMap<String, config::Value>) -> Self {
-        Filters::from_iter(
-            value.iter().flat_map(|(table, conditions)| {
-                conditions.clone().into_array().expect("cannot parse config array").into_iter().map(|x| {
-                   FilterCondition::new(table, &x.to_string())
-                })
-            })
-        )
-    }
-
     pub fn get_references_of_table(&self, table: &str) -> HashSet<String> {
         self.0.values().flat_map(|v| v.get_references()).filter(|(t, _)| t == table).map(|(_, f)| f).unique().collect()
     }
@@ -178,7 +164,7 @@ impl Filters {
 }
 
 impl FromIterator<FilterCondition> for Filters {
-    fn from_iter<T: IntoIterator<Item = FilterCondition>>(iter: T) -> Self {
+    fn from_iter<T: IntoIterator<Item=FilterCondition>>(iter: T) -> Self {
         Filters (
             iter.into_iter().chunk_by(|x| x.table.clone()).into_iter().map(|(table, items)| (table, TableFilters::from_iter(items))).collect(),
         )
