@@ -7,7 +7,7 @@ mod io_utils;
 mod sql_parser;
 mod config;
 mod trackers;
-mod parser;
+mod expression_parser;
 
 use sql_parser::parse_input_file;
 

@@ -1,15 +1,9 @@
-use lazy_static::lazy_static;
-use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use crate::parser::{parse_insert_fields, parse_insert_values};
+use crate::expression_parser::{get_table_from_comment, parse_insert_fields, parse_insert_values};
 use crate::trackers::InsertTracker;
 use crate::io_utils::read_file;
-
-lazy_static! {
-    static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
-}
 
 #[derive(Debug)]
 #[derive(Clone)]
@@ -84,11 +78,10 @@ impl Statement {
 
         let mut current_table: Option<String> = None;
         let to_statement = move |line: String| {
-            if line.starts_with("-- Dumping data for table") {
-                current_table = Some(
-                    TABLE_DUMP_RE.captures(&line).unwrap().get(1).unwrap().as_str().to_string(),
-                );
+            if let Some(t) = get_table_from_comment(&line) {
+                current_table = Some(t);
             }
+
             if current_table.as_ref().is_some_and(|t| !valid_tables.contains(t)) {
                 return None;
             }

@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::io_utils::SQLWriter;
-use crate::parser::parse_filter;
+use crate::expression_parser::parse_filter;
 use crate::trackers::{InsertTracker, ReferenceTracker};
 use crate::sql_statement::{Statement, TableStatementsIterator};
 

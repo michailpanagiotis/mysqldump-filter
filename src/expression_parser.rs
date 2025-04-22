@@ -1,3 +1,4 @@
+use lazy_static::lazy_static;
 use nom::{
   IResult,
   Parser,
@@ -8,6 +9,20 @@ use nom::{
   multi::{separated_list0, separated_list1},
   sequence::{delimited, preceded},
 };
+use regex::Regex;
+
+lazy_static! {
+    static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
+}
+
+pub fn get_table_from_comment(sql_comment: &String) -> Option<String> {
+    if sql_comment.starts_with("-- Dumping data for table") {
+        return Some(
+            TABLE_DUMP_RE.captures(sql_comment).unwrap().get(1).unwrap().as_str().to_string()
+        );
+    }
+    None
+}
 
 pub fn parse_filter(filter_definition: &str) -> (&str, &str, &str) {
     let mut parser = (
