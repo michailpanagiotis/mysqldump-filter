@@ -70,16 +70,13 @@ pub struct InsertTracker<'a> {
 impl<'a> InsertTracker<'a> {
     pub fn new(
         table: &str,
-        filters: &Option<TableFilters>,
+        filters: &TableFilters,
         references: Option<&'a HashMap<String, HashSet<String>>>,
     ) -> Self {
-        let mut borrowed = filters.clone();
-        let concrete_filters = borrowed.get_or_insert(TableFilters::empty());
-
         InsertTracker {
             table: table.to_string(),
-            filters: concrete_filters.clone(),
-            field_names: concrete_filters.get_filtered_fields(),
+            filters: filters.clone(),
+            field_names: filters.get_filtered_fields(),
             field_positions: None,
             references,
         }

@@ -61,7 +61,7 @@ impl FilterCondition {
 #[derive(Debug)]
 #[derive(Default)]
 #[derive(Clone)]
-pub struct FieldFilters {
+struct FieldFilters {
     table: String,
     field: String,
     conditions: Vec<FilterCondition>,
@@ -116,7 +116,7 @@ impl FieldFilters {
 pub struct TableFilters (HashMap<String, FieldFilters>);
 
 impl TableFilters {
-    pub fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
@@ -158,20 +158,12 @@ impl FromIterator<FilterCondition> for TableFilters {
 pub struct Filters(HashMap<String, TableFilters>);
 
 impl Filters {
-    fn from_iter(iter: impl Iterator<Item=(String, TableFilters)>) -> Self {
-        let res: HashMap<String, TableFilters> = iter
-            .filter(|(_, v)| !v.is_empty())
-            .collect();
-        Filters(res)
-    }
-
     pub fn from_config_value(value: &HashMap<String, config::Value>) -> Self {
         Filters::from_iter(
-            value.iter().map(|(table, conditions)| {
-                let config_conditions = conditions.clone().into_array().expect("cannot parse config array").into_iter().map(|x| {
+            value.iter().flat_map(|(table, conditions)| {
+                conditions.clone().into_array().expect("cannot parse config array").into_iter().map(|x| {
                    FilterCondition::new(table, &x.to_string())
-                });
-                (table.clone(), TableFilters::from_iter(config_conditions))
+                })
             })
         )
     }
@@ -182,5 +174,13 @@ impl Filters {
 
     pub fn get_filters_of_table(&self, key: &str) -> Option<TableFilters> {
         self.0.get(key).cloned()
+    }
+}
+
+impl FromIterator<FilterCondition> for Filters {
+    fn from_iter<T: IntoIterator<Item = FilterCondition>>(iter: T) -> Self {
+        Filters (
+            iter.into_iter().chunk_by(|x| x.table.clone()).into_iter().map(|(table, items)| (table, TableFilters::from_iter(items))).collect(),
+        )
     }
 }

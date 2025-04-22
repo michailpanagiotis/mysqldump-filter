@@ -6,6 +6,21 @@ use crate::trackers::{InsertTracker, ReferenceTracker};
 use crate::sql_statement::{Statement, TableStatementsIterator};
 use crate::filters::{Filters, TableFilters};
 
+fn read_settings(config_file: &Path) -> config::Config {
+    let settings = config::Config::builder()
+        .add_source(config::File::new(config_file.to_str().expect("invalid config path"), config::FileFormat::Json))
+        .add_source(config::Environment::with_prefix("MYSQLDUMP_FILTER"))
+        .build()
+        .unwrap();
+
+    let requested_tables: HashSet<_> = settings
+        .get_array("allow_data_on_tables")
+        .expect("no key 'allow_data_on_tables' in config")
+        .iter().map(|x| x.to_string()).collect();
+
+    settings
+}
+
 #[derive(Debug)]
 pub struct Config {
     pub working_dir_path: PathBuf,
@@ -19,11 +34,7 @@ impl Config {
         config_file: &Path,
         working_dir_path: &Path,
     ) -> Config {
-        let settings = config::Config::builder()
-            .add_source(config::File::new(config_file.to_str().expect("invalid config path"), config::FileFormat::Json))
-            .add_source(config::Environment::with_prefix("MYSQLDUMP_FILTER"))
-            .build()
-            .unwrap();
+        let settings = read_settings(config_file);
         let requested_tables: HashSet<_> = settings
             .get_array("allow_data_on_tables")
             .expect("no key 'allow_data_on_tables' in config")
@@ -32,6 +43,8 @@ impl Config {
         let filters = Filters::from_config_value(
             &settings.get_table("filter_inserts").expect("no key 'filter_inserts' in config"),
         );
+
+        dbg!(&filters);
 
         let schema_file = working_dir_path.join("schema.sql");
         Config {
@@ -42,9 +55,9 @@ impl Config {
         }
     }
 
-    pub fn get_filters_of_table(&self, table: &Option<String>) -> Option<TableFilters> {
-        let Some(t) = table else { return None };
-        self.filters.get_filters_of_table(t)
+    fn get_filters(&self, table: &Option<String>) -> TableFilters {
+        let Some(t) = table else { return TableFilters::empty() };
+        self.filters.get_filters_of_table(t).unwrap_or(TableFilters::empty())
     }
 
     pub fn get_referenced_fields(&self, table: &Option<String>) -> HashSet<String> {
@@ -55,9 +68,13 @@ impl Config {
     }
 
     pub fn get_table_config(&self, table: &Option<String>) -> TableConfig {
-        let referenced_fields = &self.get_referenced_fields(table);
-        let filters = &self.get_filters_of_table(table);
-        TableConfig::new(&self.working_dir_path, &self.schema_file, table, filters, referenced_fields)
+        TableConfig::new(
+            &self.working_dir_path,
+            &self.schema_file,
+            table,
+            &self.get_filters(table),
+            &self.get_referenced_fields(table),
+        )
     }
 
     pub fn read_statements(&self, input_file: &Path) -> impl Iterator<Item=Statement> {
@@ -70,7 +87,7 @@ pub struct TableConfig {
     working_dir: PathBuf,
     default_file: PathBuf,
     table: Option<String>,
-    filters: Option<TableFilters>,
+    filters: TableFilters,
     referenced_fields: HashSet<String>,
 }
 
@@ -79,7 +96,7 @@ impl TableConfig {
         working_dir: &Path,
         default_file: &Path,
         table: &Option<String>,
-        filters: &Option<TableFilters>,
+        filters: &TableFilters,
         referenced_fields: &HashSet<String>,
     ) -> TableConfig
     {
