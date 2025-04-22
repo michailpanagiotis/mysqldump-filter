@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use crate::sql_statement::{FieldPositions, Statement};
-use crate::config::TableFilters;
+use crate::filters::TableFilters;
 
 #[derive(Debug)]
 #[derive(Clone)]

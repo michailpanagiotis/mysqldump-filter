@@ -8,6 +8,7 @@ mod sql_parser;
 mod config;
 mod trackers;
 mod expression_parser;
+mod filters;
 
 use sql_parser::parse_input_file;
 
