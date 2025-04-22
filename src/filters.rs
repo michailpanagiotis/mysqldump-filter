@@ -112,53 +112,77 @@ impl FieldFilters {
 
 #[derive(Debug)]
 #[derive(Clone)]
-pub struct TableFilters {
-    per_field: HashMap<String, FieldFilters>,
-}
+pub struct TableFilters (HashMap<String, FieldFilters>);
 
 impl TableFilters {
-    pub fn new<I: Iterator<Item=String>>(table: &str, conditions: I) -> Self {
-        let res: HashMap<String, FieldFilters> = conditions.map(|ref x| {
-            let cond = FilterCondition::new(table, x);
-            (cond.field.clone(), cond)
-        }).into_grouping_map().collect();
-
-        TableFilters{ per_field: res }
-    }
-
     pub fn is_empty(&self) -> bool {
-        self.per_field.is_empty()
+        self.0.is_empty()
     }
 
     pub fn empty() -> Self {
-        TableFilters{ per_field: HashMap::new()  }
+        TableFilters(HashMap::new())
     }
 
     pub fn get_filtered_fields(&self) -> HashSet<String> {
-        self.per_field.values().map(|x| x.field.clone()).collect()
+        self.0.values().map(|x| x.field.clone()).collect()
     }
 
     pub fn test_values(&self, value_per_field: &HashMap<String, String>) -> bool {
-        self.per_field.iter().all(|(field, field_filters)| {
+        self.0.iter().all(|(field, field_filters)| {
             value_per_field.get(field).is_some_and(|v| field_filters.test_value(v))
         })
     }
 
     pub fn test_values_against_references(&self, value_per_field: &HashMap<String, String>, references: &HashMap<String, HashSet<String>>) -> bool {
-        self.per_field.iter().all(|(field, field_filters)| {
+        self.0.iter().all(|(field, field_filters)| {
             value_per_field.get(field).is_some_and(|v| field_filters.test_reference(v, references))
         })
     }
 
     pub fn get_references(&self) -> Vec<(String, String)> {
-        self.per_field.values().flat_map(|v| v.get_references()).collect()
+        self.0.values().flat_map(|v| v.get_references()).collect()
     }
 }
 
 impl FromIterator<FilterCondition> for TableFilters {
     fn from_iter<T: IntoIterator<Item = FilterCondition>>(iter: T) -> Self {
-        TableFilters {
-            per_field: iter.into_iter().chunk_by(|x| x.field.clone()).into_iter().map(|(field, items)| (field, FieldFilters::from_iter(items))).collect(),
-        }
+        TableFilters (
+            iter.into_iter().chunk_by(|x| x.field.clone()).into_iter().map(|(field, items)| (field, FieldFilters::from_iter(items))).collect(),
+        )
+    }
+}
+
+
+#[derive(Debug)]
+pub struct FilterMap(HashMap<String, TableFilters>);
+
+impl FilterMap {
+    fn from_iter(iter: impl Iterator<Item=(String, TableFilters)>) -> Self {
+        let res: HashMap<String, TableFilters> = iter
+            .filter(|(_, v)| !v.is_empty())
+            .collect();
+        FilterMap(res)
+    }
+
+    pub fn from_config_value(value: &HashMap<String, config::Value>) -> Self {
+        FilterMap::from_iter(
+            value.iter().map(|(table, conditions)| {
+                let config_conditions = conditions.clone().into_array().expect("cannot parse config array").into_iter().map(|x| {
+                   FilterCondition::new(table, &x.to_string())
+                });
+                (table.clone(), TableFilters::from_iter(config_conditions))
+            })
+        )
+    }
+
+    pub fn get_references(&self) -> HashMap<String, Vec<String>> {
+        self.0.values()
+            .flat_map(|v| v.get_references())
+            .unique()
+            .into_group_map()
+    }
+
+    pub fn get(&self, key: &str) -> Option<TableFilters> {
+        self.0.get(key).cloned()
     }
 }

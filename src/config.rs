@@ -1,44 +1,10 @@
-use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::io_utils::SQLWriter;
 use crate::trackers::{InsertTracker, ReferenceTracker};
 use crate::sql_statement::{Statement, TableStatementsIterator};
-use crate::filters::TableFilters;
-
-
-#[derive(Debug)]
-pub struct FilterMap(HashMap<String, TableFilters>);
-
-impl FilterMap {
-    fn from_iter(iter: impl Iterator<Item=(String, TableFilters)>) -> Self {
-        let res: HashMap<String, TableFilters> = iter
-            .filter(|(_, v)| !v.is_empty())
-            .collect();
-        FilterMap(res)
-    }
-
-    fn from_config_value(value: &HashMap<String, config::Value>) -> Self {
-        FilterMap::from_iter(
-            value.iter().map(|(table, conditions)| {
-                let config_conditions = conditions.clone().into_array().expect("cannot parse config array").into_iter().map(|x| x.to_string());
-                (table.clone(), TableFilters::new(table, config_conditions))
-            })
-        )
-    }
-
-    fn get_references(&self) -> HashMap<String, Vec<String>> {
-        self.0.values()
-            .flat_map(|v| v.get_references())
-            .unique()
-            .into_group_map()
-    }
-
-    pub fn get(&self, key: &str) -> Option<TableFilters> {
-        self.0.get(key).cloned()
-    }
-}
+use crate::filters::{FilterMap, TableFilters};
 
 #[derive(Debug)]
 pub struct Config {
