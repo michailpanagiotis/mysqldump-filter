@@ -8,10 +8,10 @@ use crate::filters::{Filters, TableFilters, FilterCondition};
 
 #[derive(Debug)]
 pub struct Config {
-    pub working_dir_path: PathBuf,
-    pub schema_file: PathBuf,
-    pub requested_tables: HashSet<String>,
-    pub filters: Filters,
+    working_dir_path: PathBuf,
+    schema_file: PathBuf,
+    requested_tables: HashSet<String>,
+    filters: Filters,
 }
 
 impl Config {

@@ -32,8 +32,6 @@ pub fn process_table_statements<I: Iterator<Item=Statement>>(
 }
 
 pub fn parse_input_file(config: &Config, input_file: &Path, output_file: &Path) {
-    // let mut filepaths: Vec<PathBuf> = Vec::new();
-    // let mut reference_trackers: Vec<Option<ReferenceTracker>> = Vec::new();
     let all_statements = config.read_statements(input_file);
 
     type ParseResult = (Vec<PathBuf>, Vec<Option<ReferenceTracker>>);
