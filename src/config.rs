@@ -92,8 +92,27 @@ pub struct TableFilters {
 }
 
 impl TableFilters {
+    fn new<I: Iterator<Item=String>>(table: &str, conditions: I) -> Self {
+        let res: HashMap<String, Vec<FilterCondition>> = conditions.map(|x| {
+            let cond = FilterCondition::new(&x);
+            (cond.field.clone(), cond)
+        }).into_group_map();
+
+        let res2: HashMap<String, FieldFilters> = HashMap::from_iter(res.iter().map(|(field, value)| (field.clone(), FieldFilters {
+            table: table.to_string(),
+            field: field.clone(),
+            conditions: value.clone(),
+        })));
+
+        TableFilters{ table: table.to_string(), per_field: res2 }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.per_field.is_empty()
+    }
+
+    pub fn empty(table: &str) -> Self {
+        TableFilters{ table: table.to_string(), per_field: HashMap::new()  }
     }
 
     pub fn get_filtered_fields(&self) -> HashSet<String> {
@@ -112,33 +131,8 @@ impl TableFilters {
         })
     }
 
-    fn from_conditions<I: Iterator<Item=FilterCondition>>(table: &str, conditions: I) -> Self {
-        let res: HashMap<String, Vec<FilterCondition>> = conditions.map(|cond| {
-            (cond.field.clone(), cond.to_owned())
-        }).into_group_map();
-
-        let res2: HashMap<String, FieldFilters> = HashMap::from_iter(res.iter().map(|(field, value)| (field.clone(), FieldFilters {
-            table: table.to_string(),
-            field: field.clone(),
-            conditions: value.clone(),
-        })));
-
-        TableFilters{ table: table.to_string(), per_field: res2 }
-    }
-
-    fn from_config_value(table: &str, value: &config::Value) -> Self {
-        let conditions = value.clone().into_array().unwrap()
-            .into_iter()
-            .map(|x| FilterCondition::new(&x.to_string()));
-        TableFilters::from_conditions(table, conditions)
-    }
-
     fn get_references(&self) -> Vec<(String, String)> {
         self.per_field.values().flat_map(|v| v.get_references()).collect()
-    }
-
-    pub fn empty(table: &str) -> Self {
-        TableFilters{ table: table.to_string(), per_field: HashMap::new()  }
     }
 }
 
@@ -155,7 +149,10 @@ impl FilterMap {
 
     fn from_config_value(value: &HashMap<String, config::Value>) -> Self {
         FilterMap::from_iter(
-            value.iter().map(|(k, v)| (k.clone(), TableFilters::from_config_value(k, v)))
+            value.iter().map(|(table, conditions)| {
+                let config_conditions = conditions.clone().into_array().expect("cannot parse config array").into_iter().map(|x| x.to_string());
+                (table.clone(), TableFilters::new(table, config_conditions))
+            })
         )
     }
 
