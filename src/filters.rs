@@ -154,18 +154,18 @@ impl FromIterator<FilterCondition> for TableFilters {
 
 
 #[derive(Debug)]
-pub struct FilterMap(HashMap<String, TableFilters>);
+pub struct DatabaseFilters(HashMap<String, TableFilters>);
 
-impl FilterMap {
+impl DatabaseFilters {
     fn from_iter(iter: impl Iterator<Item=(String, TableFilters)>) -> Self {
         let res: HashMap<String, TableFilters> = iter
             .filter(|(_, v)| !v.is_empty())
             .collect();
-        FilterMap(res)
+        DatabaseFilters(res)
     }
 
     pub fn from_config_value(value: &HashMap<String, config::Value>) -> Self {
-        FilterMap::from_iter(
+        DatabaseFilters::from_iter(
             value.iter().map(|(table, conditions)| {
                 let config_conditions = conditions.clone().into_array().expect("cannot parse config array").into_iter().map(|x| {
                    FilterCondition::new(table, &x.to_string())
@@ -175,14 +175,11 @@ impl FilterMap {
         )
     }
 
-    pub fn get_references(&self) -> HashMap<String, Vec<String>> {
-        self.0.values()
-            .flat_map(|v| v.get_references())
-            .unique()
-            .into_group_map()
+    pub fn get_references_of_table(&self, table: &str) -> HashSet<String> {
+        self.0.values().flat_map(|v| v.get_references()).filter(|(t, _)| t == table).map(|(_, f)| f).unique().collect()
     }
 
-    pub fn get(&self, key: &str) -> Option<TableFilters> {
+    pub fn get_filters_of_table(&self, key: &str) -> Option<TableFilters> {
         self.0.get(key).cloned()
     }
 }

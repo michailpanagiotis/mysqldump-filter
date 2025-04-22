@@ -4,15 +4,14 @@ use std::path::{Path, PathBuf};
 use crate::io_utils::SQLWriter;
 use crate::trackers::{InsertTracker, ReferenceTracker};
 use crate::sql_statement::{Statement, TableStatementsIterator};
-use crate::filters::{FilterMap, TableFilters};
+use crate::filters::{DatabaseFilters, TableFilters};
 
 #[derive(Debug)]
 pub struct Config {
     pub working_dir_path: PathBuf,
     pub schema_file: PathBuf,
     pub requested_tables: HashSet<String>,
-    pub filters_per_table: FilterMap,
-    pub references_per_table: HashMap<String, Vec<String>>,
+    pub filters_per_table: DatabaseFilters,
 }
 
 impl Config {
@@ -30,11 +29,9 @@ impl Config {
             .expect("no key 'allow_data_on_tables' in config")
             .iter().map(|x| x.to_string()).collect();
 
-        let filters_per_table = FilterMap::from_config_value(
+        let filters_per_table = DatabaseFilters::from_config_value(
             &settings.get_table("filter_inserts").expect("no key 'filter_inserts' in config"),
         );
-
-        let references_per_table = filters_per_table.get_references();
 
         let schema_file = working_dir_path.join("schema.sql");
         Config {
@@ -42,30 +39,24 @@ impl Config {
             working_dir_path: working_dir_path.to_path_buf(),
             requested_tables,
             filters_per_table,
-            references_per_table,
         }
     }
 
-    pub fn get_filters(&self, table: &Option<String>) -> Option<TableFilters> {
+    pub fn get_filters_of_table(&self, table: &Option<String>) -> Option<TableFilters> {
         let Some(t) = table else { return None };
-        self.filters_per_table.get(t)
+        self.filters_per_table.get_filters_of_table(t)
     }
 
     pub fn get_referenced_fields(&self, table: &Option<String>) -> HashSet<String> {
         match table {
             None => HashSet::new(),
-            Some(t) => {
-                match self.references_per_table.get(t) {
-                    Some(x) => HashSet::from_iter(x.iter().cloned()),
-                    None => HashSet::new(),
-                }
-            }
+            Some(t) => self.filters_per_table.get_references_of_table(t),
         }
     }
 
     pub fn get_table_config(&self, table: &Option<String>) -> TableConfig {
         let referenced_fields = &self.get_referenced_fields(table);
-        let filters = &self.get_filters(table);
+        let filters = &self.get_filters_of_table(table);
         TableConfig::new(&self.working_dir_path, &self.schema_file, table, filters, referenced_fields)
     }
 
