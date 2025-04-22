@@ -248,7 +248,7 @@ impl Config {
     pub fn get_table_config(&self, table: &Option<String>) -> TableConfig {
         let referenced_fields = &self.get_referenced_fields(table);
         let filters = &self.get_filters(table);
-        TableConfig::new(table, filters, referenced_fields)
+        TableConfig::new(&self.working_dir_path, &self.schema_file, table, filters, referenced_fields)
     }
 
     pub fn get_table_iterator<I: Iterator<Item=Statement>>(&self, table: &Option<String>, statements: I) -> impl Iterator<Item=Statement> + use<I> {
@@ -256,42 +256,46 @@ impl Config {
         let insert_tracker = table_config.get_insert_tracker();
         TableStatementsIterator::new(insert_tracker, statements)
     }
-
-    pub fn get_table_iterators_from_file<'a>(&self, input_file: &'a Path) -> &'a impl Iterator<Item=impl Iterator<Item=Statement>> {
-        let binding = Statement::from_file(input_file, &self.requested_tables).chunk_by(Statement::get_table).into_iter();
-        &binding.map(|(table, statements)| self.get_table_iterator(&table, statements))
-    }
 }
 
 #[derive(Debug)]
 pub struct TableConfig {
-    pub table: Option<String>,
-    pub filters: Option<TableFilters>,
-    pub referenced_fields: HashSet<String>,
+    working_dir: PathBuf,
+    default_file: PathBuf,
+    table: Option<String>,
+    filters: Option<TableFilters>,
+    referenced_fields: HashSet<String>,
 }
 
 impl TableConfig {
     pub fn new(
+        working_dir: &Path,
+        default_file: &Path,
         table: &Option<String>,
         filters: &Option<TableFilters>,
         referenced_fields: &HashSet<String>,
     ) -> TableConfig
     {
         TableConfig {
+            working_dir: working_dir.to_path_buf(),
+            default_file: default_file.to_path_buf(),
             table: table.clone(),
             filters: filters.clone(),
             referenced_fields: referenced_fields.clone(),
         }
     }
 
-    pub fn get_writer(&self, working_dir: &Path, default: &Path) -> SQLWriter {
-        SQLWriter::new(
-            &self.table,
-            working_dir, default,
-        )
+    pub fn get_writer(&self) -> SQLWriter {
+        dbg!(&self.working_dir);
+        dbg!(&self.default_file);
+        SQLWriter::new( &self.table, &self.working_dir, &self.default_file)
     }
 
-    pub fn get_insert_tracker(&self) -> Option<InsertTracker> {
+    pub fn get_table(&self) -> &Option<String> {
+        &self.table
+    }
+
+    fn get_insert_tracker(&self) -> Option<InsertTracker> {
         self.table.clone().map(|t| InsertTracker::new(
             &t,
             &self.filters,
