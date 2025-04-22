@@ -79,7 +79,7 @@ impl Statement {
        }
     }
 
-    pub fn from_file<'a>(sqldump_filepath: &'a Path, requested_tables: &HashSet<String>) -> impl Iterator<Item = Statement> + use<'a> {
+    pub fn from_file<'a>(sqldump_filepath: &'a Path, requested_tables: &HashSet<String>) -> &'a (impl Iterator<Item = Statement> + use<'a>) {
         let valid_tables = requested_tables.clone();
 
         let mut current_table: Option<String> = None;
@@ -95,7 +95,7 @@ impl Statement {
             Some(Statement::new(&current_table, &line))
         };
 
-        read_file(sqldump_filepath).flat_map(to_statement)
+        &read_file(sqldump_filepath).flat_map(to_statement)
     }
 
     pub fn is_insert(&self) -> bool {

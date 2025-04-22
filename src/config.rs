@@ -251,10 +251,15 @@ impl Config {
         TableConfig::new(table, filters, referenced_fields)
     }
 
-    pub fn get_table_iterator<I: Iterator<Item=Statement>>(&self, table: &Option<String>, statements: I) -> impl Iterator<Item=Statement> {
+    pub fn get_table_iterator<I: Iterator<Item=Statement>>(&self, table: &Option<String>, statements: I) -> impl Iterator<Item=Statement> + use<I> {
         let table_config = self.get_table_config(table);
         let insert_tracker = table_config.get_insert_tracker();
         TableStatementsIterator::new(insert_tracker, statements)
+    }
+
+    pub fn get_table_iterators_from_file<'a>(&self, input_file: &'a Path) -> &'a impl Iterator<Item=impl Iterator<Item=Statement>> {
+        let binding = Statement::from_file(input_file, &self.requested_tables).chunk_by(Statement::get_table).into_iter();
+        &binding.map(|(table, statements)| self.get_table_iterator(&table, statements))
     }
 }
 
