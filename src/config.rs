@@ -251,10 +251,8 @@ impl Config {
         TableConfig::new(&self.working_dir_path, &self.schema_file, table, filters, referenced_fields)
     }
 
-    pub fn get_table_iterator<I: Iterator<Item=Statement>>(&self, table: &Option<String>, statements: I) -> impl Iterator<Item=Statement> + use<I> {
-        let table_config = self.get_table_config(table);
-        let insert_tracker = table_config.get_insert_tracker();
-        TableStatementsIterator::new(insert_tracker, statements)
+    pub fn read_statements(&self, input_file: &Path) -> impl Iterator<Item=Statement> {
+        Statement::from_file(input_file, &self.requested_tables)
     }
 }
 
@@ -286,8 +284,6 @@ impl TableConfig {
     }
 
     pub fn get_writer(&self) -> SQLWriter {
-        dbg!(&self.working_dir);
-        dbg!(&self.default_file);
         SQLWriter::new( &self.table, &self.working_dir, &self.default_file)
     }
 
@@ -308,5 +304,9 @@ impl TableConfig {
             false => None,
         };
         ref_tracker
+    }
+
+    pub fn filter_statements<I: Iterator<Item=Statement>>(&self, statements: I) -> impl Iterator<Item=Statement> {
+        TableStatementsIterator::new(self.get_insert_tracker(), statements)
     }
 }
