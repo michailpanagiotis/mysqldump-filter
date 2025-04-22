@@ -32,7 +32,7 @@ pub fn process_table_statements<I: Iterator<Item=Statement>>(
 }
 
 pub fn parse_input_file(config: &Config, input_file: &Path, output_file: &Path) {
-    let all_statements = config.read_statements(input_file);
+    let all_statements = Statement::from_file(input_file, config.get_requested_tables());
 
     type ParseResult = (Vec<PathBuf>, Vec<Option<ReferenceTracker>>);
 

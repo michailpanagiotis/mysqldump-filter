@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::io_utils::{read_settings, Writer};
+use crate::io_utils::{read_config, Writer};
 use crate::trackers::{InsertTracker, ReferenceTracker};
 use crate::sql_statement::{Statement, TableStatementsIterator};
 use crate::filters::{Filters, TableFilters, FilterCondition};
@@ -11,7 +11,7 @@ pub struct Config {
     working_dir_path: PathBuf,
     schema_file: PathBuf,
     requested_tables: HashSet<String>,
-    filters: Filters,
+    filter_conditions: Vec<(String, String)>,
 }
 
 impl Config {
@@ -19,10 +19,9 @@ impl Config {
         config_file: &Path,
         working_dir_path: &Path,
     ) -> Config {
-        let (requested_tables, filter_conditions) = read_settings(config_file);
+        let (requested_tables, filter_conditions) = read_config(config_file);
 
-        let it = filter_conditions.into_iter().map(|(table, condition)| FilterCondition::new(&table, &condition));
-        let filters = Filters::from_iter(it);
+        let filters = Filters::from_iter(filter_conditions.iter().map(|(table, condition)| FilterCondition::new(table, condition)));
 
         dbg!(&filters);
 
@@ -31,66 +30,69 @@ impl Config {
             schema_file: schema_file.to_path_buf(),
             working_dir_path: working_dir_path.to_path_buf(),
             requested_tables,
-            filters,
+            filter_conditions,
         }
     }
 
-    fn get_filters(&self, table: &Option<String>) -> TableFilters {
-        let Some(t) = table else { return TableFilters::empty() };
-        self.filters.get_filters_of_table(t).unwrap_or(TableFilters::empty())
-    }
-
-    pub fn get_referenced_fields(&self, table: &Option<String>) -> HashSet<String> {
-        match table {
-            None => HashSet::new(),
-            Some(t) => self.filters.get_references_of_table(t),
-        }
+    pub fn get_requested_tables(&self) -> &HashSet<String> {
+        &self.requested_tables
     }
 
     pub fn get_table_config(&self, table: &Option<String>) -> TableConfig {
         TableConfig::new(
-            &self.working_dir_path,
-            &self.schema_file,
             table,
+            &self.get_table_filepath(table),
             &self.get_filters(table),
             &self.get_referenced_fields(table),
         )
     }
 
-    pub fn read_statements(&self, input_file: &Path) -> impl Iterator<Item=Statement> {
-        Statement::from_file(input_file, &self.requested_tables)
+    fn get_table_filepath(&self, table: &Option<String>) -> PathBuf {
+        match table {
+            Some(x) => self.working_dir_path.join(x).with_extension("sql"),
+            None => self.schema_file.to_path_buf()
+        }
+    }
+
+    fn get_filters(&self, table: &Option<String>) -> TableFilters {
+        let Some(t) = table else { return TableFilters::empty() };
+        let filters = Filters::from_iter(self.filter_conditions.iter().map(|(table, condition)| FilterCondition::new(table, condition)));
+        filters.get_filters_of_table(t).unwrap_or(TableFilters::empty())
+    }
+
+    fn get_referenced_fields(&self, table: &Option<String>) -> HashSet<String> {
+        let Some(t) = table else { return HashSet::new() };
+        let filters = Filters::from_iter(self.filter_conditions.iter().map(|(table, condition)| FilterCondition::new(table, condition)));
+        filters.get_references_of_table(t)
     }
 }
 
 #[derive(Debug)]
 pub struct TableConfig {
-    working_dir: PathBuf,
-    default_file: PathBuf,
     table: Option<String>,
+    filepath: PathBuf,
     filters: TableFilters,
     referenced_fields: HashSet<String>,
 }
 
 impl TableConfig {
     pub fn new(
-        working_dir: &Path,
-        default_file: &Path,
         table: &Option<String>,
+        filepath: &Path,
         filters: &TableFilters,
         referenced_fields: &HashSet<String>,
     ) -> TableConfig
     {
         TableConfig {
-            working_dir: working_dir.to_path_buf(),
-            default_file: default_file.to_path_buf(),
             table: table.clone(),
+            filepath: filepath.to_path_buf(),
             filters: filters.clone(),
             referenced_fields: referenced_fields.clone(),
         }
     }
 
     pub fn get_writer(&self) -> Writer {
-        Writer::new( &self.table, &self.working_dir, &self.default_file)
+        Writer::new(&self.filepath)
     }
 
     pub fn get_table(&self) -> &Option<String> {

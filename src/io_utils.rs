@@ -4,7 +4,7 @@ use std::fs;
 use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-pub fn read_settings(config_file: &Path) -> (HashSet<String>, Vec<(String, String)>) {
+pub fn read_config(config_file: &Path) -> (HashSet<String>, Vec<(String, String)>) {
     let settings = Config::builder()
         .add_source(File::new(config_file.to_str().expect("invalid config path"), FileFormat::Json))
         .add_source(Environment::with_prefix("MYSQLDUMP_FILTER"))
@@ -43,16 +43,11 @@ pub struct Writer {
 }
 
 impl Writer {
-    pub fn new(table: &Option<String>, working_dir: &Path, default: &Path) -> Self {
-        let filepath = match table {
-            Some(x) => working_dir.join(x).with_extension("sql"),
-            None => default.to_path_buf()
-        };
-
-        fs::File::create(&filepath).unwrap_or_else(|_| panic!("Unable to create file {}", &filepath.display()));
+    pub fn new(filepath: &Path) -> Self {
+        fs::File::create(filepath).unwrap_or_else(|_| panic!("Unable to create file {}", &filepath.display()));
         let file = fs::OpenOptions::new()
             .append(true)
-            .open(&filepath)
+            .open(filepath)
             .expect("Unable to open file");
 
         Writer {
