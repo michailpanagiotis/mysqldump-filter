@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::io_utils::{read_settings, SQLWriter};
+use crate::io_utils::{read_settings, Writer};
 use crate::trackers::{InsertTracker, ReferenceTracker};
 use crate::sql_statement::{Statement, TableStatementsIterator};
 use crate::filters::{Filters, TableFilters, FilterCondition};
@@ -89,8 +89,8 @@ impl TableConfig {
         }
     }
 
-    pub fn get_writer(&self) -> SQLWriter {
-        SQLWriter::new( &self.table, &self.working_dir, &self.default_file)
+    pub fn get_writer(&self) -> Writer {
+        Writer::new( &self.table, &self.working_dir, &self.default_file)
     }
 
     pub fn get_table(&self) -> &Option<String> {

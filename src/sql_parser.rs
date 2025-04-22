@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use itertools::Itertools;
 
 use crate::sql_statement::Statement;
-use crate::io_utils::SQLWriter;
+use crate::io_utils::Writer;
 use crate::trackers::ReferenceTracker;
 use crate::config::{Config, TableConfig};
 
@@ -24,7 +24,7 @@ pub fn process_table_statements<I: Iterator<Item=Statement>>(
         if let Some(ref mut tracker) = ref_tracker {
             tracker.capture(&statement);
         }
-        writer.write_statement(&statement).expect("Unable to write data");
+        writer.write_line(statement.as_bytes()).expect("Unable to write data");
     };
     writer.flush().expect("Cannot flush buffer");
 
@@ -49,5 +49,5 @@ pub fn parse_input_file(config: &Config, input_file: &Path, output_file: &Path) 
 
     println!("Second pass...");
 
-    SQLWriter::combine_files(filepaths.iter(), output_file);
+    Writer::combine_files(filepaths.iter(), output_file);
 }

@@ -4,8 +4,6 @@ use std::fs;
 use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use crate::sql_statement::Statement;
-
 pub fn read_settings(config_file: &Path) -> (HashSet<String>, Vec<(String, String)>) {
     let settings = Config::builder()
         .add_source(File::new(config_file.to_str().expect("invalid config path"), FileFormat::Json))
@@ -39,12 +37,12 @@ pub fn read_file(filepath: &Path) -> impl Iterator<Item=String> + use<> {
         .map_while(Result::ok)
 }
 
-pub struct SQLWriter {
+pub struct Writer {
     filepath: PathBuf,
     inner: io::BufWriter<fs::File>
 }
 
-impl SQLWriter {
+impl Writer {
     pub fn new(table: &Option<String>, working_dir: &Path, default: &Path) -> Self {
         let filepath = match table {
             Some(x) => working_dir.join(x).with_extension("sql"),
@@ -57,7 +55,7 @@ impl SQLWriter {
             .open(&filepath)
             .expect("Unable to open file");
 
-        SQLWriter {
+        Writer {
             filepath: filepath.to_path_buf(),
             inner: BufWriter::new(file)
         }
@@ -72,8 +70,8 @@ impl SQLWriter {
         }
     }
 
-    pub fn write_statement(&mut self, statement: &Statement) -> Result<(), std::io::Error> {
-        self.inner.write_all(statement.as_bytes())?;
+    pub fn write_line(&mut self, line: &[u8]) -> Result<(), std::io::Error> {
+        self.inner.write_all(line)?;
         self.inner.write_all(b"\n")?;
         Ok(())
     }
