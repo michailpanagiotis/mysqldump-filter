@@ -75,7 +75,7 @@ impl<'a> InsertTracker<'a> {
         references: Option<&'a HashMap<String, HashSet<String>>>,
     ) -> Self {
         let mut borrowed = filters.clone();
-        let concrete_filters = borrowed.get_or_insert(TableFilters::empty());
+        let concrete_filters = borrowed.get_or_insert(TableFilters::empty(table));
 
         InsertTracker {
             table: table.to_string(),
@@ -99,14 +99,14 @@ impl<'a> InsertTracker<'a> {
         let Some(ref pos) = self.field_positions else { return true };
 
         let value_per_field = pos.get_values(statement, &self.field_names);
-        if !self.direct_filters.test(&value_per_field) {
+        if !self.direct_filters.test_values(&value_per_field) {
             return false;
         }
 
         let Some(ref refs) = self.references else { return true };
 
         dbg!("HERE");
-        if !self.reference_filters.test(&value_per_field) {
+        if !self.reference_filters.test_values(&value_per_field) {
             return false;
         }
 
