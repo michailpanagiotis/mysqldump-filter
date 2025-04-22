@@ -59,54 +59,55 @@ impl ReferenceTracker {
 
 
 #[derive(Debug)]
-pub struct InsertTracker {
+pub struct InsertTracker<'a> {
     table: String,
     direct_filters: TableFilters,
+    field_names: HashSet<String>,
     reference_filters: TableFilters,
     field_positions: Option<FieldPositions>,
+    references: Option<&'a HashMap<String, HashSet<String>>>,
 }
 
-impl InsertTracker {
+impl<'a> InsertTracker<'a> {
     pub fn new(
         table: &str,
         filters: &Option<TableFilters>,
+        references: Option<&'a HashMap<String, HashSet<String>>>,
     ) -> Self {
         let mut borrowed = filters.clone();
         let concrete_filters = borrowed.get_or_insert(TableFilters::empty());
 
         InsertTracker {
             table: table.to_string(),
+            field_names: concrete_filters.get_filtered_fields().clone(),
             direct_filters: concrete_filters.to_direct_filters(),
             reference_filters: concrete_filters.to_reference_filters(),
             field_positions: None,
+            references,
         }
     }
 
     pub fn should_keep_statement(&mut self, statement: &Statement) -> bool {
-        if !statement.is_insert() {
+        if !statement.is_insert() || statement.get_table().is_none_or(|ref t| t != &self.table) {
             return true;
-        }
-        if let Some(ref t) = statement.get_table() {
-            if t != &self.table {
-                return true;
-            }
         }
 
         if self.field_positions.is_none() {
-            self.field_positions = statement.get_field_positions(self.direct_filters.get_filtered_fields());
+            self.field_positions = statement.get_field_positions(&self.field_names);
         }
 
-        if let Some(ref mut pos) = self.field_positions {
-            let value_per_field = pos.get_values(
-                statement,
-                self.direct_filters.get_filtered_fields(),
-            );
+        let Some(ref pos) = self.field_positions else { return true };
 
-            if !self.direct_filters.test(&value_per_field) {
-                return false;
-            }
+        let value_per_field = pos.get_values(statement, &self.field_names);
+        if !self.direct_filters.test(&value_per_field) {
+            return false;
+        }
 
-            return true;
+        let Some(ref refs) = self.references else { return true };
+
+        dbg!("HERE");
+        if !self.reference_filters.test(&value_per_field) {
+            return false;
         }
 
         true

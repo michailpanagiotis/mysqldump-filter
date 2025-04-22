@@ -123,12 +123,12 @@ impl Statement {
     }
 }
 
-pub struct TableStatementsIterator<I: Iterator<Item=Statement>> {
+pub struct TableStatementsIterator<'a, I: Iterator<Item=Statement>> {
     inner: I,
-    insert_tracker: Option<InsertTracker>,
+    insert_tracker: Option<InsertTracker<'a>>,
 }
 
-impl<I: Iterator<Item=Statement>> Iterator for TableStatementsIterator<I> {
+impl<I: Iterator<Item=Statement>> Iterator for TableStatementsIterator<'_, I> {
     type Item = Statement;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -144,9 +144,9 @@ impl<I: Iterator<Item=Statement>> Iterator for TableStatementsIterator<I> {
     }
 }
 
-impl<I: Iterator<Item=Statement>> TableStatementsIterator<I> {
+impl<'a, I: Iterator<Item=Statement>> TableStatementsIterator<'a, I> {
     pub fn new(
-        insert_tracker: Option<InsertTracker>,
+        insert_tracker: Option<InsertTracker<'a>>,
         statements: I,
     ) -> Self
     {

@@ -291,10 +291,11 @@ impl TableConfig {
         &self.table
     }
 
-    fn get_insert_tracker(&self) -> Option<InsertTracker> {
+    fn get_insert_tracker<'a>(&self, references: Option<&'a HashMap<String, HashSet<String>>>) -> Option<InsertTracker<'a>> {
         self.table.clone().map(|t| InsertTracker::new(
             &t,
             &self.filters,
+            references,
         ))
     }
 
@@ -306,7 +307,11 @@ impl TableConfig {
         ref_tracker
     }
 
-    pub fn filter_statements<I: Iterator<Item=Statement>>(&self, statements: I) -> impl Iterator<Item=Statement> {
-        TableStatementsIterator::new(self.get_insert_tracker(), statements)
+    pub fn filter_statements<I: Iterator<Item=Statement>>(
+        &self,
+        statements: I,
+        references: Option<&HashMap<String, HashSet<String>>>,
+    ) -> impl Iterator<Item=Statement> {
+        TableStatementsIterator::new(self.get_insert_tracker(references), statements)
     }
 }
