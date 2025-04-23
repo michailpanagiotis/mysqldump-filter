@@ -63,8 +63,6 @@ impl ReferenceTracker {
 #[derive(Default)]
 pub struct InsertFilter<'a> {
     filters: TableFilters,
-    field_names: HashSet<String>,
-    field_positions: Option<FieldPositions>,
     references: Option<&'a HashMap<String, HashSet<String>>>,
 }
 
@@ -75,24 +73,15 @@ impl<'a> InsertFilter<'a> {
     ) -> Self {
         InsertFilter {
             filters: filters.clone(),
-            field_names: filters.get_filtered_fields(),
-            field_positions: None,
             references,
         }
     }
 
     pub fn should_keep_statement(&mut self, statement: &Statement) -> bool {
-        if !statement.is_insert() || statement.get_table().is_none() || self.filters.is_empty() {
+        if !statement.is_insert() || statement.get_table().is_none() {
             return true;
         }
 
-        if self.field_positions.is_none() {
-            self.field_positions = statement.get_field_positions(&self.field_names);
-        }
-
-        let Some(ref pos) = self.field_positions else { return true };
-
-        let value_per_field = pos.get_values(statement, &self.field_names);
-        self.filters.test_values(statement.as_str(), &value_per_field, &self.references)
+        self.filters.test_values(statement.as_str(), &self.references)
     }
 }

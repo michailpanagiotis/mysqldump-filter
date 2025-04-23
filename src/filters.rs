@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 
-use crate::expression_parser::{parse_filter, parse_insert_fields};
+use crate::expression_parser::{parse_filter, parse_insert_fields, parse_insert_values};
 
 #[derive(Debug)]
 #[derive(Clone)]
@@ -101,13 +101,14 @@ impl FieldFilters {
         self.conditions.iter().filter(|x| x.is_reference()).cloned().map(|x| x.get_reference_parts()).collect()
     }
 
-    fn test_value(&self, value: &str) -> bool {
-        self.conditions.iter().filter(|x| !x.is_reference()).all(|condition| condition.test(value))
-    }
-
-    fn test_reference(&self, value: &str, references: &HashMap<String, HashSet<String>>) -> bool {
+    fn test_value(&self, value: &str, references: &Option<&HashMap<String, HashSet<String>>>) -> bool {
+        let direct = self.conditions.iter().filter(|x| !x.is_reference()).all(|condition| condition.test(value));
+        if !direct {
+            return false;
+        }
+        let Some(refs) = references else { return true };
         self.conditions.iter().filter(|x| x.is_reference()).all(|condition| {
-            let Some(set) = references.get(condition.value.as_str()) else { return false };
+            let Some(set) = refs.get(condition.value.as_str()) else { return false };
             set.contains(value)
         })
     }
@@ -121,21 +122,12 @@ impl FieldFilters {
 #[derive(Default)]
 #[derive(Clone)]
 pub struct TableFilters {
-    table: Option<String>,
     inner: HashMap<String, FieldFilters>,
 }
 
 impl TableFilters {
     pub fn is_empty(&self) -> bool {
         self.inner.len() == 0
-    }
-
-    pub fn get_table(&self) -> Option<String> {
-        self.table.clone()
-    }
-
-    pub fn get_filtered_fields(&self) -> HashSet<String> {
-        self.inner.values().map(|x| x.field.clone()).collect()
     }
 
     fn has_resolved_positions(&self) -> bool {
@@ -155,22 +147,19 @@ impl TableFilters {
     pub fn test_values(
         &mut self,
         insert_statement: &str,
-        value_per_field: &HashMap<String, String>,
         references: &Option<&HashMap<String, HashSet<String>>>,
     ) -> bool {
+        if self.is_empty() {
+            return true;
+        }
         if !self.has_resolved_positions() {
             self.resolve_positions(insert_statement);
         }
-        let direct = self.inner.iter().all(|(field, field_filters)| {
-            value_per_field.get(field).is_some_and(|v| field_filters.test_value(v))
-        });
-        if !direct {
-            return false;
-        }
-        let Some(refs) = references else { return true };
 
-        self.inner.iter().all(|(field, field_filters)| {
-            value_per_field.get(field).is_some_and(|v| field_filters.test_reference(v, refs))
+        let values = parse_insert_values(insert_statement);
+
+        self.inner.values().all(|field_filters| {
+            field_filters.position.is_some_and(|p| field_filters.test_value(values[p], references))
         })
     }
 
@@ -188,7 +177,6 @@ impl FromIterator<FilterCondition> for TableFilters {
             panic!("conditions have different tables");
         }
         TableFilters {
-            table: Some(conditions[0].table.clone()),
             inner: conditions.into_iter().chunk_by(|x| x.field.clone()).into_iter().map(|(field, items)| (field, FieldFilters::from_iter(items))).collect(),
         }
     }

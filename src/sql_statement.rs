@@ -15,25 +15,10 @@ impl FieldPositions {
         FieldPositions(parse_insert_fields(insert_statement))
     }
 
-    fn get_position(&self, field: &str) -> usize {
-        self.0[field]
-    }
-
     pub fn get_value(&self, statement: &Statement, field: &String) -> String {
         let values = statement.get_all_values();
         let position = self.0[field];
         values[position].to_string()
-    }
-
-    pub fn get_values(&self, statement: &Statement, fields: &HashSet<String>) -> HashMap<String, String> {
-        let values = statement.get_all_values();
-
-        let value_per_field: HashMap<String, String> = HashMap::from_iter(fields.iter().map(|f| {
-            let position = self.get_position(f);
-            (f.clone(), values[position].to_string())
-        }));
-
-        value_per_field
     }
 
     pub fn filtered(&mut self, fields: &HashSet<String>) -> Self {
