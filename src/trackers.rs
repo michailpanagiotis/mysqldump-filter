@@ -93,14 +93,6 @@ impl<'a> InsertFilter<'a> {
         let Some(ref pos) = self.field_positions else { return true };
 
         let value_per_field = pos.get_values(statement, &self.field_names);
-        if !self.filters.test_values(&value_per_field) {
-            return false;
-        }
-
-        if self.references.is_some_and(|x| !self.filters.test_values_against_references(&value_per_field, x))  {
-            return false;
-        }
-
-        true
+        self.filters.test_values(statement.as_str(), &value_per_field, &self.references)
     }
 }

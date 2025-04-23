@@ -12,10 +12,7 @@ pub struct FieldPositions(HashMap<String, usize>);
 
 impl FieldPositions {
     fn new(insert_statement: &str) -> Self {
-        let fields = parse_insert_fields(insert_statement);
-        FieldPositions(HashMap::from_iter(
-            fields.iter().enumerate().map(|(idx, item)| (item.to_string(), idx))
-        ))
+        FieldPositions(parse_insert_fields(insert_statement))
     }
 
     fn get_position(&self, field: &str) -> usize {
@@ -98,6 +95,10 @@ impl Statement {
 
     pub fn get_table(&self) -> Option<String> {
         self.table.clone()
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.line.as_str()
     }
 
     pub fn as_bytes(&self) -> &[u8] {

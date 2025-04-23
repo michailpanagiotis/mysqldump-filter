@@ -10,6 +10,7 @@ use nom::{
   sequence::{delimited, preceded},
 };
 use regex::Regex;
+use std::collections::HashMap;
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -35,7 +36,7 @@ pub fn parse_filter(filter_definition: &str) -> (&str, &str, &str) {
     parsed
 }
 
-pub fn parse_insert_fields(insert_statement: &str) -> Vec<&str> {
+pub fn parse_insert_fields(insert_statement: &str) -> HashMap<String, usize> {
     let mut parser = preceded(
         take_until("("), preceded(take_until("`"), take_until(")"))
     ).and_then(
@@ -46,7 +47,9 @@ pub fn parse_insert_fields(insert_statement: &str) -> Vec<&str> {
     );
     let res: IResult<&str, Vec<&str>> = parser.parse(insert_statement);
     let (_, fields) = res.expect("cannot parse fields");
-    fields
+    HashMap::from_iter(
+        fields.iter().enumerate().map(|(idx, item)| (item.to_string(), idx))
+    )
 }
 
 pub fn parse_insert_values(insert_statement: &str) -> Vec<&str> {

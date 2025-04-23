@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 
-use crate::expression_parser::parse_filter;
+use crate::expression_parser::{parse_filter, parse_insert_fields};
 
 #[derive(Debug)]
 #[derive(Clone)]
@@ -64,6 +64,7 @@ impl FilterCondition {
 struct FieldFilters {
     table: String,
     field: String,
+    position: Option<usize>,
     conditions: Vec<FilterCondition>,
 }
 
@@ -89,12 +90,17 @@ impl FromIterator<FilterCondition> for FieldFilters {
         FieldFilters {
             table: conditions[0].table.clone(),
             field: conditions[0].field.clone(),
+            position: None,
             conditions,
         }
     }
 }
 
 impl FieldFilters {
+    fn get_references(&self) -> Vec<(String, String)> {
+        self.conditions.iter().filter(|x| x.is_reference()).cloned().map(|x| x.get_reference_parts()).collect()
+    }
+
     fn test_value(&self, value: &str) -> bool {
         self.conditions.iter().filter(|x| !x.is_reference()).all(|condition| condition.test(value))
     }
@@ -106,8 +112,8 @@ impl FieldFilters {
         })
     }
 
-    fn get_references(&self) -> Vec<(String, String)> {
-        self.conditions.iter().filter(|x| x.is_reference()).cloned().map(|x| x.get_reference_parts()).collect()
+    fn set_position(&mut self, pos: usize) {
+        self.position = Some(pos);
     }
 }
 
@@ -132,15 +138,39 @@ impl TableFilters {
         self.inner.values().map(|x| x.field.clone()).collect()
     }
 
-    pub fn test_values(&self, value_per_field: &HashMap<String, String>) -> bool {
-        self.inner.iter().all(|(field, field_filters)| {
-            value_per_field.get(field).is_some_and(|v| field_filters.test_value(v))
+    fn has_resolved_positions(&self) -> bool {
+        self.inner.values().all(|field_filters| {
+            field_filters.position.is_some()
         })
     }
 
-    pub fn test_values_against_references(&self, value_per_field: &HashMap<String, String>, references: &HashMap<String, HashSet<String>>) -> bool {
+    fn resolve_positions(&mut self, insert_statement: &str) {
+        let positions: HashMap<String, usize> = parse_insert_fields(insert_statement);
+        for filter in self.inner.values_mut() {
+            filter.set_position(positions[&filter.field])
+        }
+        assert!(self.has_resolved_positions());
+    }
+
+    pub fn test_values(
+        &mut self,
+        insert_statement: &str,
+        value_per_field: &HashMap<String, String>,
+        references: &Option<&HashMap<String, HashSet<String>>>,
+    ) -> bool {
+        if !self.has_resolved_positions() {
+            self.resolve_positions(insert_statement);
+        }
+        let direct = self.inner.iter().all(|(field, field_filters)| {
+            value_per_field.get(field).is_some_and(|v| field_filters.test_value(v))
+        });
+        if !direct {
+            return false;
+        }
+        let Some(refs) = references else { return true };
+
         self.inner.iter().all(|(field, field_filters)| {
-            value_per_field.get(field).is_some_and(|v| field_filters.test_reference(v, references))
+            value_per_field.get(field).is_some_and(|v| field_filters.test_reference(v, refs))
         })
     }
 
