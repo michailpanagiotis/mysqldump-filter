@@ -15,6 +15,8 @@ enum FilterOperator {
 
 #[derive(Debug)]
 #[derive(Clone)]
+#[derive(Hash)]
+#[derive(Eq, PartialEq)]
 pub struct TableField {
     pub table: String,
     pub field: String,
@@ -58,10 +60,13 @@ impl FilterCondition {
         self.operator == FilterOperator::Reference
     }
 
-    fn get_reference_parts(&self) -> (String, String) {
+    fn get_table_field(&self) -> TableField {
         let mut parts = self.value.split(".");
         let (Some(table), Some(field), None) = (parts.next(), parts.next(), parts.next()) else { panic!("malformatted reference field") };
-        (table.to_string(), field.to_string())
+        TableField {
+            table: table.to_string(),
+            field: field.to_string()
+        }
     }
 }
 
@@ -104,8 +109,8 @@ impl FromIterator<FilterCondition> for FieldFilters {
 }
 
 impl FieldFilters {
-    fn get_references(&self) -> Vec<(String, String)> {
-        self.conditions.iter().filter(|x| x.is_reference()).cloned().map(|x| x.get_reference_parts()).collect()
+    fn get_referenced_fields(&self) -> Vec<TableField> {
+        self.conditions.iter().filter(|x| x.is_reference()).cloned().map(|x| x.get_table_field()).collect()
     }
 
     fn test_value(&self, value: &str, references: &Option<&HashMap<String, HashSet<String>>>) -> bool {
@@ -200,8 +205,8 @@ impl TableFilters {
         })
     }
 
-    pub fn get_references(&self) -> Vec<(String, String)> {
-        self.inner.values().flat_map(|v| v.get_references()).collect()
+    pub fn get_references(&self) -> Vec<TableField> {
+        self.inner.values().flat_map(|v| v.get_referenced_fields()).collect()
     }
 
     fn set_referenced_fields<I: Iterator<Item=String>>(&mut self, table: &str, fields: I) {
@@ -292,12 +297,12 @@ impl From<TableReferences> for HashMap<String, HashSet<String>> {
 pub struct Filters(HashMap<String, TableFilters>);
 
 impl Filters {
-    fn get_referenced_fields(&self) -> Vec<(String, String)> {
+    fn get_referenced_fields(&self) -> Vec<TableField> {
         self.0.values().flat_map(|v| v.get_references()).unique().collect()
     }
 
-    pub fn get_references_of_table(&self, table: &str) -> HashSet<String> {
-        self.get_referenced_fields().into_iter().filter(|(t, _)| t == table).map(|(_, f)| f).collect()
+    pub fn get_referenced_fields_of_table(&self, table: &str) -> HashSet<String> {
+        self.get_referenced_fields().into_iter().filter(|f| f.table == table).map(|f| f.field).collect()
     }
 
     pub fn get_filters_of_table(&self, key: &str) -> Option<TableFilters> {
@@ -305,12 +310,12 @@ impl Filters {
     }
 
     fn resolve_referenced_fields(&mut self) {
-        for (table, fields) in self.get_referenced_fields().into_iter().chunk_by(|(table, _)| table.clone()).into_iter() {
+        for (table, fields) in self.get_referenced_fields().into_iter().chunk_by(|f| f.table.clone()).into_iter() {
             match self.0.get_mut(table.as_str()) {
-                Some(table_filters) => table_filters.set_referenced_fields(&table, fields.map(|(_, field)| field.clone())),
+                Some(table_filters) => table_filters.set_referenced_fields(&table, fields.map(|f| f.field.clone())),
                 None => {
                     let mut table_filters = TableFilters::default();
-                    table_filters.set_referenced_fields(&table, fields.map(|(_, field)| field.clone()));
+                    table_filters.set_referenced_fields(&table, fields.map(|f| f.field.clone()));
                     self.0.insert(table, table_filters);
                 }
             }

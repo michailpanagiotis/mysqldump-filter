@@ -10,7 +10,7 @@ pub struct Config {
     working_dir_path: PathBuf,
     schema_file: PathBuf,
     requested_tables: HashSet<String>,
-    filter_conditions: Vec<(String, String)>,
+    filters: Filters,
 }
 
 impl Config {
@@ -22,14 +22,12 @@ impl Config {
 
         let filters = Filters::from_iter(filter_conditions.iter().map(|(table, condition)| FilterCondition::new(table, condition)));
 
-        dbg!(&filters);
-
         let schema_file = working_dir_path.join("schema.sql");
         Config {
             schema_file: schema_file.to_path_buf(),
             working_dir_path: working_dir_path.to_path_buf(),
             requested_tables,
-            filter_conditions,
+            filters,
         }
     }
 
@@ -55,14 +53,12 @@ impl Config {
 
     fn get_filters(&self, table: &Option<String>) -> TableFilters {
         let Some(t) = table else { return TableFilters::default() };
-        let filters = Filters::from_iter(self.filter_conditions.iter().map(|(table, condition)| FilterCondition::new(table, condition)));
-        filters.get_filters_of_table(t).unwrap_or(TableFilters::default())
+        self.filters.get_filters_of_table(t).unwrap_or(TableFilters::default())
     }
 
     fn get_referenced_fields(&self, table: &Option<String>) -> HashSet<String> {
         let Some(t) = table else { return HashSet::new() };
-        let filters = Filters::from_iter(self.filter_conditions.iter().map(|(table, condition)| FilterCondition::new(table, condition)));
-        filters.get_references_of_table(t)
+        self.filters.get_referenced_fields_of_table(t)
     }
 }
 
