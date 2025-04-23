@@ -2,9 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::io_utils::{read_config, Writer};
-use crate::trackers::ReferenceTracker;
 use crate::sql_statement::{Statement, TableStatementsIterator};
-use crate::filters::{Filters, TableFilters, FilterCondition};
+use crate::filters::{FilterCondition, Filters, TableField, TableFilters, TableReferences};
 
 #[derive(Debug)]
 pub struct Config {
@@ -99,9 +98,14 @@ impl TableConfig {
         &self.table
     }
 
-    pub fn get_reference_tracker(&self) -> Option<ReferenceTracker> {
+    pub fn get_reference_tracker(&self) -> Option<TableReferences> {
         let ref_tracker = match self.table.is_some() && !self.referenced_fields.is_empty() {
-            true => Some(ReferenceTracker::new(self.table.as_ref().unwrap(), &self.referenced_fields)),
+            true => Some(
+                TableReferences::from_iter(self.referenced_fields.iter().map(|field| TableField {
+                    table: self.table.as_ref().unwrap().clone(),
+                    field: field.clone(),
+                }))
+            ),
             false => None,
         };
         ref_tracker

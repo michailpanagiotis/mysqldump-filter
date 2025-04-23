@@ -9,7 +9,7 @@ use crate::expression_parser::{parse_filter, parse_insert_fields, parse_insert_v
 enum FilterOperator {
     Equals,
     NotEquals,
-    References,
+    Reference,
     Unknown,
 }
 
@@ -38,7 +38,7 @@ impl FilterCondition {
             operator: match operator {
                 "==" => FilterOperator::Equals,
                 "!=" => FilterOperator::NotEquals,
-                "->" => FilterOperator::References,
+                "->" => FilterOperator::Reference,
                 _ => FilterOperator::Unknown,
             },
             value: value.to_string(),
@@ -49,13 +49,13 @@ impl FilterCondition {
         match &self.operator {
             FilterOperator::Equals => self.value == other_value,
             FilterOperator::NotEquals => self.value != other_value,
-            FilterOperator::References => true,
+            FilterOperator::Reference => true,
             FilterOperator::Unknown => true
         }
     }
 
     fn is_reference(&self) -> bool {
-        self.operator == FilterOperator::References
+        self.operator == FilterOperator::Reference
     }
 
     fn get_reference_parts(&self) -> (String, String) {
@@ -281,12 +281,6 @@ impl FromIterator<TableField> for TableReferences {
     }
 }
 
-// impl Into<HashMap<String, HashSet<String>>> for TableReferences {
-//     fn into(self) -> HashMap<String, HashSet<String>> {
-//         self.inner.values().map(|field_reference| (field_reference.table.to_owned() + "." + field_reference.field.as_str(), field_reference.values.clone())).collect()
-//     }
-// }
-
 impl From<TableReferences> for HashMap<String, HashSet<String>> {
     fn from(item: TableReferences) -> Self {
          item.inner.values().map(|field_reference| (field_reference.table.to_owned() + "." + field_reference.field.as_str(), field_reference.values.clone())).collect()
@@ -331,5 +325,22 @@ impl FromIterator<FilterCondition> for Filters {
         );
         filters.resolve_referenced_fields();
         filters
+    }
+}
+
+#[derive(Debug)]
+#[derive(Clone)]
+pub struct References {
+    pub inner: Vec<TableReferences>
+}
+
+impl From<References> for HashMap<String, HashSet<String>> {
+    fn from(item: References) -> Self {
+        let references: HashMap<String, HashSet<String>> = item.inner.into_iter().fold(HashMap::new(), |mut acc, table_refs| {
+            let rfs = HashMap::from(table_refs);
+            acc.extend(rfs);
+            acc
+        });
+        references
     }
 }

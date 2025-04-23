@@ -6,7 +6,6 @@ mod sql_statement;
 mod io_utils;
 mod sql_parser;
 mod config;
-mod trackers;
 mod expression_parser;
 mod filters;
 
