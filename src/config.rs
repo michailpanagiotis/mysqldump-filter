@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::io_utils::{read_config, Writer};
-use crate::trackers::{InsertTracker, ReferenceTracker};
+use crate::trackers::ReferenceTracker;
 use crate::sql_statement::{Statement, TableStatementsIterator};
 use crate::filters::{Filters, TableFilters, FilterCondition};
 
@@ -99,14 +99,6 @@ impl TableConfig {
         &self.table
     }
 
-    fn get_insert_tracker<'a>(&self, references: Option<&'a HashMap<String, HashSet<String>>>) -> Option<InsertTracker<'a>> {
-        self.table.clone().map(|t| InsertTracker::new(
-            &t,
-            &self.filters,
-            references,
-        ))
-    }
-
     pub fn get_reference_tracker(&self) -> Option<ReferenceTracker> {
         let ref_tracker = match self.table.is_some() && !self.referenced_fields.is_empty() {
             true => Some(ReferenceTracker::new(self.table.as_ref().unwrap(), &self.referenced_fields)),
@@ -120,6 +112,6 @@ impl TableConfig {
         statements: I,
         references: Option<&HashMap<String, HashSet<String>>>,
     ) -> impl Iterator<Item=Statement> {
-        TableStatementsIterator::new(self.get_insert_tracker(references), statements)
+        TableStatementsIterator::new(&self.filters, references, statements)
     }
 }

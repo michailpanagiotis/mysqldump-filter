@@ -2,7 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::expression_parser::{get_table_from_comment, parse_insert_fields, parse_insert_values};
-use crate::trackers::InsertTracker;
+use crate::filters::TableFilters;
+use crate::trackers::InsertFilter;
 use crate::io_utils::read_file;
 
 #[derive(Debug)]
@@ -118,7 +119,7 @@ impl Statement {
 
 pub struct TableStatementsIterator<'a, I: Iterator<Item=Statement>> {
     inner: I,
-    insert_tracker: Option<InsertTracker<'a>>,
+    insert_tracker: InsertFilter<'a>,
 }
 
 impl<I: Iterator<Item=Statement>> Iterator for TableStatementsIterator<'_, I> {
@@ -139,18 +140,18 @@ impl<I: Iterator<Item=Statement>> Iterator for TableStatementsIterator<'_, I> {
 
 impl<'a, I: Iterator<Item=Statement>> TableStatementsIterator<'a, I> {
     pub fn new(
-        insert_tracker: Option<InsertTracker<'a>>,
+        filters: &TableFilters,
+        references: Option<&'a HashMap<String, HashSet<String>>>,
         statements: I,
     ) -> Self
     {
         TableStatementsIterator {
-            insert_tracker,
+            insert_tracker: InsertFilter::new(filters, references),
             inner: statements,
         }
     }
 
     fn should_keep_item(&mut self, statement: &Statement) -> bool {
-        let Some(info) = &mut self.insert_tracker else { return true };
-        info.should_keep_statement(statement)
+        self.insert_tracker.should_keep_statement(statement)
     }
 }

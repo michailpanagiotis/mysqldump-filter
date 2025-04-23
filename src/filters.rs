@@ -120,6 +120,14 @@ pub struct TableFilters {
 }
 
 impl TableFilters {
+    pub fn is_empty(&self) -> bool {
+        self.inner.len() == 0
+    }
+
+    pub fn get_table(&self) -> Option<String> {
+        self.table.clone()
+    }
+
     pub fn get_filtered_fields(&self) -> HashSet<String> {
         self.inner.values().map(|x| x.field.clone()).collect()
     }

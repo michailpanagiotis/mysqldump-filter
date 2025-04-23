@@ -60,22 +60,20 @@ impl ReferenceTracker {
 
 
 #[derive(Debug)]
-pub struct InsertTracker<'a> {
-    table: String,
+#[derive(Default)]
+pub struct InsertFilter<'a> {
     filters: TableFilters,
     field_names: HashSet<String>,
     field_positions: Option<FieldPositions>,
     references: Option<&'a HashMap<String, HashSet<String>>>,
 }
 
-impl<'a> InsertTracker<'a> {
+impl<'a> InsertFilter<'a> {
     pub fn new(
-        table: &str,
         filters: &TableFilters,
         references: Option<&'a HashMap<String, HashSet<String>>>,
     ) -> Self {
-        InsertTracker {
-            table: table.to_string(),
+        InsertFilter {
             filters: filters.clone(),
             field_names: filters.get_filtered_fields(),
             field_positions: None,
@@ -84,7 +82,7 @@ impl<'a> InsertTracker<'a> {
     }
 
     pub fn should_keep_statement(&mut self, statement: &Statement) -> bool {
-        if !statement.is_insert() || statement.get_table().is_none_or(|ref t| t != &self.table) {
+        if !statement.is_insert() || statement.get_table().is_none() || self.filters.is_empty() {
             return true;
         }
 
