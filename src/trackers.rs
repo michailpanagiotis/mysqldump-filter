@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::sql_statement::{FieldPositions, Statement};
-use crate::filters::TableFilters;
 
 #[derive(Debug)]
 #[derive(Clone)]
@@ -55,33 +54,5 @@ impl ReferenceTracker {
                 }
             }
         }
-    }
-}
-
-
-#[derive(Debug)]
-#[derive(Default)]
-pub struct InsertFilter<'a> {
-    filters: TableFilters,
-    references: Option<&'a HashMap<String, HashSet<String>>>,
-}
-
-impl<'a> InsertFilter<'a> {
-    pub fn new(
-        filters: &TableFilters,
-        references: Option<&'a HashMap<String, HashSet<String>>>,
-    ) -> Self {
-        InsertFilter {
-            filters: filters.clone(),
-            references,
-        }
-    }
-
-    pub fn should_keep_statement(&mut self, statement: &Statement) -> bool {
-        if !statement.is_insert() || statement.get_table().is_none() {
-            return true;
-        }
-
-        self.filters.test_values(statement.as_str(), &self.references)
     }
 }
