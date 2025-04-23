@@ -112,45 +112,53 @@ impl FieldFilters {
 }
 
 #[derive(Debug)]
+#[derive(Default)]
 #[derive(Clone)]
-pub struct TableFilters (HashMap<String, FieldFilters>);
+pub struct TableFilters {
+    table: Option<String>,
+    inner: HashMap<String, FieldFilters>,
+}
 
 impl TableFilters {
-    pub fn empty() -> Self {
-        TableFilters(HashMap::new())
-    }
-
     pub fn get_filtered_fields(&self) -> HashSet<String> {
-        self.0.values().map(|x| x.field.clone()).collect()
+        self.inner.values().map(|x| x.field.clone()).collect()
     }
 
     pub fn test_values(&self, value_per_field: &HashMap<String, String>) -> bool {
-        self.0.iter().all(|(field, field_filters)| {
+        self.inner.iter().all(|(field, field_filters)| {
             value_per_field.get(field).is_some_and(|v| field_filters.test_value(v))
         })
     }
 
     pub fn test_values_against_references(&self, value_per_field: &HashMap<String, String>, references: &HashMap<String, HashSet<String>>) -> bool {
-        self.0.iter().all(|(field, field_filters)| {
+        self.inner.iter().all(|(field, field_filters)| {
             value_per_field.get(field).is_some_and(|v| field_filters.test_reference(v, references))
         })
     }
 
     pub fn get_references(&self) -> Vec<(String, String)> {
-        self.0.values().flat_map(|v| v.get_references()).collect()
+        self.inner.values().flat_map(|v| v.get_references()).collect()
     }
 }
 
 impl FromIterator<FilterCondition> for TableFilters {
     fn from_iter<T: IntoIterator<Item = FilterCondition>>(iter: T) -> Self {
-        TableFilters (
-            iter.into_iter().chunk_by(|x| x.field.clone()).into_iter().map(|(field, items)| (field, FieldFilters::from_iter(items))).collect(),
-        )
+        let conditions: Vec<FilterCondition> = iter.into_iter().collect();
+
+        let distinct: Vec<&FilterCondition> = conditions.iter().unique_by(|s| &s.table).collect();
+        if distinct.len() != 1 {
+            panic!("conditions have different tables");
+        }
+        TableFilters {
+            table: Some(conditions[0].table.clone()),
+            inner: conditions.into_iter().chunk_by(|x| x.field.clone()).into_iter().map(|(field, items)| (field, FieldFilters::from_iter(items))).collect(),
+        }
     }
 }
 
 
 #[derive(Debug)]
+#[derive(Default)]
 pub struct Filters(HashMap<String, TableFilters>);
 
 impl Filters {

@@ -55,9 +55,9 @@ impl Config {
     }
 
     fn get_filters(&self, table: &Option<String>) -> TableFilters {
-        let Some(t) = table else { return TableFilters::empty() };
+        let Some(t) = table else { return TableFilters::default() };
         let filters = Filters::from_iter(self.filter_conditions.iter().map(|(table, condition)| FilterCondition::new(table, condition)));
-        filters.get_filters_of_table(t).unwrap_or(TableFilters::empty())
+        filters.get_filters_of_table(t).unwrap_or(TableFilters::default())
     }
 
     fn get_referenced_fields(&self, table: &Option<String>) -> HashSet<String> {
