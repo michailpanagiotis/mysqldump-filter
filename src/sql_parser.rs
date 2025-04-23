@@ -41,7 +41,7 @@ pub fn parse_input_file(config: &Config, input_file: &Path, output_file: &Path) 
         process_table_statements(&config.get_table_config(&table), statements, None)
     }).unzip();
 
-    let references = ReferenceTracker::merge(reference_trackers.iter().flatten());
+    let references = ReferenceTracker::merge(reference_trackers.into_iter().flatten());
 
     dbg!(&references);
 

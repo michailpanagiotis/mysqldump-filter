@@ -1,33 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use crate::expression_parser::{get_table_from_comment, parse_insert_fields, parse_insert_values};
+use crate::expression_parser::get_table_from_comment;
 use crate::filters::TableFilters;
 use crate::io_utils::read_file;
-
-#[derive(Debug)]
-#[derive(Clone)]
-pub struct FieldPositions(HashMap<String, usize>);
-
-impl FieldPositions {
-    fn new(insert_statement: &str) -> Self {
-        FieldPositions(parse_insert_fields(insert_statement))
-    }
-
-    pub fn get_value(&self, statement: &Statement, field: &String) -> String {
-        let values = statement.get_all_values();
-        let position = self.0[field];
-        values[position].to_string()
-    }
-
-    pub fn filtered(&mut self, fields: &HashSet<String>) -> Self {
-        FieldPositions(HashMap::from_iter(
-            self.0.iter()
-                .filter(|(key, _)| fields.contains(*key))
-                .map(|(key, value)| (key.clone(), *value))
-        ))
-    }
-}
 
 #[derive(Debug)]
 #[derive(PartialEq)]
@@ -87,18 +63,6 @@ impl Statement {
 
     pub fn as_bytes(&self) -> &[u8] {
         self.line.as_bytes()
-    }
-
-    pub fn get_field_positions(&self, fields: &HashSet<String>) -> Option<FieldPositions> {
-        if !self.is_insert() {
-            return None;
-        }
-        Some(FieldPositions::new(&self.line).filtered(fields))
-    }
-
-    pub fn get_all_values(&self) -> Vec<&str> {
-        let values = parse_insert_values(&self.line);
-        values
     }
 }
 

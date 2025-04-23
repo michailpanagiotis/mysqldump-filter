@@ -15,6 +15,13 @@ enum FilterOperator {
 
 #[derive(Debug)]
 #[derive(Clone)]
+pub struct TableField {
+    pub table: String,
+    pub field: String,
+}
+
+#[derive(Debug)]
+#[derive(Clone)]
 pub struct FilterCondition {
     table: String,
     field: String,
@@ -121,21 +128,29 @@ impl FieldFilters {
 #[derive(Debug)]
 #[derive(Default)]
 #[derive(Clone)]
-struct FieldReferences {
+struct FieldReference {
     table: String,
     field: String,
     position: Option<usize>,
     values: HashSet<String>,
 }
 
-impl FieldReferences {
-    fn new(table: &str, field: &str) -> Self {
-        FieldReferences {
-            table: table.to_string(),
-            field: field.to_string(),
+impl FieldReference {
+    fn new(table_field: &TableField) -> Self {
+        FieldReference {
+            table: table_field.table.to_string(),
+            field: table_field.field.to_string(),
             position: None,
             values: HashSet::new()
         }
+    }
+
+    fn set_position(&mut self, pos: usize) {
+        self.position = Some(pos);
+    }
+
+    fn capture(&mut self, value: &str) {
+        self.values.insert(value.to_string());
     }
 }
 
@@ -144,12 +159,12 @@ impl FieldReferences {
 #[derive(Clone)]
 pub struct TableFilters {
     inner: HashMap<String, FieldFilters>,
-    references: HashMap<String, FieldReferences>,
+    references: HashMap<String, FieldReference>,
 }
 
 impl TableFilters {
     pub fn has_filters(&self) -> bool {
-        self.inner.len() > 0
+        !self.inner.is_empty()
     }
 
     fn has_resolved_positions(&self) -> bool {
@@ -190,7 +205,7 @@ impl TableFilters {
     }
 
     fn set_referenced_fields<I: Iterator<Item=String>>(&mut self, table: &str, fields: I) {
-        self.references = HashMap::from_iter(fields.map(|ref f| (f.clone(), FieldReferences::new(table, f))));
+        self.references = HashMap::from_iter(fields.map(|ref f| (f.clone(), FieldReference::new(&TableField { table: table.to_string(), field: f.clone() }))));
     }
 }
 
@@ -209,6 +224,74 @@ impl FromIterator<FilterCondition> for TableFilters {
     }
 }
 
+#[derive(Debug)]
+#[derive(Default)]
+#[derive(Clone)]
+pub struct TableReferences {
+    inner: HashMap<String, FieldReference>,
+}
+
+impl TableReferences {
+    pub fn has_referenced_fields(&self) -> bool {
+        !self.inner.is_empty()
+    }
+
+    fn has_resolved_positions(&self) -> bool {
+        self.inner.values().all(|field_refs| {
+            field_refs.position.is_some()
+        })
+    }
+
+    fn resolve_positions(&mut self, insert_statement: &str) {
+        let positions: HashMap<String, usize> = parse_insert_fields(insert_statement);
+        for rf in self.inner.values_mut() {
+            rf.set_position(positions[&rf.field])
+        }
+        assert!(self.has_resolved_positions());
+    }
+
+    pub fn capture(&mut self, insert_statement: &str) {
+        if !self.has_referenced_fields() {
+            return;
+        }
+        if !self.has_resolved_positions() {
+            self.resolve_positions(insert_statement);
+        }
+
+        let values = parse_insert_values(insert_statement);
+
+        self.inner.values_mut().for_each(|field_references| {
+            let Some(pos) = field_references.position else { return };
+            field_references.capture(values[pos]);
+        })
+    }
+}
+
+impl FromIterator<TableField> for TableReferences {
+    fn from_iter<T: IntoIterator<Item = TableField>>(iter: T) -> Self {
+        let fields: Vec<TableField> = iter.into_iter().collect();
+
+        let distinct: Vec<&TableField> = fields.iter().unique_by(|s| &s.table).collect();
+        if distinct.len() != 1 {
+            panic!("fields have different tables");
+        }
+        TableReferences {
+            inner: fields.into_iter().map(|table_field| (table_field.field.clone(), FieldReference::new(&table_field))).collect(),
+        }
+    }
+}
+
+// impl Into<HashMap<String, HashSet<String>>> for TableReferences {
+//     fn into(self) -> HashMap<String, HashSet<String>> {
+//         self.inner.values().map(|field_reference| (field_reference.table.to_owned() + "." + field_reference.field.as_str(), field_reference.values.clone())).collect()
+//     }
+// }
+
+impl From<TableReferences> for HashMap<String, HashSet<String>> {
+    fn from(item: TableReferences) -> Self {
+         item.inner.values().map(|field_reference| (field_reference.table.to_owned() + "." + field_reference.field.as_str(), field_reference.values.clone())).collect()
+    }
+}
 
 #[derive(Debug)]
 #[derive(Default)]
