@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::io_utils::{read_config, Writer};
 use crate::sql_statement::{Statement, TableStatementsIterator};
-use crate::filters::{FilterCondition, Filters, TableField, TableFilters, TableReferences};
+use crate::filters::{FilterCondition, Filters, TableFilters, TableReferences};
 
 #[derive(Debug)]
 pub struct Config {
@@ -21,6 +21,8 @@ impl Config {
         let (requested_tables, filter_conditions) = read_config(config_file);
 
         let filters = Filters::from_iter(filter_conditions.iter().map(|(table, condition)| FilterCondition::new(table, condition)));
+
+        dbg!(&filters);
 
         let schema_file = working_dir_path.join("schema.sql");
         Config {
@@ -40,7 +42,7 @@ impl Config {
             table,
             &self.get_table_filepath(table),
             &self.get_filters(table),
-            &self.get_referenced_fields(table),
+            &self.get_references(table),
         )
     }
 
@@ -56,9 +58,9 @@ impl Config {
         self.filters.get_filters_of_table(t).unwrap_or(TableFilters::default())
     }
 
-    fn get_referenced_fields(&self, table: &Option<String>) -> HashSet<String> {
-        let Some(t) = table else { return HashSet::new() };
-        self.filters.get_referenced_fields_of_table(t)
+    fn get_references(&self, table: &Option<String>) -> TableReferences {
+        let Some(t) = table else { return TableReferences::default() };
+        self.filters.get_references_of_table(t).unwrap_or(TableReferences::default())
     }
 }
 
@@ -67,7 +69,7 @@ pub struct TableConfig {
     table: Option<String>,
     filepath: PathBuf,
     filters: TableFilters,
-    referenced_fields: HashSet<String>,
+    references: TableReferences,
 }
 
 impl TableConfig {
@@ -75,14 +77,14 @@ impl TableConfig {
         table: &Option<String>,
         filepath: &Path,
         filters: &TableFilters,
-        referenced_fields: &HashSet<String>,
+        references: &TableReferences,
     ) -> TableConfig
     {
         TableConfig {
             table: table.clone(),
             filepath: filepath.to_path_buf(),
+            references: references.clone(),
             filters: filters.clone(),
-            referenced_fields: referenced_fields.clone(),
         }
     }
 
@@ -95,16 +97,7 @@ impl TableConfig {
     }
 
     pub fn get_reference_tracker(&self) -> Option<TableReferences> {
-        let ref_tracker = match self.table.is_some() && !self.referenced_fields.is_empty() {
-            true => Some(
-                TableReferences::from_iter(self.referenced_fields.iter().map(|field| TableField {
-                    table: self.table.as_ref().unwrap().clone(),
-                    field: field.clone(),
-                }))
-            ),
-            false => None,
-        };
-        ref_tracker
+        Some(self.references.clone())
     }
 
     pub fn filter_statements<I: Iterator<Item=Statement>>(

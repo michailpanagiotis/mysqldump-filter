@@ -43,9 +43,9 @@ pub fn parse_input_file(config: &Config, input_file: &Path, output_file: &Path) 
         process_table_statements(&config.get_table_config(&table), statements, None)
     }).unzip();
 
-    let references = HashMap::from(
-        References{ inner: reference_trackers.into_iter().flatten().collect() },
-    );
+    let refs: References = References::from_iter(reference_trackers.into_iter().flatten());
+
+    let references = HashMap::from(refs);
 
     dbg!(&references);
 

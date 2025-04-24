@@ -164,7 +164,6 @@ impl FieldReference {
 #[derive(Clone)]
 pub struct TableFilters {
     inner: HashMap<String, FieldFilters>,
-    references: HashMap<String, FieldReference>,
 }
 
 impl TableFilters {
@@ -208,10 +207,6 @@ impl TableFilters {
     pub fn get_references(&self) -> Vec<TableField> {
         self.inner.values().flat_map(|v| v.get_referenced_fields()).collect()
     }
-
-    fn set_referenced_fields<I: Iterator<Item=String>>(&mut self, table: &str, fields: I) {
-        self.references = HashMap::from_iter(fields.map(|ref f| (f.clone(), FieldReference::new(&TableField { table: table.to_string(), field: f.clone() }))));
-    }
 }
 
 impl FromIterator<FilterCondition> for TableFilters {
@@ -224,7 +219,6 @@ impl FromIterator<FilterCondition> for TableFilters {
         }
         TableFilters {
             inner: conditions.into_iter().chunk_by(|x| x.field.clone()).into_iter().map(|(field, items)| (field, FieldFilters::from_iter(items))).collect(),
-            references: HashMap::new(),
         }
     }
 }
@@ -239,6 +233,10 @@ pub struct TableReferences {
 impl TableReferences {
     pub fn has_referenced_fields(&self) -> bool {
         !self.inner.is_empty()
+    }
+
+    fn get_table(&self) -> Option<String> {
+        Some(self.inner.values().next()?.table.clone())
     }
 
     fn has_resolved_positions(&self) -> bool {
@@ -286,66 +284,78 @@ impl FromIterator<TableField> for TableReferences {
     }
 }
 
-impl From<TableReferences> for HashMap<String, HashSet<String>> {
-    fn from(item: TableReferences) -> Self {
+impl From<&TableReferences> for HashMap<String, HashSet<String>> {
+    fn from(item: &TableReferences) -> Self {
          item.inner.values().map(|field_reference| (field_reference.table.to_owned() + "." + field_reference.field.as_str(), field_reference.values.clone())).collect()
     }
 }
 
 #[derive(Debug)]
+#[derive(Clone)]
 #[derive(Default)]
-pub struct Filters(HashMap<String, TableFilters>);
+pub struct References {
+    pub inner: HashMap<String, TableReferences>
+}
+
+impl FromIterator<TableReferences> for References {
+    fn from_iter<T: IntoIterator<Item=TableReferences>>(items: T) -> Self {
+        let mut grouped: HashMap<String, TableReferences> = HashMap::new();
+        for item in items.into_iter() {
+            let Some(table) = item.get_table() else { continue };
+            grouped.insert(table, item);
+        }
+        References {
+            inner: grouped,
+        }
+    }
+}
+
+impl From<References> for HashMap<String, HashSet<String>> {
+    fn from(item: References) -> Self {
+        let references: HashMap<String, HashSet<String>> = item.inner.values().fold(HashMap::new(), |mut acc, table_refs| {
+            let rfs: HashMap<String, HashSet<String>> = HashMap::from(table_refs);
+            acc.extend(rfs);
+            acc
+        });
+        references
+    }
+}
+
+#[derive(Debug)]
+#[derive(Default)]
+pub struct Filters{
+    inner: HashMap<String, TableFilters>,
+    references: References,
+}
 
 impl Filters {
     fn get_referenced_fields(&self) -> Vec<TableField> {
-        self.0.values().flat_map(|v| v.get_references()).unique().collect()
-    }
-
-    pub fn get_referenced_fields_of_table(&self, table: &str) -> HashSet<String> {
-        self.get_referenced_fields().into_iter().filter(|f| f.table == table).map(|f| f.field).collect()
+        self.inner.values().flat_map(|v| v.get_references()).unique().collect()
     }
 
     pub fn get_filters_of_table(&self, key: &str) -> Option<TableFilters> {
-        self.0.get(key).cloned()
+        self.inner.get(key).cloned()
     }
 
-    fn resolve_referenced_fields(&mut self) {
-        for (table, fields) in self.get_referenced_fields().into_iter().chunk_by(|f| f.table.clone()).into_iter() {
-            match self.0.get_mut(table.as_str()) {
-                Some(table_filters) => table_filters.set_referenced_fields(&table, fields.map(|f| f.field.clone())),
-                None => {
-                    let mut table_filters = TableFilters::default();
-                    table_filters.set_referenced_fields(&table, fields.map(|f| f.field.clone()));
-                    self.0.insert(table, table_filters);
-                }
-            }
-        }
+    pub fn get_references_of_table(&self, key: &str) -> Option<TableReferences> {
+        self.references.inner.get(key).cloned()
+    }
+
+    fn resolve_referenced_fields(&self) -> References {
+        let grouped: HashMap<String, Vec<TableField>> = self.get_referenced_fields().into_iter().into_group_map_by(|f| f.table.clone());
+        let inner: HashMap<String, TableReferences> = grouped.into_iter().map(|(table, tfs)| (table.to_string(), TableReferences::from_iter(tfs))).collect();
+        References { inner }
     }
 }
 
 impl FromIterator<FilterCondition> for Filters {
     fn from_iter<T: IntoIterator<Item=FilterCondition>>(iter: T) -> Self {
-        let mut filters = Filters (
-            iter.into_iter().chunk_by(|x| x.table.clone()).into_iter().map(|(table, items)| (table, TableFilters::from_iter(items))).collect(),
-        );
-        filters.resolve_referenced_fields();
+        let mut filters = Filters {
+            inner: iter.into_iter().chunk_by(|x| x.table.clone()).into_iter().map(|(table, items)| (table, TableFilters::from_iter(items))).collect(),
+            references: References::default(),
+        };
+        let references = filters.resolve_referenced_fields();
+        filters.references = references;
         filters
-    }
-}
-
-#[derive(Debug)]
-#[derive(Clone)]
-pub struct References {
-    pub inner: Vec<TableReferences>
-}
-
-impl From<References> for HashMap<String, HashSet<String>> {
-    fn from(item: References) -> Self {
-        let references: HashMap<String, HashSet<String>> = item.inner.into_iter().fold(HashMap::new(), |mut acc, table_refs| {
-            let rfs = HashMap::from(table_refs);
-            acc.extend(rfs);
-            acc
-        });
-        references
     }
 }
