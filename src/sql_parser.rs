@@ -6,19 +6,20 @@ use itertools::Itertools;
 use crate::sql_statement::Statement;
 use crate::io_utils::Writer;
 use crate::filters::{References, TableReferences};
-use crate::config::{Config, TableConfig};
+use crate::config::Config;
 
 pub fn process_table_statements<I: Iterator<Item=Statement>>(
-    config: &TableConfig,
+    config: &Config,
+    table_option: &Option<String>,
     statements: I,
     references: Option<&HashMap<String, HashSet<String>>>,
 ) -> (PathBuf, TableReferences) {
-    if let Some(table) = &config.get_table() {
+    if let Some(table) = table_option {
         println!("Processing table {}", &table);
     }
 
-    let mut writer = config.get_writer();
-    let mut filters = config.filters.clone();
+    let mut writer = Writer::new(&config.get_table_filepath(table_option));
+    let mut filters = config.get_filters(table_option);
 
     for statement in config.filter_statements(statements, &mut filters, references) {
         writer.write_line(statement.as_bytes()).expect("Unable to write data");
@@ -36,7 +37,7 @@ pub fn parse_input_file(config: &Config, input_file: &Path, output_file: &Path) 
 
     println!("First pass...");
     for (table, statements) in all_statements.chunk_by(Statement::get_table).into_iter() {
-        let (filepath, ref_tracker) = process_table_statements(&config.get_table_config(&table), statements, None);
+        let (filepath, ref_tracker) = process_table_statements(&config, &table, statements, None);
         filepaths.push(filepath);
         reference_trackers.push(ref_tracker.clone());
     }

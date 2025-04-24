@@ -357,10 +357,6 @@ impl Filters {
     pub fn get_filters_of_table(&self, key: &str) -> Option<TableFilters> {
         self.inner.get(key).cloned()
     }
-
-    pub fn get_references_of_table(&self, key: &str) -> Option<TableReferences> {
-        self.references.inner.get(key).cloned()
-    }
 }
 
 impl FromIterator<FilterCondition> for Filters {
