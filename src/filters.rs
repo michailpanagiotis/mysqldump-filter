@@ -310,6 +310,14 @@ impl FromIterator<TableReferences> for References {
     }
 }
 
+impl FromIterator<TableField> for References {
+    fn from_iter<T: IntoIterator<Item=TableField>>(items: T) -> Self {
+        let grouped: HashMap<String, Vec<TableField>> = items.into_iter().into_group_map_by(|f| f.table.clone());
+        let inner: HashMap<String, TableReferences> = grouped.into_iter().map(|(table, tfs)| (table.to_string(), TableReferences::from_iter(tfs))).collect();
+        References { inner }
+    }
+}
+
 impl From<References> for HashMap<String, HashSet<String>> {
     fn from(item: References) -> Self {
         let references: HashMap<String, HashSet<String>> = item.inner.values().fold(HashMap::new(), |mut acc, table_refs| {
@@ -340,12 +348,6 @@ impl Filters {
     pub fn get_references_of_table(&self, key: &str) -> Option<TableReferences> {
         self.references.inner.get(key).cloned()
     }
-
-    fn resolve_referenced_fields(&self) -> References {
-        let grouped: HashMap<String, Vec<TableField>> = self.get_referenced_fields().into_iter().into_group_map_by(|f| f.table.clone());
-        let inner: HashMap<String, TableReferences> = grouped.into_iter().map(|(table, tfs)| (table.to_string(), TableReferences::from_iter(tfs))).collect();
-        References { inner }
-    }
 }
 
 impl FromIterator<FilterCondition> for Filters {
@@ -354,8 +356,7 @@ impl FromIterator<FilterCondition> for Filters {
             inner: iter.into_iter().chunk_by(|x| x.table.clone()).into_iter().map(|(table, items)| (table, TableFilters::from_iter(items))).collect(),
             references: References::default(),
         };
-        let references = filters.resolve_referenced_fields();
-        filters.references = references;
+        filters.references = References::from_iter(filters.get_referenced_fields());
         filters
     }
 }
