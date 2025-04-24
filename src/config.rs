@@ -55,12 +55,12 @@ impl Config {
 
     fn get_filters(&self, table: &Option<String>) -> TableFilters {
         let Some(t) = table else { return TableFilters::default() };
-        self.filters.get_filters_of_table(t).unwrap_or(TableFilters::default())
+        self.filters.get_filters_of_table(t).unwrap_or_default()
     }
 
     fn get_references(&self, table: &Option<String>) -> TableReferences {
         let Some(t) = table else { return TableReferences::default() };
-        self.filters.get_references_of_table(t).unwrap_or(TableReferences::default())
+        self.filters.get_references_of_table(t).unwrap_or_default()
     }
 }
 
@@ -96,8 +96,8 @@ impl TableConfig {
         &self.table
     }
 
-    pub fn get_reference_tracker(&self) -> Option<TableReferences> {
-        Some(self.references.clone())
+    pub fn get_reference_tracker(&self) -> TableReferences {
+        self.references.clone()
     }
 
     pub fn filter_statements<I: Iterator<Item=Statement>>(

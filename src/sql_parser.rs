@@ -12,7 +12,7 @@ pub fn process_table_statements<I: Iterator<Item=Statement>>(
     config: &TableConfig,
     statements: I,
     references: Option<&HashMap<String, HashSet<String>>>,
-) -> (PathBuf, Option<TableReferences>) {
+) -> (PathBuf, TableReferences) {
     if let Some(table) = &config.get_table() {
         println!("Processing table {}", &table);
     }
@@ -21,10 +21,8 @@ pub fn process_table_statements<I: Iterator<Item=Statement>>(
     let mut ref_tracker = config.get_reference_tracker();
 
     for statement in config.filter_statements(statements, references) {
-        if let Some(ref mut tracker) = ref_tracker {
-            if statement.is_insert() {
-                tracker.capture(statement.as_str());
-            }
+        if statement.is_insert() {
+            ref_tracker.capture(statement.as_str());
         }
         writer.write_line(statement.as_bytes()).expect("Unable to write data");
     };
@@ -36,18 +34,19 @@ pub fn process_table_statements<I: Iterator<Item=Statement>>(
 pub fn parse_input_file(config: &Config, input_file: &Path, output_file: &Path) {
     let all_statements = Statement::from_file(input_file, config.get_requested_tables());
 
-    type ParseResult = (Vec<PathBuf>, Vec<Option<TableReferences>>);
+    let mut filepaths: Vec<PathBuf> = Vec::new();
+    let mut reference_trackers: Vec<TableReferences> = Vec::new();
 
     println!("First pass...");
-    let (filepaths, reference_trackers): ParseResult = all_statements.chunk_by(Statement::get_table).into_iter().map(|(table, statements)| {
-        process_table_statements(&config.get_table_config(&table), statements, None)
-    }).unzip();
+    for (table, statements) in all_statements.chunk_by(Statement::get_table).into_iter() {
+        let (filepath, ref_tracker) = process_table_statements(&config.get_table_config(&table), statements, None);
+        filepaths.push(filepath);
+        reference_trackers.push(ref_tracker.clone());
+    }
 
-    let refs: References = References::from_iter(reference_trackers.into_iter().flatten());
+    let refs: References = References::from_iter(reference_trackers);
 
-    let references = HashMap::from(refs);
-
-    dbg!(&references);
+    dbg!(&refs);
 
     println!("Second pass...");
 
