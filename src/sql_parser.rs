@@ -18,17 +18,14 @@ pub fn process_table_statements<I: Iterator<Item=Statement>>(
     }
 
     let mut writer = config.get_writer();
-    let mut ref_tracker = config.get_reference_tracker();
+    let mut filters = config.filters.clone();
 
-    for statement in config.filter_statements(statements, references) {
-        if statement.is_insert() {
-            ref_tracker.capture(statement.as_str());
-        }
+    for statement in config.filter_statements(statements, &mut filters, references) {
         writer.write_line(statement.as_bytes()).expect("Unable to write data");
     };
     writer.flush().expect("Cannot flush buffer");
 
-    (writer.get_filepath(), ref_tracker)
+    (writer.get_filepath(), filters.references)
 }
 
 pub fn parse_input_file(config: &Config, input_file: &Path, output_file: &Path) {
@@ -46,9 +43,9 @@ pub fn parse_input_file(config: &Config, input_file: &Path, output_file: &Path) 
 
     let refs: References = References::from_iter(reference_trackers);
 
-    dbg!(&refs);
 
     println!("Second pass...");
+    dbg!(&refs);
 
     Writer::combine_files(filepaths.iter(), output_file);
 }

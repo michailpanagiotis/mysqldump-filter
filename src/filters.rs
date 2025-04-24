@@ -138,12 +138,12 @@ impl FromIterator<FilterCondition> for FieldFilters {
 }
 
 impl FieldFilters {
-    fn test_value(&self, value: &str, references: &Option<&HashMap<String, HashSet<String>>>) -> bool {
+    fn test_value(&self, value: &str, captured_references: &Option<&HashMap<String, HashSet<String>>>) -> bool {
         let direct = self.conditions.iter().filter(|x| !x.is_reference()).all(|condition| condition.test(value));
         if !direct {
             return false;
         }
-        let Some(refs) = references else { return true };
+        let Some(refs) = captured_references else { return true };
         self.conditions.iter().filter(|x| x.is_reference()).all(|condition| {
             let Some(set) = refs.get(condition.value.as_str()) else { return false };
             set.contains(value)
@@ -227,7 +227,7 @@ impl From<&TableReferences> for HashMap<String, HashSet<String>> {
 #[derive(Clone)]
 pub struct TableFilters {
     inner: HashMap<String, FieldFilters>,
-    references: TableReferences,
+    pub references: TableReferences,
 }
 
 impl TableFilters {
@@ -249,23 +249,27 @@ impl TableFilters {
         assert!(self.has_resolved_positions());
     }
 
-    pub fn test_values(
+    pub fn test_insert_statement(
         &mut self,
         insert_statement: &str,
-        references: &Option<&HashMap<String, HashSet<String>>>,
+        captured_references: &Option<&HashMap<String, HashSet<String>>>,
     ) -> bool {
-        if !self.has_filters() {
-            return true;
-        }
-        if !self.has_resolved_positions() {
-            self.resolve_positions(insert_statement);
+        if self.has_filters() {
+            if !self.has_resolved_positions() {
+                self.resolve_positions(insert_statement);
+            }
+            let values = parse_insert_values(insert_statement);
+
+            if !self.inner.values().all(|field_filters| {
+                field_filters.position.is_some_and(|p| field_filters.test_value(values[p], captured_references))
+            }) {
+                return false;
+            }
         }
 
-        let values = parse_insert_values(insert_statement);
+        self.references.capture(insert_statement);
 
-        self.inner.values().all(|field_filters| {
-            field_filters.position.is_some_and(|p| field_filters.test_value(values[p], references))
-        })
+        true
     }
 
     fn set_references(&mut self, references: TableReferences) {

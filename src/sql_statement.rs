@@ -66,13 +66,13 @@ impl Statement {
     }
 }
 
-pub struct TableStatementsIterator<'a, I: Iterator<Item=Statement>> {
+pub struct TableStatementsIterator<'a, 'b, I: Iterator<Item=Statement>> {
     inner: I,
-    filters: TableFilters,
-    references: Option<&'a HashMap<String, HashSet<String>>>,
+    filters: &'a mut TableFilters,
+    references: Option<&'b HashMap<String, HashSet<String>>>,
 }
 
-impl<I: Iterator<Item=Statement>> Iterator for TableStatementsIterator<'_, I> {
+impl<I: Iterator<Item=Statement>> Iterator for TableStatementsIterator<'_, '_, I> {
     type Item = Statement;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -88,15 +88,15 @@ impl<I: Iterator<Item=Statement>> Iterator for TableStatementsIterator<'_, I> {
     }
 }
 
-impl<'a, I: Iterator<Item=Statement>> TableStatementsIterator<'a, I> {
+impl<'a, 'b, I: Iterator<Item=Statement>> TableStatementsIterator<'a, 'b, I> {
     pub fn new(
-        filters: &TableFilters,
-        references: Option<&'a HashMap<String, HashSet<String>>>,
+        filters: &'a mut TableFilters,
+        references: Option<&'b HashMap<String, HashSet<String>>>,
         statements: I,
     ) -> Self
     {
         TableStatementsIterator {
-            filters: filters.clone(),
+            filters,
             references,
             inner: statements,
         }
@@ -106,6 +106,6 @@ impl<'a, I: Iterator<Item=Statement>> TableStatementsIterator<'a, I> {
         if !statement.is_insert() || statement.get_table().is_none() {
             return true;
         }
-        self.filters.test_values(statement.as_str(), &self.references)
+        self.filters.test_insert_statement(statement.as_str(), &self.references)
     }
 }

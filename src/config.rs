@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::io_utils::{read_config, Writer};
 use crate::sql_statement::{Statement, TableStatementsIterator};
-use crate::filters::{FilterCondition, Filters, TableFilters, TableReferences};
+use crate::filters::{FilterCondition, Filters, TableFilters};
 
 #[derive(Debug)]
 pub struct Config {
@@ -42,7 +42,6 @@ impl Config {
             table,
             &self.get_table_filepath(table),
             &self.get_filters(table),
-            &self.get_references(table),
         )
     }
 
@@ -57,19 +56,13 @@ impl Config {
         let Some(t) = table else { return TableFilters::default() };
         self.filters.get_filters_of_table(t).unwrap_or_default()
     }
-
-    fn get_references(&self, table: &Option<String>) -> TableReferences {
-        let Some(t) = table else { return TableReferences::default() };
-        self.filters.get_references_of_table(t).unwrap_or_default()
-    }
 }
 
 #[derive(Debug)]
 pub struct TableConfig {
     table: Option<String>,
     filepath: PathBuf,
-    filters: TableFilters,
-    references: TableReferences,
+    pub filters: TableFilters,
 }
 
 impl TableConfig {
@@ -77,13 +70,11 @@ impl TableConfig {
         table: &Option<String>,
         filepath: &Path,
         filters: &TableFilters,
-        references: &TableReferences,
     ) -> TableConfig
     {
         TableConfig {
             table: table.clone(),
             filepath: filepath.to_path_buf(),
-            references: references.clone(),
             filters: filters.clone(),
         }
     }
@@ -96,15 +87,12 @@ impl TableConfig {
         &self.table
     }
 
-    pub fn get_reference_tracker(&self) -> TableReferences {
-        self.references.clone()
-    }
-
     pub fn filter_statements<I: Iterator<Item=Statement>>(
         &self,
         statements: I,
+        filters: &mut TableFilters,
         references: Option<&HashMap<String, HashSet<String>>>,
     ) -> impl Iterator<Item=Statement> {
-        TableStatementsIterator::new(&self.filters, references, statements)
+        TableStatementsIterator::new(filters, references, statements)
     }
 }
