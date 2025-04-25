@@ -150,6 +150,7 @@ impl FieldFilters {
 
 #[derive(Debug)]
 #[derive(Default)]
+#[derive(Clone)]
 pub struct TableReferences {
     inner: HashMap<String, FieldReference>,
 }
