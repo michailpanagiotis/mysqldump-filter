@@ -2,12 +2,12 @@ use clap::Parser;
 use std::path::PathBuf;
 use tempdir::TempDir;
 
-mod io_utils;
-mod sql_parser;
-mod config;
 mod expression_parser;
 mod filters;
+mod io_utils;
+mod sql_parser;
 
+use io_utils::read_config;
 use sql_parser::parse_input_file;
 
 #[derive(Parser, Debug)]
@@ -23,7 +23,6 @@ struct Cli {
     working_dir: Option<PathBuf>,
 }
 
-
 fn main() {
     let cli = Cli::parse();
     let input_file = std::env::current_dir().unwrap().to_path_buf().join(cli.input);
@@ -36,7 +35,7 @@ fn main() {
         None => cli.working_dir.unwrap(),
     };
 
-    let config = config::Config::new(
+    let config = read_config(
         &config_file,
         input_file.as_path(),
         output_file.as_path(),

@@ -6,7 +6,21 @@ use std::path::{Path, PathBuf};
 
 use crate::expression_parser::get_table_from_comment;
 
-pub fn read_config(config_file: &Path) -> (HashSet<String>, Vec<(String, String)>) {
+#[derive(Debug)]
+pub struct Configuration {
+    pub input_file: PathBuf,
+    pub output_file: PathBuf,
+    pub working_dir_path: PathBuf,
+    pub requested_tables: HashSet<String>,
+    pub filter_conditions: Vec<(String, String)>,
+}
+
+pub fn read_config(
+    config_file: &Path,
+    input_file: &Path,
+    output_file: &Path,
+    working_dir_path: &Path,
+) -> Configuration {
     let settings = Config::builder()
         .add_source(File::new(config_file.to_str().expect("invalid config path"), FileFormat::Json))
         .add_source(Environment::with_prefix("MYSQLDUMP_FILTER"))
@@ -30,7 +44,13 @@ pub fn read_config(config_file: &Path) -> (HashSet<String>, Vec<(String, String)
             })
         }).collect();
 
-    (requested_tables, filter_conditions)
+    Configuration {
+        input_file: input_file.to_path_buf(),
+        output_file: output_file.to_path_buf(),
+        working_dir_path: working_dir_path.to_path_buf(),
+        requested_tables,
+        filter_conditions,
+    }
 }
 
 pub fn read_file(filepath: &Path) -> impl Iterator<Item=String> + use<> {

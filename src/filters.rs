@@ -97,6 +97,10 @@ impl FieldReference {
     fn capture(&mut self, value: &str) {
         self.values.insert(value.to_string());
     }
+
+    fn reset(&mut self) {
+        self.values = HashSet::new();
+    }
 }
 
 #[derive(Debug)]
@@ -200,6 +204,10 @@ impl TableReferences {
             field_references.capture(values[pos]);
         })
     }
+
+    fn reset(&mut self) {
+        self.inner.values_mut().for_each(|f| f.reset());
+    }
 }
 
 impl FromIterator<TableField> for TableReferences {
@@ -278,6 +286,10 @@ impl TableFilters {
     fn set_references(&mut self, references: TableReferences) {
         self.references = references;
     }
+
+    fn reset_references(&mut self) {
+        self.references.reset();
+    }
 }
 
 impl FromIterator<FilterCondition> for TableFilters {
@@ -309,12 +321,12 @@ impl References {
     }
 }
 
-impl FromIterator<TableReferences> for References {
-    fn from_iter<T: IntoIterator<Item=TableReferences>>(items: T) -> Self {
+impl<'a> FromIterator<&'a TableReferences> for References {
+    fn from_iter<T: IntoIterator<Item=&'a TableReferences>>(items: T) -> Self {
         let mut grouped: HashMap<String, TableReferences> = HashMap::new();
         for item in items.into_iter() {
             let Some(table) = item.get_table() else { continue };
-            grouped.insert(table, item);
+            grouped.insert(table, item.clone());
         }
         References {
             inner: grouped,
@@ -357,9 +369,19 @@ pub struct Filters{
 }
 
 impl Filters {
-    pub fn get_filters_of_table(&self, table: &Option<String>) -> TableFilters {
-        let Some(t) = table else { return TableFilters::default() };
-        self.inner.get(t).cloned().unwrap_or_default()
+    pub fn test_insert_statement(
+        &mut self,
+        insert_statement: &str,
+        table: &Option<String>,
+        captured_references: &Option<&HashMap<String, HashSet<String>>>,
+    ) -> bool {
+        let Some(t) = table else { return true };
+        self.inner.get_mut(t).unwrap().test_insert_statement(insert_statement, captured_references)
+    }
+
+    pub fn consolidate(&mut self) {
+        self.references = References::from_iter(self.inner.values().map(|i| &i.references));
+        self.inner.values_mut().for_each(|f| f.reset_references());
     }
 }
 
