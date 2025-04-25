@@ -71,7 +71,6 @@ impl FilterCondition {
 }
 
 #[derive(Debug)]
-#[derive(Default)]
 #[derive(Clone)]
 struct FieldReference {
     table: String,
@@ -111,16 +110,6 @@ struct FieldFilters {
     field: String,
     position: Option<usize>,
     conditions: Vec<FilterCondition>,
-}
-
-impl Extend<FilterCondition> for FieldFilters {
-    fn extend<T: IntoIterator<Item = FilterCondition>>(&mut self, conditions: T) {
-        let other = FieldFilters::from_iter(conditions);
-        if other.table != self.table || other.field != self.field {
-            panic!("filter conditions have different fields");
-        }
-        self.conditions.extend(other.conditions);
-    }
 }
 
 impl FromIterator<FilterCondition> for FieldFilters {
@@ -236,7 +225,6 @@ impl From<&TableReferences> for HashMap<String, HashSet<String>> {
 
 #[derive(Debug)]
 #[derive(Default)]
-#[derive(Clone)]
 pub struct TableFilters {
     inner: HashMap<String, FieldFilters>,
     pub references: TableReferences,
@@ -317,8 +305,6 @@ impl FromIterator<FilterCondition> for TableFilters {
 
 
 #[derive(Debug)]
-#[derive(Clone)]
-#[derive(Default)]
 pub struct References {
     pub inner: HashMap<String, TableReferences>
 }
@@ -370,7 +356,6 @@ impl From<References> for HashMap<String, HashSet<String>> {
 }
 
 #[derive(Debug)]
-#[derive(Default)]
 pub struct Filters{
     inner: HashMap<String, TableFilters>,
     references: References,
