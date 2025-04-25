@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use itertools::Itertools;
 use tempdir::TempDir;
@@ -14,7 +15,7 @@ pub fn parse_input_file(config: &Configuration) {
 
     println!("First pass...");
     let all_statements = read_sql_file(&config.input_file, &config.requested_tables);
-    let mut filepaths: Vec<PathBuf> = Vec::new();
+    let mut filepaths: HashMap<Option<String>, PathBuf> = HashMap::new();
     for (table, statements) in all_statements.chunk_by(|(table, _)| table.clone()).into_iter() {
         let lines = filter_sql_lines(&mut filters, None, &table, statements.map(|(_, line)| line));
         let working_dir_path = match table {
@@ -28,11 +29,14 @@ pub fn parse_input_file(config: &Configuration) {
         };
 
         let filepath = write_sql_file(&table, working_dir_path, lines);
-        filepaths.push(filepath);
+        filepaths.insert(table, filepath);
     }
 
     for table in second_pass_tables.into_iter() {
-
+        let input_file = &filepaths[&Some(table.clone())];
+        let lines = read_sql_file(input_file, &config.requested_tables);
+        let filepath = write_sql_file(&Some(table.clone()), &config.working_dir_path, lines.map(|(_, line)| line));
+        filepaths.insert(Some(table), filepath);
     }
 
     dbg!(&filepaths);
@@ -40,7 +44,7 @@ pub fn parse_input_file(config: &Configuration) {
 
     println!("Second pass...");
 
-    combine_files(filepaths.iter(), &config.output_file);
+    combine_files(filepaths.values(), &config.output_file);
 
     let _ = temp_dir.close();
 }
