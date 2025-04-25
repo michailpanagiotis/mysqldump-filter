@@ -254,6 +254,9 @@ impl TableFilters {
         insert_statement: &str,
         captured_references: &Option<&HashMap<String, HashSet<String>>>,
     ) -> bool {
+        if !insert_statement.starts_with("INSERT") {
+            return false;
+        }
         if self.has_filters() {
             if !self.has_resolved_positions() {
                 self.resolve_positions(insert_statement);
@@ -359,9 +362,9 @@ impl Filters {
     }
 }
 
-impl FromIterator<FilterCondition> for Filters {
-    fn from_iter<T: IntoIterator<Item=FilterCondition>>(items: T) -> Self {
-        let conditions: Vec<FilterCondition> = items.into_iter().collect();
+impl<'a> FromIterator<&'a (String, String)> for Filters {
+    fn from_iter<T: IntoIterator<Item=&'a (String, String)>>(items: T) -> Self {
+        let conditions: Vec<FilterCondition> = items.into_iter().map(|(table, condition)| FilterCondition::new(&table, &condition)).collect();
         let references = References::from_iter(conditions.iter());
         let mut filters = Filters {
             inner: conditions.into_iter().chunk_by(|x| x.table.clone()).into_iter().map(|(table, items)| (table.clone(), {

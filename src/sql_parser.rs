@@ -3,12 +3,20 @@ use std::collections::{HashMap, HashSet};
 
 use itertools::Itertools;
 
-use crate::sql_statement::Statement;
+use crate::sql_statement::{Statement, TableStatementsIterator};
 use crate::io_utils::Writer;
-use crate::filters::{References, TableReferences};
+use crate::filters::{References, TableReferences, TableFilters};
 use crate::config::Config;
 
-pub fn process_table_statements<I: Iterator<Item=Statement>>(
+fn filter_statements<I: Iterator<Item=Statement>>(
+    statements: I,
+    filters: &mut TableFilters,
+    references: Option<&HashMap<String, HashSet<String>>>,
+) -> impl Iterator<Item=Statement> {
+    TableStatementsIterator::new(filters, references, statements)
+}
+
+fn process_table_statements<I: Iterator<Item=Statement>>(
     config: &Config,
     table_option: &Option<String>,
     statements: I,
@@ -18,10 +26,10 @@ pub fn process_table_statements<I: Iterator<Item=Statement>>(
         println!("Processing table {}", &table);
     }
 
-    let mut writer = Writer::new(&config.get_table_filepath(table_option));
+    let mut writer = Writer::new(&config.get_filepath(table_option));
     let mut filters = config.get_filters(table_option);
 
-    for statement in config.filter_statements(statements, &mut filters, references) {
+    for statement in filter_statements(statements, &mut filters, references) {
         writer.write_line(statement.as_bytes()).expect("Unable to write data");
     };
     writer.flush().expect("Cannot flush buffer");

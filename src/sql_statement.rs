@@ -6,27 +6,16 @@ use crate::filters::TableFilters;
 use crate::io_utils::read_file;
 
 #[derive(Debug)]
-#[derive(PartialEq)]
-#[derive(Clone)]
-enum StatementType {
-    Unknown,
-    Insert,
-}
-
-#[derive(Debug)]
 #[derive(Clone)]
 pub struct Statement {
     line: String,
     table: Option<String>,
-    r#type: StatementType,
 }
 
 impl Statement {
     pub fn new(table: &Option<String>, line: &str) -> Self {
-       let statement_type = if line.starts_with("INSERT") { StatementType::Insert } else { StatementType::Unknown };
        Statement {
         line: line.to_string(),
-        r#type: statement_type,
         table: table.clone(),
        }
     }
@@ -47,10 +36,6 @@ impl Statement {
         };
 
         read_file(sqldump_filepath).flat_map(to_statement)
-    }
-
-    pub fn is_insert(&self) -> bool {
-        self.r#type == StatementType::Insert
     }
 
     pub fn get_table(&self) -> Option<String> {
@@ -78,7 +63,7 @@ impl<I: Iterator<Item=Statement>> Iterator for TableStatementsIterator<'_, '_, I
     fn next(&mut self) -> Option<Self::Item> {
         let mut next = self.inner.next();
         while let Some(ref x) = next {
-            if self.should_keep_item(x) {
+            if self.filters.test_insert_statement(x.as_str(), &self.references) {
                 break;
             }
             next = self.inner.next();
@@ -100,12 +85,5 @@ impl<'a, 'b, I: Iterator<Item=Statement>> TableStatementsIterator<'a, 'b, I> {
             references,
             inner: statements,
         }
-    }
-
-    fn should_keep_item(&mut self, statement: &Statement) -> bool {
-        if !statement.is_insert() || statement.get_table().is_none() {
-            return true;
-        }
-        self.filters.test_insert_statement(statement.as_str(), &self.references)
     }
 }
