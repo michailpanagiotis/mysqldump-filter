@@ -104,6 +104,7 @@ pub fn combine_files<'a, I: Iterator<Item=&'a PathBuf>>(all_files: I, output: &P
     println!("Combining files");
     let mut output_file = fs::File::create(output).expect("cannot create output file");
     for f in all_files {
+        dbg!(f);
         let mut input = fs::File::open(f).expect("cannot open file");
         io::copy(&mut input, &mut output_file).expect("cannot copy file");
     }

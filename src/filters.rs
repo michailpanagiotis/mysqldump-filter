@@ -157,6 +157,10 @@ impl FieldFilters {
     fn set_position(&mut self, pos: usize) {
         self.position = Some(pos);
     }
+
+    fn has_reference_filters(&self) -> bool {
+        self.conditions.iter().any(|c| c.is_reference())
+    }
 }
 
 #[derive(Debug)]
@@ -249,6 +253,10 @@ impl TableFilters {
         })
     }
 
+    fn has_reference_filters(&self) -> bool {
+        self.inner.values().any(|ff| ff.has_reference_filters())
+    }
+
     fn resolve_positions(&mut self, insert_statement: &str) {
         let positions: HashMap<String, usize> = parse_insert_fields(insert_statement);
         for filter in self.inner.values_mut() {
@@ -257,19 +265,19 @@ impl TableFilters {
         assert!(self.has_resolved_positions());
     }
 
-    pub fn test_insert_statement(
+    pub fn test_sql_statement(
         &mut self,
-        insert_statement: &str,
+        sql_statement: &str,
         captured_references: &Option<&HashMap<String, HashSet<String>>>,
     ) -> bool {
-        if !insert_statement.starts_with("INSERT") {
+        if !sql_statement.starts_with("INSERT") {
             return false;
         }
         if self.has_filters() {
             if !self.has_resolved_positions() {
-                self.resolve_positions(insert_statement);
+                self.resolve_positions(sql_statement);
             }
-            let values = parse_insert_values(insert_statement);
+            let values = parse_insert_values(sql_statement);
 
             if !self.inner.values().all(|field_filters| {
                 field_filters.position.is_some_and(|p| field_filters.test_value(values[p], captured_references))
@@ -278,7 +286,7 @@ impl TableFilters {
             }
         }
 
-        self.references.capture(insert_statement);
+        self.references.capture(sql_statement);
 
         true
     }
@@ -369,19 +377,23 @@ pub struct Filters{
 }
 
 impl Filters {
-    pub fn test_insert_statement(
+    pub fn test_sql_statement(
         &mut self,
-        insert_statement: &str,
+        sql_statement: &str,
         table: &Option<String>,
         captured_references: &Option<&HashMap<String, HashSet<String>>>,
     ) -> bool {
         let Some(t) = table else { return true };
-        self.inner.get_mut(t).unwrap().test_insert_statement(insert_statement, captured_references)
+        self.inner.get_mut(t).unwrap().test_sql_statement(sql_statement, captured_references)
     }
 
     pub fn consolidate(&mut self) {
         self.references = References::from_iter(self.inner.values().map(|i| &i.references));
         self.inner.values_mut().for_each(|f| f.reset_references());
+    }
+
+    pub fn get_tables_with_references(&self) -> HashSet<String> {
+        self.inner.iter().filter(|(_, tf)| tf.has_reference_filters()).map(|(table, _)| table.clone()).collect()
     }
 }
 
@@ -414,5 +426,5 @@ pub fn filter_sql_lines<'a, I: Iterator<Item=String>>(
     table: &'a Option<String>,
     lines: I,
 ) -> impl Iterator<Item=String> {
-    lines.filter(move |st| filters.test_insert_statement(st, table, &references))
+    lines.filter(move |st| filters.test_sql_statement(st, table, &references))
 }
