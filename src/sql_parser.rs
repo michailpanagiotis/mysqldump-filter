@@ -1,24 +1,8 @@
 use std::path::PathBuf;
-use std::collections::{HashMap, HashSet};
-
 use itertools::Itertools;
 
 use crate::io_utils::{Configuration, combine_files, read_sql_file, write_sql_file};
-use crate::filters::Filters;
-
-fn process_table_statements<I: Iterator<Item=String>>(
-    config: &Configuration,
-    filters: &mut Filters,
-    table: &Option<String>,
-    statements: I,
-    references: Option<&HashMap<String, HashSet<String>>>,
-) -> PathBuf {
-    write_sql_file(
-        table,
-        &config.working_dir_path,
-        statements.filter(|st| filters.test_insert_statement(st, table, &references))
-    )
-}
+use crate::filters::{filter_sql_lines, Filters};
 
 pub fn parse_input_file(config: &Configuration) {
     let all_statements = read_sql_file(&config.input_file, &config.requested_tables);
@@ -28,7 +12,8 @@ pub fn parse_input_file(config: &Configuration) {
 
     println!("First pass...");
     for (table, statements) in all_statements.chunk_by(|(table, _)| table.clone()).into_iter() {
-        let filepath = process_table_statements(config, &mut filters, &table, statements.map(|(_, line)| line), None);
+        let lines = filter_sql_lines(&mut filters, None, &table, statements.map(|(_, line)| line));
+        let filepath = write_sql_file(&table, &config.working_dir_path, lines);
         filepaths.push(filepath);
     }
 
