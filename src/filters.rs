@@ -4,8 +4,6 @@ use std::collections::{HashMap, HashSet};
 use crate::expression_parser::{parse_filter, parse_insert_fields, parse_insert_values};
 
 #[derive(Debug)]
-#[derive(Clone)]
-#[derive(PartialEq)]
 enum FilterOperator {
     Equals,
     NotEquals,
@@ -14,16 +12,12 @@ enum FilterOperator {
 }
 
 #[derive(Debug)]
-#[derive(Clone)]
-#[derive(Hash)]
-#[derive(Eq, PartialEq)]
 pub struct TableField {
     pub table: String,
     pub field: String,
 }
 
 #[derive(Debug)]
-#[derive(Clone)]
 pub struct FilterCondition {
     table: String,
     field: String,
@@ -57,7 +51,11 @@ impl FilterCondition {
     }
 
     fn is_reference(&self) -> bool {
-        self.operator == FilterOperator::Reference
+        match self.operator {
+            FilterOperator::Reference => true,
+            _ => false
+
+        }
     }
 
     fn get_referenced_field(&self) -> TableField {
@@ -103,8 +101,6 @@ impl FieldReference {
 }
 
 #[derive(Debug)]
-#[derive(Default)]
-#[derive(Clone)]
 struct FieldFilters {
     table: String,
     field: String,
