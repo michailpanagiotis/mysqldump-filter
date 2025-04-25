@@ -30,7 +30,7 @@ fn process_table_statements<I: Iterator<Item=Statement>>(
     let mut filters = config.get_filters(table_option);
 
     for statement in filter_statements(statements, &mut filters, references) {
-        writer.write_line(statement.as_bytes()).expect("Unable to write data");
+        writer.write_line(statement.line.as_bytes()).expect("Unable to write data");
     };
     writer.flush().expect("Cannot flush buffer");
 
@@ -44,7 +44,7 @@ pub fn parse_input_file(config: &Config, input_file: &Path, output_file: &Path) 
     let mut reference_trackers: Vec<TableReferences> = Vec::new();
 
     println!("First pass...");
-    for (table, statements) in all_statements.chunk_by(Statement::get_table).into_iter() {
+    for (table, statements) in all_statements.chunk_by(|x| x.table.clone()).into_iter() {
         let (filepath, ref_tracker) = process_table_statements(&config, &table, statements, None);
         filepaths.push(filepath);
         reference_trackers.push(ref_tracker.clone());

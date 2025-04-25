@@ -8,8 +8,8 @@ use crate::io_utils::read_file;
 #[derive(Debug)]
 #[derive(Clone)]
 pub struct Statement {
-    line: String,
-    table: Option<String>,
+    pub line: String,
+    pub table: Option<String>,
 }
 
 impl Statement {
@@ -37,18 +37,6 @@ impl Statement {
 
         read_file(sqldump_filepath).flat_map(to_statement)
     }
-
-    pub fn get_table(&self) -> Option<String> {
-        self.table.clone()
-    }
-
-    pub fn as_str(&self) -> &str {
-        self.line.as_str()
-    }
-
-    pub fn as_bytes(&self) -> &[u8] {
-        self.line.as_bytes()
-    }
 }
 
 pub struct TableStatementsIterator<'a, 'b, I: Iterator<Item=Statement>> {
@@ -63,7 +51,7 @@ impl<I: Iterator<Item=Statement>> Iterator for TableStatementsIterator<'_, '_, I
     fn next(&mut self) -> Option<Self::Item> {
         let mut next = self.inner.next();
         while let Some(ref x) = next {
-            if self.filters.test_insert_statement(x.as_str(), &self.references) {
+            if self.filters.test_insert_statement(&x.line, &self.references) {
                 break;
             }
             next = self.inner.next();
