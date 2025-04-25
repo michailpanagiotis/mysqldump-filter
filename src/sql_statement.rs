@@ -1,8 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::Path;
 
 use crate::expression_parser::get_table_from_comment;
-use crate::filters::TableFilters;
 use crate::io_utils::read_file;
 
 #[derive(Debug)]
@@ -36,42 +35,5 @@ impl Statement {
         };
 
         read_file(sqldump_filepath).flat_map(to_statement)
-    }
-}
-
-pub struct TableStatementsIterator<'a, 'b, I: Iterator<Item=Statement>> {
-    inner: I,
-    filters: &'a mut TableFilters,
-    references: Option<&'b HashMap<String, HashSet<String>>>,
-}
-
-impl<I: Iterator<Item=Statement>> Iterator for TableStatementsIterator<'_, '_, I> {
-    type Item = Statement;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let mut next = self.inner.next();
-        while let Some(ref x) = next {
-            if self.filters.test_insert_statement(&x.line, &self.references) {
-                break;
-            }
-            next = self.inner.next();
-        }
-
-        next
-    }
-}
-
-impl<'a, 'b, I: Iterator<Item=Statement>> TableStatementsIterator<'a, 'b, I> {
-    pub fn new(
-        filters: &'a mut TableFilters,
-        references: Option<&'b HashMap<String, HashSet<String>>>,
-        statements: I,
-    ) -> Self
-    {
-        TableStatementsIterator {
-            filters,
-            references,
-            inner: statements,
-        }
     }
 }

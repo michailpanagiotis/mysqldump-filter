@@ -3,12 +3,12 @@ use std::collections::{HashMap, HashSet};
 
 use itertools::Itertools;
 
-use crate::sql_statement::{Statement, TableStatementsIterator};
+use crate::sql_statement::Statement;
 use crate::io_utils::Writer;
 use crate::filters::{References, TableReferences};
 use crate::config::Config;
 
-fn process_table_statements<I: Iterator<Item=Statement>>(
+fn process_table_statements<I: Iterator<Item=String>>(
     config: &Config,
     table_option: &Option<String>,
     statements: I,
@@ -21,8 +21,8 @@ fn process_table_statements<I: Iterator<Item=Statement>>(
     let mut writer = Writer::new(&config.get_filepath(table_option));
     let mut filters = config.get_filters(table_option);
 
-    for statement in  TableStatementsIterator::new(&mut filters, references, statements) {
-        writer.write_line(statement.line.as_bytes()).expect("Unable to write data");
+    for statement in statements.filter(|st| filters.test_insert_statement(st, &references)) {
+        writer.write_line(statement.as_bytes()).expect("Unable to write data");
     };
     writer.flush().expect("Cannot flush buffer");
 
@@ -37,7 +37,7 @@ pub fn parse_input_file(config: &Config, input_file: &Path, output_file: &Path) 
 
     println!("First pass...");
     for (table, statements) in all_statements.chunk_by(|x| x.table.clone()).into_iter() {
-        let (filepath, ref_tracker) = process_table_statements(&config, &table, statements, None);
+        let (filepath, ref_tracker) = process_table_statements(config, &table, statements.map(|st| st.line), None);
         filepaths.push(filepath);
         reference_trackers.push(ref_tracker.clone());
     }
