@@ -2,10 +2,11 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::io_utils::read_config;
-use crate::filters::{Filters, TableFilters};
 
 #[derive(Debug)]
 pub struct Config {
+    pub input_file: PathBuf,
+    pub output_file: PathBuf,
     working_dir_path: PathBuf,
     requested_tables: HashSet<String>,
     filter_conditions: Vec<(String, String)>,
@@ -14,11 +15,15 @@ pub struct Config {
 impl Config {
     pub fn new(
         config_file: &Path,
+        input_file: &Path,
+        output_file: &Path,
         working_dir_path: &Path,
     ) -> Config {
         let (requested_tables, filter_conditions) = read_config(config_file);
 
         Config {
+            input_file: input_file.to_path_buf(),
+            output_file: output_file.to_path_buf(),
             working_dir_path: working_dir_path.to_path_buf(),
             requested_tables,
             filter_conditions,
@@ -36,10 +41,7 @@ impl Config {
         }
     }
 
-    pub fn get_filters(&self, table: &Option<String>) -> TableFilters {
-        let Some(t) = table else { return TableFilters::default() };
-        let filters = Filters::from_iter(self.filter_conditions.iter());
-        dbg!(&filters);
-        filters.get_filters_of_table(t).unwrap_or_default()
+    pub fn get_filter_conditions(&self) -> &Vec<(String, String)> {
+        &self.filter_conditions
     }
 }

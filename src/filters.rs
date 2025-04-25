@@ -357,14 +357,15 @@ pub struct Filters{
 }
 
 impl Filters {
-    pub fn get_filters_of_table(&self, key: &str) -> Option<TableFilters> {
-        self.inner.get(key).cloned()
+    pub fn get_filters_of_table(&self, table: &Option<String>) -> TableFilters {
+        let Some(t) = table else { return TableFilters::default() };
+        self.inner.get(t).cloned().unwrap_or_default()
     }
 }
 
 impl<'a> FromIterator<&'a (String, String)> for Filters {
     fn from_iter<T: IntoIterator<Item=&'a (String, String)>>(items: T) -> Self {
-        let conditions: Vec<FilterCondition> = items.into_iter().map(|(table, condition)| FilterCondition::new(&table, &condition)).collect();
+        let conditions: Vec<FilterCondition> = items.into_iter().map(|(table, condition)| FilterCondition::new(table, condition)).collect();
         let references = References::from_iter(conditions.iter());
         let mut filters = Filters {
             inner: conditions.into_iter().chunk_by(|x| x.table.clone()).into_iter().map(|(table, items)| (table.clone(), {

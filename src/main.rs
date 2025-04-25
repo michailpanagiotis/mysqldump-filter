@@ -2,7 +2,6 @@ use clap::Parser;
 use std::path::PathBuf;
 use tempdir::TempDir;
 
-mod sql_statement;
 mod io_utils;
 mod sql_parser;
 mod config;
@@ -26,7 +25,6 @@ struct Cli {
 
 
 fn main() {
-    println!("HELLO");
     let cli = Cli::parse();
     let input_file = std::env::current_dir().unwrap().to_path_buf().join(cli.input);
     let output_file = std::env::current_dir().unwrap().to_path_buf().join(cli.output);
@@ -38,9 +36,14 @@ fn main() {
         None => cli.working_dir.unwrap(),
     };
 
-    let config = config::Config::new(&config_file, &working_dir_path);
+    let config = config::Config::new(
+        &config_file,
+        input_file.as_path(),
+        output_file.as_path(),
+        &working_dir_path,
+    );
 
-    parse_input_file(&config, input_file.as_path(), output_file.as_path());
+    parse_input_file(&config);
 
     if let Some(dir) = temp_dir {
        let _ = dir.close();

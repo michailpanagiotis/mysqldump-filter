@@ -4,6 +4,8 @@ use std::fs;
 use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
+use crate::expression_parser::get_table_from_comment;
+
 pub fn read_config(config_file: &Path) -> (HashSet<String>, Vec<(String, String)>) {
     let settings = Config::builder()
         .add_source(File::new(config_file.to_str().expect("invalid config path"), FileFormat::Json))
@@ -35,6 +37,18 @@ pub fn read_file(filepath: &Path) -> impl Iterator<Item=String> + use<> {
     let file = fs::File::open(filepath).expect("Cannot open file");
     io::BufReader::new(file).lines()
         .map_while(Result::ok)
+}
+
+pub fn read_statements(sqldump_filepath: &Path, requested_tables: &HashSet<String>) -> impl Iterator<Item = (Option<String>, String)> {
+    let mut cur_table: Option<String> = None;
+    read_file(sqldump_filepath)
+        .map(move |line| {
+            if let Some(t) = get_table_from_comment(&line) {
+                cur_table = Some(t);
+            }
+            (cur_table.clone(), line)
+        })
+        .filter(|(table, _)| table.is_none() || table.as_ref().is_some_and(|t| requested_tables.contains(t)))
 }
 
 pub struct Writer {
