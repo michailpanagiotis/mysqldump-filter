@@ -423,8 +423,8 @@ impl<'a> FromIterator<&'a (String, String)> for Filters {
 pub fn filter_sql_lines<'a, I: Iterator<Item=String>>(
     filters: &'a mut Filters,
     references: Option<&'a HashMap<String, HashSet<String>>>,
-    table: &'a Option<String>,
+    table: Option<String>,
     lines: I,
 ) -> impl Iterator<Item=String> {
-    lines.filter(move |st| filters.test_sql_statement(st, table, &references))
+    lines.filter(move |st| filters.test_sql_statement(st, &table, &references))
 }

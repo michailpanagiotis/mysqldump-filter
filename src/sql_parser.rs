@@ -17,7 +17,7 @@ pub fn parse_input_file(config: &Configuration) {
     let all_statements = read_sql_file(&config.input_file, &config.requested_tables);
     let mut filepaths: HashMap<Option<String>, PathBuf> = HashMap::new();
     for (table, statements) in all_statements.chunk_by(|(table, _)| table.clone()).into_iter() {
-        let lines = filter_sql_lines(&mut filters, None, &table, statements.map(|(_, line)| line));
+        let lines = filter_sql_lines(&mut filters, None, table.clone(), statements.map(|(_, line)| line));
         let working_dir_path = match table {
             None => &config.working_dir_path,
             Some(ref t) => {
@@ -34,8 +34,9 @@ pub fn parse_input_file(config: &Configuration) {
 
     for table in second_pass_tables.into_iter() {
         let input_file = &filepaths[&Some(table.clone())];
-        let lines = read_sql_file(input_file, &config.requested_tables);
-        let filepath = write_sql_file(&Some(table.clone()), &config.working_dir_path, lines.map(|(_, line)| line));
+        let statements = read_sql_file(input_file, &config.requested_tables);
+        let lines = filter_sql_lines(&mut filters, None, Some(table.clone()), statements.map(|(_, line)| line));
+        let filepath = write_sql_file(&Some(table.clone()), &config.working_dir_path, lines);
         filepaths.insert(Some(table), filepath);
     }
 
