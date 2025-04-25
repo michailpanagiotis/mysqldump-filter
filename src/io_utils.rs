@@ -118,4 +118,16 @@ impl TableWriter {
     pub fn get_filepath(&self) -> PathBuf {
         self.filepath.clone()
     }
+
+    pub fn write_lines<I: Iterator<Item=String>>(&mut self, lines: I) -> PathBuf {
+        let filepath = self.get_filepath();
+        println!("Writing to {}", &filepath.display());
+
+        for line in lines {
+            self.write_line(line.as_bytes()).expect("Unable to write data");
+        };
+
+        self.flush().expect("Cannot flush buffer");
+        filepath.clone()
+    }
 }

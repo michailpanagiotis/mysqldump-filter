@@ -13,18 +13,11 @@ fn process_table_statements<I: Iterator<Item=String>>(
     statements: I,
     references: Option<&HashMap<String, HashSet<String>>>,
 ) -> PathBuf {
-    if let Some(table) = table_option {
-        println!("Processing table {}", &table);
-    }
-
     let mut writer = TableWriter::new(&config.working_dir_path, table_option);
-
-    for statement in statements.filter(|st| filters.test_insert_statement(st, table_option, &references)) {
-        writer.write_line(statement.as_bytes()).expect("Unable to write data");
-    };
-    writer.flush().expect("Cannot flush buffer");
-
-    writer.get_filepath()
+    let filepath = writer.write_lines(
+        statements.filter(|st| filters.test_insert_statement(st, table_option, &references))
+    );
+    filepath
 }
 
 pub fn parse_input_file(config: &Configuration) {
