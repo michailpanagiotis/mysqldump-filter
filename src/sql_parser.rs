@@ -5,16 +5,8 @@ use itertools::Itertools;
 
 use crate::sql_statement::{Statement, TableStatementsIterator};
 use crate::io_utils::Writer;
-use crate::filters::{References, TableReferences, TableFilters};
+use crate::filters::{References, TableReferences};
 use crate::config::Config;
-
-fn filter_statements<I: Iterator<Item=Statement>>(
-    statements: I,
-    filters: &mut TableFilters,
-    references: Option<&HashMap<String, HashSet<String>>>,
-) -> impl Iterator<Item=Statement> {
-    TableStatementsIterator::new(filters, references, statements)
-}
 
 fn process_table_statements<I: Iterator<Item=Statement>>(
     config: &Config,
@@ -29,7 +21,7 @@ fn process_table_statements<I: Iterator<Item=Statement>>(
     let mut writer = Writer::new(&config.get_filepath(table_option));
     let mut filters = config.get_filters(table_option);
 
-    for statement in filter_statements(statements, &mut filters, references) {
+    for statement in  TableStatementsIterator::new(&mut filters, references, statements) {
         writer.write_line(statement.line.as_bytes()).expect("Unable to write data");
     };
     writer.flush().expect("Cannot flush buffer");
