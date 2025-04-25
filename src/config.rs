@@ -7,7 +7,7 @@ use crate::io_utils::read_config;
 pub struct Config {
     pub input_file: PathBuf,
     pub output_file: PathBuf,
-    working_dir_path: PathBuf,
+    pub working_dir_path: PathBuf,
     requested_tables: HashSet<String>,
     filter_conditions: Vec<(String, String)>,
 }
@@ -32,13 +32,6 @@ impl Config {
 
     pub fn get_requested_tables(&self) -> &HashSet<String> {
         &self.requested_tables
-    }
-
-    pub fn get_filepath(&self, table: &Option<String>) -> PathBuf {
-        match table {
-            Some(x) => self.working_dir_path.join(x).with_extension("sql"),
-            None => self.working_dir_path.join("INFORMATION_SCHEMA").with_extension("sql"),
-        }
     }
 
     pub fn get_filter_conditions(&self) -> &Vec<(String, String)> {

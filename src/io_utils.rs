@@ -51,20 +51,25 @@ pub fn read_statements(sqldump_filepath: &Path, requested_tables: &HashSet<Strin
         .filter(|(table, _)| table.is_none() || table.as_ref().is_some_and(|t| requested_tables.contains(t)))
 }
 
-pub struct Writer {
+pub struct TableWriter {
     filepath: PathBuf,
     inner: io::BufWriter<fs::File>
 }
 
-impl Writer {
-    pub fn new(filepath: &Path) -> Self {
+impl TableWriter {
+    pub fn new(working_dir_path: &Path, table: &Option<String>) -> Self {
+        let filepath = &match table {
+            Some(x) => working_dir_path.join(x).with_extension("sql"),
+            None => working_dir_path.join("INFORMATION_SCHEMA").with_extension("sql"),
+        };
+
         fs::File::create(filepath).unwrap_or_else(|_| panic!("Unable to create file {}", &filepath.display()));
         let file = fs::OpenOptions::new()
             .append(true)
             .open(filepath)
             .expect("Unable to open file");
 
-        Writer {
+        TableWriter {
             filepath: filepath.to_path_buf(),
             inner: BufWriter::new(file)
         }

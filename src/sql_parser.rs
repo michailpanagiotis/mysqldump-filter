@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 
 use itertools::Itertools;
 
-use crate::io_utils::{read_statements, Writer};
+use crate::io_utils::{read_statements, TableWriter};
 use crate::filters::{Filters, References, TableReferences};
 use crate::config::Config;
 
@@ -18,7 +18,7 @@ fn process_table_statements<I: Iterator<Item=String>>(
         println!("Processing table {}", &table);
     }
 
-    let mut writer = Writer::new(&config.get_filepath(table_option));
+    let mut writer = TableWriter::new(&config.working_dir_path, table_option);
     let mut table_filters = filters.get_filters_of_table(table_option);
 
     for statement in statements.filter(|st| table_filters.test_insert_statement(st, &references)) {
@@ -50,5 +50,5 @@ pub fn parse_input_file(config: &Config) {
     println!("Second pass...");
     dbg!(&refs);
 
-    Writer::combine_files(filepaths.iter(), &config.output_file);
+    TableWriter::combine_files(filepaths.iter(), &config.output_file);
 }
