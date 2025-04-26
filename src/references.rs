@@ -117,8 +117,9 @@ impl FromIterator<TableField> for References {
 impl<'a> FromIterator<&'a FilterCondition> for References {
     fn from_iter<T: IntoIterator<Item=&'a FilterCondition>>(items: T) -> Self {
         let grouped = items.into_iter().map(|fc| fc.get_referenced_field()).into_group_map_by(|f| f.table.clone());
-        let inner: HashMap<String, TableReferences> = grouped.into_iter().map(|(table, tfs)| (table.to_string(), TableReferences::from_iter(tfs))).collect();
-        References { inner }
+        References {
+            inner: grouped.into_iter().map(|(table, tfs)| (table.to_string(), TableReferences::from_iter(tfs))).collect()
+        }
     }
 }
 
