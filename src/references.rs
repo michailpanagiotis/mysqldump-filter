@@ -5,8 +5,6 @@ use crate::expression_parser::{parse_insert_fields, parse_insert_values};
 use crate::filters::{FilterCondition, TableField};
 
 #[derive(Debug)]
-#[derive(Default)]
-#[derive(Clone)]
 pub struct TableReferences {
     table: String,
     values_per_field: HashMap<String, HashSet<String>>,
@@ -77,10 +75,6 @@ pub struct References {
 }
 
 impl References {
-    pub fn get_references_of_table(&self, key: &str) -> TableReferences {
-        self.inner.get(key).cloned().unwrap_or_default()
-    }
-
     pub fn get_table_references(&self) -> &HashMap<String, TableReferences> {
         &self.inner
     }
@@ -94,18 +88,6 @@ impl References {
     }
 }
 
-impl<'a> FromIterator<&'a TableReferences> for References {
-    fn from_iter<T: IntoIterator<Item=&'a TableReferences>>(items: T) -> Self {
-        let mut grouped: HashMap<String, TableReferences> = HashMap::new();
-        for item in items.into_iter() {
-            grouped.insert(item.table.clone(), item.clone());
-        }
-        References {
-            inner: grouped,
-        }
-    }
-}
-
 impl FromIterator<TableField> for References {
     fn from_iter<T: IntoIterator<Item=TableField>>(items: T) -> Self {
         let grouped: HashMap<String, Vec<TableField>> = items.into_iter().into_group_map_by(|f| f.table.clone());
@@ -116,10 +98,7 @@ impl FromIterator<TableField> for References {
 
 impl<'a> FromIterator<&'a FilterCondition> for References {
     fn from_iter<T: IntoIterator<Item=&'a FilterCondition>>(items: T) -> Self {
-        let grouped = items.into_iter().map(|fc| fc.get_referenced_field()).into_group_map_by(|f| f.table.clone());
-        References {
-            inner: grouped.into_iter().map(|(table, tfs)| (table.to_string(), TableReferences::from_iter(tfs))).collect()
-        }
+        References::from_iter(items.into_iter().map(|fc| fc.get_table_field()))
     }
 }
 

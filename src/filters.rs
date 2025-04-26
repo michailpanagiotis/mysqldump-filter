@@ -60,6 +60,13 @@ impl FilterCondition {
         }
     }
 
+    pub fn get_table_field(&self) -> TableField {
+        TableField {
+            table: self.table.clone(),
+            field: self.field.clone(),
+        }
+    }
+
     pub fn get_referenced_field(&self) -> TableField {
         let mut parts = self.value.split(".");
         let (Some(table), Some(field), None) = (parts.next(), parts.next(), parts.next()) else { panic!("malformatted reference field") };
