@@ -32,6 +32,7 @@ pub fn parse_input_file(config: &Configuration) {
         filepaths.insert(table, filepath);
     }
 
+    println!("Second pass...");
     for table in second_pass_tables.into_iter() {
         let input_file = &filepaths[&Some(table.clone())];
         let statements = read_sql_file(input_file, &config.requested_tables);
@@ -41,9 +42,8 @@ pub fn parse_input_file(config: &Configuration) {
     }
 
     dbg!(&filepaths);
-    filters.consolidate();
 
-    println!("Second pass...");
+    dbg!(&filters.references);
 
     combine_files(filepaths.values(), &config.output_file);
 

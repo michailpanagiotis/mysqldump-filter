@@ -5,6 +5,7 @@ use tempdir::TempDir;
 mod expression_parser;
 mod filters;
 mod io_utils;
+mod references;
 mod sql_parser;
 
 use io_utils::read_config;
