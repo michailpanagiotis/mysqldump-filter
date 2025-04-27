@@ -222,7 +222,8 @@ impl Filters {
 impl<'a> FromIterator<&'a (String, String)> for Filters {
     fn from_iter<T: IntoIterator<Item=&'a (String, String)>>(items: T) -> Self {
         let conditions: Vec<FilterCondition> = items.into_iter().map(|(table, condition)| FilterCondition::new(table, condition)).collect();
-        let references = References::from_iter(conditions.iter().filter(|fc| fc.is_reference()));
+        let references = References::from_iter(conditions.iter().filter(|fc| fc.is_reference()).map(|fc| fc.get_table_field()));
+
         let mut filters = Filters {
             inner: conditions.into_iter().chunk_by(|x| x.table.clone()).into_iter().map(|(table, items)| (table.clone(), {
                 TableFilters::from_iter(items)
