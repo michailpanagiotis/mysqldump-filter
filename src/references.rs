@@ -90,7 +90,7 @@ impl References {
 
 impl FromIterator<TableField> for References {
     fn from_iter<T: IntoIterator<Item=TableField>>(items: T) -> Self {
-        let grouped: HashMap<String, Vec<TableField>> = items.into_iter().into_group_map_by(|f| f.table.clone());
+        let grouped = items.into_iter().into_group_map_by(|f| f.table.clone());
         let inner: HashMap<String, TableReferences> = grouped.into_iter().map(|(table, tfs)| (table.to_string(), TableReferences::from_iter(tfs))).collect();
         References { inner }
     }
