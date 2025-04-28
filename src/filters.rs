@@ -141,7 +141,7 @@ impl TableFilters {
         foreign_values: &Option<&HashMap<String, HashSet<String>>>,
     ) -> bool {
         if !sql_statement.starts_with("INSERT") {
-            return false;
+            return true;
         }
         if self.has_filters() {
             if !self.has_resolved_positions() {
@@ -177,7 +177,6 @@ impl FromIterator<FilterCondition> for TableFilters {
 #[derive(Debug)]
 pub struct Filters{
     inner: HashMap<String, TableFilters>,
-    pub references: References,
 }
 
 impl Filters {
@@ -197,29 +196,20 @@ impl Filters {
     }
 }
 
-impl<'a> FromIterator<&'a (String, String)> for Filters {
-    fn from_iter<T: IntoIterator<Item=&'a (String, String)>>(items: T) -> Self {
-        let conditions: Vec<FilterCondition> = items.into_iter().map(|(table, condition)| FilterCondition::new(table, condition)).collect();
-        let references = References::from_iter(conditions.iter().filter(|fc| fc.is_foreign_filter()).map(|fc| fc.get_foreign_key() ));
-
-        let mut filters = Filters {
+impl<'a> From<&'a Vec<(String, String)>> for Filters {
+    fn from(items: &'a Vec<(String, String)>) -> Self {
+        let conditions: Vec<FilterCondition> = items.iter().map(|(table, condition)| FilterCondition::new(table, condition)).collect();
+        Filters {
             inner: conditions.into_iter().chunk_by(|x| x.table.clone()).into_iter().map(|(table, items)| (table.clone(), {
                 TableFilters::from_iter(items)
             })).collect(),
-            references,
-        };
-        for table in filters.references.get_tables() {
-            if !filters.inner.contains_key(table) {
-                let tf = TableFilters::default();
-                filters.inner.insert(table.to_string(), tf);
-            }
         }
-        filters
     }
 }
 
 pub fn filter_sql_lines<'a, I: Iterator<Item=String>>(
     filters: &'a mut Filters,
+    references: &'a mut References,
     foreign_values: Option<&'a HashMap<String, HashSet<String>>>,
     table: Option<String>,
     lines: I,
@@ -228,7 +218,7 @@ pub fn filter_sql_lines<'a, I: Iterator<Item=String>>(
         let should_keep = filters.test_sql_statement(st, &table, &foreign_values);
         if should_keep {
             if let Some(ref t) = table {
-                filters.references.capture(t, st);
+                references.capture(t, st);
             }
         }
         should_keep

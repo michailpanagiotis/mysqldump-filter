@@ -29,6 +29,9 @@ impl TableReferences {
     }
 
     pub fn capture(&mut self, insert_statement: &str) {
+        if !insert_statement.starts_with("INSERT") {
+            return;
+        }
         if !self.has_referenced_fields() {
             return;
         }
