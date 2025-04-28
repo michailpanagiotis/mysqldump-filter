@@ -81,12 +81,12 @@ impl FromIterator<FilterCondition> for FieldFilters {
 }
 
 impl FieldFilters {
-    fn test_value(&self, value: &str, captured_references: &Option<&HashMap<String, HashSet<String>>>) -> bool {
+    fn test_value(&self, value: &str, foreign_values: &Option<&HashMap<String, HashSet<String>>>) -> bool {
         let direct = self.conditions.iter().filter(|x| !x.is_reference()).all(|condition| condition.test(value));
         if !direct {
             return false;
         }
-        let Some(refs) = captured_references else { return true };
+        let Some(refs) = foreign_values else { return true };
         self.conditions.iter().filter(|x| x.is_reference()).all(|condition| {
             let Some(set) = refs.get(condition.value.as_str()) else { return false };
             set.contains(value)
@@ -134,7 +134,7 @@ impl TableFilters {
     pub fn test_sql_statement(
         &mut self,
         sql_statement: &str,
-        captured_references: &Option<&HashMap<String, HashSet<String>>>,
+        foreign_values: &Option<&HashMap<String, HashSet<String>>>,
     ) -> bool {
         if !sql_statement.starts_with("INSERT") {
             return false;
@@ -146,7 +146,7 @@ impl TableFilters {
             let values = parse_insert_values(sql_statement);
 
             if !self.inner.values().all(|field_filters| {
-                field_filters.position.is_some_and(|p| field_filters.test_value(values[p], captured_references))
+                field_filters.position.is_some_and(|p| field_filters.test_value(values[p], foreign_values))
             }) {
                 return false;
             }
@@ -181,10 +181,10 @@ impl Filters {
         &mut self,
         sql_statement: &str,
         table: &Option<String>,
-        captured_references: &Option<&HashMap<String, HashSet<String>>>,
+        foreign_values: &Option<&HashMap<String, HashSet<String>>>,
     ) -> bool {
         let Some(t) = table else { return true };
-        let should_keep = self.inner.get_mut(t).unwrap().test_sql_statement(sql_statement, captured_references);
+        let should_keep = self.inner.get_mut(t).unwrap().test_sql_statement(sql_statement, foreign_values);
         if should_keep {
             self.references.capture(t, sql_statement);
         }
