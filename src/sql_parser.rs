@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::iter::Filter;
 use std::path::PathBuf;
 use itertools::Itertools;
 use tempdir::TempDir;
@@ -8,8 +9,13 @@ use crate::references::References;
 use crate::filters::{filter_sql_lines, Filters, FilterCondition};
 
 pub fn parse_input_file(config: &Configuration) {
-    let mut filters = Filters::from(&config.filter_conditions);
+    let filter_conditions: Vec<FilterCondition> = config.filter_conditions.iter().map(|(table, definition)| FilterCondition::new(table, definition)).collect();
+    let ref_filter_conditions: Vec<&FilterCondition> = filter_conditions.iter().collect();
+
+    let mut filters = Filters::new(&config.filter_conditions, &ref_filter_conditions);
     let second_pass_tables = filters.get_foreign_tables();
+
+    dbg!(&filters);
 
 
     let conditions: Vec<FilterCondition> = config.filter_conditions.iter().map(|(table, condition)| FilterCondition::new(table, condition)).collect();
