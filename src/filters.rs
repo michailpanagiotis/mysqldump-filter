@@ -1,4 +1,3 @@
-use config::FileSource;
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 
@@ -27,6 +26,14 @@ fn group_conditions_by_field<'a>(table: &str, conditions: &'a Vec<&'a FilterCond
             res.insert(cond.field.clone(), Vec::new());
             if let Some(val) = res.get_mut(&cond.field) { val.push(cond); };
         }
+    }
+    res
+}
+
+fn pick_conditions<'a>(conditions: &'a Vec<&'a FilterCondition>, table: &str, field: &str) -> Vec<&'a FilterCondition>  {
+    let mut res: Vec<&'a FilterCondition>  = Vec::new();
+    for cond in conditions.iter().filter(|c| c.table == table && c.field == field) {
+        res.push(cond);
     }
     res
 }
@@ -88,27 +95,31 @@ impl FilterCondition {
 }
 
 #[derive(Debug)]
-struct FieldFilters {
+struct FieldFilters<'a> {
     table: String,
     field: String,
     position: Option<usize>,
     conditions: Vec<FilterCondition>,
+    filter_conditions: Vec<&'a FilterCondition>,
 }
 
-impl FieldFilters {
-    fn new<'a, T: IntoIterator<Item = FilterCondition>>(iter: T, filter_conditions: Vec<&'a FilterCondition>) -> Self {
+impl<'a> FieldFilters<'a> {
+    fn new<T: IntoIterator<Item = FilterCondition>>(iter: T, filter_conditions: &'a Vec<&'a FilterCondition>) -> Self {
         let conditions: Vec<FilterCondition> = iter.into_iter().collect();
 
         let distinct: Vec<&FilterCondition> = conditions.iter().unique_by(|s| (&s.table, &s.field)).collect();
-        if distinct.len() > 1 {
+        if distinct.len() != 1 {
             panic!("conditions have different fields");
         }
+
+        let filter_conditions = pick_conditions(filter_conditions, &conditions[0].table, &conditions[0].field);
 
         FieldFilters {
             table: conditions[0].table.clone(),
             field: conditions[0].field.clone(),
             position: None,
             conditions,
+            filter_conditions,
         }
     }
 
@@ -137,7 +148,7 @@ impl FieldFilters {
 #[derive(Default)]
 pub struct TableFilters<'a> {
     table: String,
-    inner: HashMap<String, FieldFilters>,
+    inner: HashMap<String, FieldFilters<'a>>,
     conditions: Vec<FilterCondition>,
     filter_conditions: HashMap<String, Vec<&'a FilterCondition>>,
 }
@@ -150,12 +161,11 @@ impl<'a> TableFilters<'a> {
             panic!("conditions have different tables");
         }
 
-        let filter_conditions = group_conditions_by_field(table, filter_conditions);
         TableFilters {
             table: table.to_string(),
-            inner: conditions.into_iter().chunk_by(|x| x.field.clone()).into_iter().map(|(field, items)| (field, FieldFilters::new(items, &filter_conditions[field]))).collect(),
+            inner: conditions.into_iter().chunk_by(|x| x.field.clone()).into_iter().map(|(field, items)| (field, FieldFilters::new(items, filter_conditions))).collect(),
             conditions: conds,
-            filter_conditions,
+            filter_conditions: group_conditions_by_field(table, filter_conditions),
         }
     }
 
