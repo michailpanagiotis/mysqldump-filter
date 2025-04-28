@@ -4,25 +4,6 @@ use std::collections::{HashMap, HashSet};
 use crate::expression_parser::{parse_filter, parse_insert_fields, parse_insert_values};
 use crate::references::References;
 
-fn group_conditions_by_table<'a>(conditions: &'a Vec<&'a FilterCondition>) -> HashMap<String, TableFilters<'a>> {
-    conditions.iter().chunk_by(|c| &c.table).into_iter().map(|(table, conds)| {
-        (table.clone(), TableFilters::new(table, conds.into_iter() .copied()))
-    }).collect()
-}
-
-fn group_conditions_by_field<'a, I: Iterator<Item=&'a FilterCondition>>(table: &str, conditions: I) -> HashMap<String, Vec<&'a FilterCondition>>  {
-    let mut res: HashMap<String, Vec<&'a FilterCondition>>  = HashMap::new();
-    for cond in conditions.filter(|c| c.table == table) {
-        if res.contains_key(&cond.field) {
-            if let Some(val) = res.get_mut(&cond.field) { val.push(cond); };
-        } else {
-            res.insert(cond.field.clone(), Vec::new());
-            if let Some(val) = res.get_mut(&cond.field) { val.push(cond); };
-        }
-    }
-    res
-}
-
 #[derive(Debug)]
 #[derive(Clone)]
 enum FilterOperator {
@@ -126,19 +107,13 @@ pub struct TableFilters<'a> {
 }
 
 impl<'a> TableFilters<'a> {
-    fn new<I: Iterator<Item=&'a FilterCondition>>(table: &str, filter_conditions: I) -> Self {
-        // let conds: Vec<FilterCondition> = conditions.iter().cloned().collect();
-        // let distinct: Vec<&FilterCondition> = conditions.iter().unique_by(|s| &s.table).collect();
-        // if distinct.len() != 1 {
-        //     panic!("conditions have different tables");
-        // }
-        //
-        // assert!(filter_conditions.iter()unique_by(|s| &s.table).count() == 1);
+    fn new<'b>(table: &str, filter_conditions: &'b Vec<&'a FilterCondition>) -> Self {
+        assert!(filter_conditions.iter().unique_by(|s| &s.table).count() == 1);
 
-        let fconds = group_conditions_by_field(table, filter_conditions);
-        let inner: HashMap<String, FieldFilters<'a>> = HashMap::from_iter(fconds.iter().map(|(field, filters)| {
-            (field.clone(), FieldFilters::new(filters))
-        }));
+        let inner: HashMap<String, FieldFilters<'a>> = filter_conditions.iter().chunk_by(|c| &c.field).into_iter().map(|(field, conds)| {
+            let v: Vec<&'a FilterCondition> = conds.into_iter().copied().collect();
+            (field.clone(), FieldFilters::new(&v))
+        }).collect();
 
         TableFilters {
             table: table.to_string(),
@@ -193,22 +168,18 @@ impl<'a> TableFilters<'a> {
     }
 }
 
-// impl FromIterator<FilterCondition> for TableFilters {
-//     fn from_iter<T: IntoIterator<Item = FilterCondition>>(iter: T) -> Self {
-//         let conditions: Vec<FilterCondition> = iter.into_iter().collect();
-//         TableFilters::new(conditions)
-//     }
-// }
-
 #[derive(Debug)]
 pub struct Filters<'a> {
     inner: HashMap<String, TableFilters<'a>>,
 }
 
 impl<'a> Filters<'a> {
-    pub fn new(filter_conditions: &'a Vec<&'a FilterCondition>) -> Self {
+    pub fn new<'b>(filter_conditions: &'b Vec<&'a FilterCondition>) -> Self
+        where 'a : 'b
+    {
         let inner = filter_conditions.iter().chunk_by(|c| &c.table).into_iter().map(|(table, conds)| {
-            (table.clone(), TableFilters::new(table, conds.into_iter().copied()))
+            let v: Vec<&'a FilterCondition> = conds.into_iter().copied().collect();
+            (table.clone(), TableFilters::new(table, &v))
         }).collect();
 
 
