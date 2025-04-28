@@ -8,7 +8,7 @@ use crate::filters::{filter_sql_lines, Filters};
 
 pub fn parse_input_file(config: &Configuration) {
     let mut filters = Filters::from_iter(config.filter_conditions.iter());
-    let second_pass_tables = filters.get_tables_with_references();
+    let second_pass_tables = filters.get_foreign_tables();
 
     let temp_dir = TempDir::new("sql_parser_intermediate").expect("cannot create temporary dir");
     let temp_dir_path = temp_dir.path().to_path_buf();

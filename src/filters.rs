@@ -45,12 +45,8 @@ impl FilterCondition {
         }
     }
 
-    pub fn is_reference(&self) -> bool {
-        match self.operator {
-            FilterOperator::ForeignKey => true,
-            _ => false
-
-        }
+    pub fn is_foreign_filter(&self) -> bool {
+        matches!(self.operator, FilterOperator::ForeignKey)
     }
 }
 
@@ -82,13 +78,13 @@ impl FromIterator<FilterCondition> for FieldFilters {
 
 impl FieldFilters {
     fn test_value(&self, value: &str, foreign_values: &Option<&HashMap<String, HashSet<String>>>) -> bool {
-        let direct = self.conditions.iter().filter(|x| !x.is_reference()).all(|condition| condition.test(value));
+        let direct = self.conditions.iter().filter(|x| !x.is_foreign_filter()).all(|condition| condition.test(value));
         if !direct {
             return false;
         }
-        let Some(refs) = foreign_values else { return true };
-        self.conditions.iter().filter(|x| x.is_reference()).all(|condition| {
-            let Some(set) = refs.get(condition.value.as_str()) else { return false };
+        let Some(fvs) = foreign_values else { return true };
+        self.conditions.iter().filter(|x| x.is_foreign_filter()).all(|condition| {
+            let Some(set) = fvs.get(condition.value.as_str()) else { return false };
             set.contains(value)
         })
     }
@@ -97,8 +93,8 @@ impl FieldFilters {
         self.position = Some(pos);
     }
 
-    fn has_reference_filters(&self) -> bool {
-        self.conditions.iter().any(|c| c.is_reference())
+    fn has_foreign_filters(&self) -> bool {
+        self.conditions.iter().any(|c| c.is_foreign_filter())
     }
 }
 
@@ -119,8 +115,8 @@ impl TableFilters {
         })
     }
 
-    fn has_reference_filters(&self) -> bool {
-        self.inner.values().any(|ff| ff.has_reference_filters())
+    fn has_foreign_filters(&self) -> bool {
+        self.inner.values().any(|ff| ff.has_foreign_filters())
     }
 
     fn resolve_positions(&mut self, insert_statement: &str) {
@@ -184,22 +180,18 @@ impl Filters {
         foreign_values: &Option<&HashMap<String, HashSet<String>>>,
     ) -> bool {
         let Some(t) = table else { return true };
-        let should_keep = self.inner.get_mut(t).unwrap().test_sql_statement(sql_statement, foreign_values);
-        if should_keep {
-            self.references.capture(t, sql_statement);
-        }
-        should_keep
+        self.inner.get_mut(t).unwrap().test_sql_statement(sql_statement, foreign_values)
     }
 
-    pub fn get_tables_with_references(&self) -> HashSet<String> {
-        self.inner.iter().filter(|(_, tf)| tf.has_reference_filters()).map(|(table, _)| table.clone()).collect()
+    pub fn get_foreign_tables(&self) -> HashSet<String> {
+        self.inner.iter().filter(|(_, tf)| tf.has_foreign_filters()).map(|(table, _)| table.clone()).collect()
     }
 }
 
 impl<'a> FromIterator<&'a (String, String)> for Filters {
     fn from_iter<T: IntoIterator<Item=&'a (String, String)>>(items: T) -> Self {
         let conditions: Vec<FilterCondition> = items.into_iter().map(|(table, condition)| FilterCondition::new(table, condition)).collect();
-        let references = References::from_iter(conditions.iter().filter(|fc| fc.is_reference()).map(|fc| (fc.table.clone(), fc.field.clone())));
+        let references = References::from_iter(conditions.iter().filter(|fc| fc.is_foreign_filter()).map(|fc| (fc.table.clone(), fc.field.clone())));
 
         let mut filters = Filters {
             inner: conditions.into_iter().chunk_by(|x| x.table.clone()).into_iter().map(|(table, items)| (table.clone(), {
@@ -219,9 +211,17 @@ impl<'a> FromIterator<&'a (String, String)> for Filters {
 
 pub fn filter_sql_lines<'a, I: Iterator<Item=String>>(
     filters: &'a mut Filters,
-    references: Option<&'a HashMap<String, HashSet<String>>>,
+    foreign_values: Option<&'a HashMap<String, HashSet<String>>>,
     table: Option<String>,
     lines: I,
 ) -> impl Iterator<Item=String> {
-    lines.filter(move |st| filters.test_sql_statement(st, &table, &references))
+    lines.filter(move |st| {
+        let should_keep = filters.test_sql_statement(st, &table, &foreign_values);
+        if should_keep {
+            if let Some(ref t) = table {
+                filters.references.capture(t, st);
+            }
+        }
+        should_keep
+    })
 }
