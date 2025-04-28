@@ -5,25 +5,9 @@ use crate::expression_parser::{parse_filter, parse_insert_fields, parse_insert_v
 use crate::references::References;
 
 fn group_conditions_by_table<'a>(conditions: &'a Vec<&'a FilterCondition>) -> HashMap<String, TableFilters<'a>> {
-    let mut per_table: HashMap<String, HashMap<String, Vec<&'a FilterCondition>>>  = HashMap::new();
-    for cond in conditions.iter() {
-        if !per_table.contains_key(&cond.table) {
-            per_table.insert(cond.table.clone(), HashMap::new());
-        }
-
-        if let Some(ref mut per_field) = per_table.get_mut(&cond.table) {
-            if !per_field.contains_key(&cond.field) {
-                per_field.insert(cond.field.clone(), Vec::new());
-            }
-            if let Some(ref mut val) = per_field.get_mut(&cond.field) {
-                val.push(*cond);
-            }
-        };
-    }
-
-    per_table.into_iter().map(
-        |(table, fields)| (table.clone(), TableFilters::new(&table, fields.into_values().flatten())),
-    ).collect()
+    conditions.iter().chunk_by(|c| &c.table).into_iter().map(|(table, conds)| {
+        (table.clone(), TableFilters::new(table, conds.into_iter() .copied()))
+    }).collect()
 }
 
 fn group_conditions_by_field<'a, I: Iterator<Item=&'a FilterCondition>>(table: &str, conditions: I) -> HashMap<String, Vec<&'a FilterCondition>>  {
@@ -223,7 +207,10 @@ pub struct Filters<'a> {
 
 impl<'a> Filters<'a> {
     pub fn new(filter_conditions: &'a Vec<&'a FilterCondition>) -> Self {
-        let inner = group_conditions_by_table(filter_conditions);
+        let inner = filter_conditions.iter().chunk_by(|c| &c.table).into_iter().map(|(table, conds)| {
+            (table.clone(), TableFilters::new(table, conds.into_iter().copied()))
+        }).collect();
+
 
         Filters {
             inner,
