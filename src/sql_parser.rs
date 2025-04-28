@@ -6,7 +6,8 @@ use tempdir::TempDir;
 
 use crate::io_utils::{Configuration, combine_files, read_sql_file, write_sql_file};
 use crate::references::References;
-use crate::filters::{filter_sql_lines, Filters, FilterCondition};
+use crate::filters::{filter_sql_lines, Filters};
+use crate::expression_parser::{FilterCondition};
 
 pub fn parse_input_file(config: &Configuration) {
     let filter_conditions: Vec<FilterCondition> = config.filter_conditions.iter().map(|(table, definition)| FilterCondition::new(table, definition)).collect();

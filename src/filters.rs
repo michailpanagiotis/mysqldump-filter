@@ -1,64 +1,8 @@
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 
-use crate::expression_parser::{parse_filter, parse_insert_fields, parse_insert_values};
+use crate::expression_parser::{FilterCondition, parse_insert_fields, parse_insert_values};
 use crate::references::References;
-
-#[derive(Debug)]
-#[derive(Clone)]
-enum FilterOperator {
-    Equals,
-    NotEquals,
-    ForeignKey,
-    Unknown,
-}
-
-#[derive(Debug)]
-#[derive(Clone)]
-pub struct FilterCondition {
-    table: String,
-    field: String,
-    operator: FilterOperator,
-    value: String,
-}
-
-impl FilterCondition {
-    pub fn new(table: &str, definition: &str) -> FilterCondition {
-        let (field, operator, value) = parse_filter(definition);
-        FilterCondition {
-            table: table.to_string(),
-            field: field.to_string(),
-            operator: match operator {
-                "==" => FilterOperator::Equals,
-                "!=" => FilterOperator::NotEquals,
-                "->" => FilterOperator::ForeignKey,
-                _ => FilterOperator::Unknown,
-            },
-            value: value.to_string(),
-        }
-    }
-
-    fn test(&self, other_value: &str) -> bool {
-        match &self.operator {
-            FilterOperator::Equals => self.value == other_value,
-            FilterOperator::NotEquals => self.value != other_value,
-            FilterOperator::ForeignKey => true,
-            FilterOperator::Unknown => true
-        }
-    }
-
-    pub fn is_foreign_filter(&self) -> bool {
-        matches!(self.operator, FilterOperator::ForeignKey)
-    }
-
-    pub fn get_foreign_key(&self) -> (String, String) {
-        let mut split = self.value.split('.');
-        let (Some(table), Some(field), None) = (split.next(), split.next(), split.next()) else {
-            panic!("malformed foreign key {}", self.value);
-        };
-        (table.to_string(), field.to_string())
-    }
-}
 
 #[derive(Debug)]
 struct FieldFilters<'a> {
@@ -83,10 +27,8 @@ impl<'a> FieldFilters<'a> {
         if !direct {
             return false;
         }
-        let Some(fvs) = foreign_values else { return true };
         self.filter_conditions.iter().filter(|x| x.is_foreign_filter()).all(|condition| {
-            let Some(set) = fvs.get(condition.value.as_str()) else { return false };
-            set.contains(value)
+            condition.test_foreign(value, foreign_values)
         })
     }
 
@@ -100,14 +42,12 @@ impl<'a> FieldFilters<'a> {
 }
 
 #[derive(Debug)]
-#[derive(Default)]
 pub struct TableFilters<'a> {
-    table: String,
     inner: HashMap<String, FieldFilters<'a>>,
 }
 
 impl<'a> TableFilters<'a> {
-    fn new<'b>(table: &str, filter_conditions: &'b Vec<&'a FilterCondition>) -> Self {
+    fn new<'b>(filter_conditions: &'b Vec<&'a FilterCondition>) -> Self {
         assert!(filter_conditions.iter().unique_by(|s| &s.table).count() == 1);
 
         let inner: HashMap<String, FieldFilters<'a>> = filter_conditions.iter().chunk_by(|c| &c.field).into_iter().map(|(field, conds)| {
@@ -116,7 +56,6 @@ impl<'a> TableFilters<'a> {
         }).collect();
 
         TableFilters {
-            table: table.to_string(),
             inner,
         }
     }
@@ -179,7 +118,7 @@ impl<'a> Filters<'a> {
     {
         let inner = filter_conditions.iter().chunk_by(|c| &c.table).into_iter().map(|(table, conds)| {
             let v: Vec<&'a FilterCondition> = conds.into_iter().copied().collect();
-            (table.clone(), TableFilters::new(table, &v))
+            (table.clone(), TableFilters::new(&v))
         }).collect();
 
 

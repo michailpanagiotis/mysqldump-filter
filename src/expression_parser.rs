@@ -10,7 +10,7 @@ use nom::{
   sequence::{delimited, preceded},
 };
 use regex::Regex;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -75,4 +75,64 @@ pub fn parse_insert_values(insert_statement: &str) -> Vec<&str> {
     let res: IResult<&str, Vec<&str>> = parser.parse(insert_statement);
     let (_, values) = res.expect("cannot parse values");
     values
+}
+
+#[derive(Debug)]
+enum FilterOperator {
+    Equals,
+    NotEquals,
+    ForeignKey,
+    Unknown,
+}
+
+#[derive(Debug)]
+pub struct FilterCondition {
+    pub table: String,
+    pub field: String,
+    operator: FilterOperator,
+    value: String,
+}
+
+impl FilterCondition {
+    pub fn new(table: &str, definition: &str) -> FilterCondition {
+        let (field, operator, value) = parse_filter(definition);
+        FilterCondition {
+            table: table.to_string(),
+            field: field.to_string(),
+            operator: match operator {
+                "==" => FilterOperator::Equals,
+                "!=" => FilterOperator::NotEquals,
+                "->" => FilterOperator::ForeignKey,
+                _ => FilterOperator::Unknown,
+            },
+            value: value.to_string(),
+        }
+    }
+
+    pub fn test(&self, other_value: &str) -> bool {
+        match &self.operator {
+            FilterOperator::Equals => self.value == other_value,
+            FilterOperator::NotEquals => self.value != other_value,
+            FilterOperator::ForeignKey => true,
+            FilterOperator::Unknown => true
+        }
+    }
+
+    pub fn test_foreign(&self, value:&str, foreign_values: &Option<&HashMap<String, HashSet<String>>>) -> bool {
+        let Some(fvs) = foreign_values else { return true };
+        let Some(set) = fvs.get(self.value.as_str()) else { return false };
+        set.contains(value)
+    }
+
+    pub fn is_foreign_filter(&self) -> bool {
+        matches!(self.operator, FilterOperator::ForeignKey)
+    }
+
+    pub fn get_foreign_key(&self) -> (String, String) {
+        let mut split = self.value.split('.');
+        let (Some(table), Some(field), None) = (split.next(), split.next(), split.next()) else {
+            panic!("malformed foreign key {}", self.value);
+        };
+        (table.to_string(), field.to_string())
+    }
 }
