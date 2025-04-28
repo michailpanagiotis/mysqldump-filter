@@ -95,8 +95,8 @@ struct FieldFilters {
     conditions: Vec<FilterCondition>,
 }
 
-impl FromIterator<FilterCondition> for FieldFilters {
-    fn from_iter<T: IntoIterator<Item = FilterCondition>>(iter: T) -> Self {
+impl FieldFilters {
+    fn new<T: IntoIterator<Item = FilterCondition>>(iter: T) -> Self {
         let conditions: Vec<FilterCondition> = iter.into_iter().collect();
 
         let distinct: Vec<&FilterCondition> = conditions.iter().unique_by(|s| (&s.table, &s.field)).collect();
@@ -111,9 +111,7 @@ impl FromIterator<FilterCondition> for FieldFilters {
             conditions,
         }
     }
-}
 
-impl FieldFilters {
     fn test_value(&self, value: &str, foreign_values: &Option<&HashMap<String, HashSet<String>>>) -> bool {
         let direct = self.conditions.iter().filter(|x| !x.is_foreign_filter()).all(|condition| condition.test(value));
         if !direct {
@@ -153,7 +151,7 @@ impl<'a> TableFilters<'a> {
         }
         TableFilters {
             table: table.to_string(),
-            inner: conditions.into_iter().chunk_by(|x| x.field.clone()).into_iter().map(|(field, items)| (field, FieldFilters::from_iter(items))).collect(),
+            inner: conditions.into_iter().chunk_by(|x| x.field.clone()).into_iter().map(|(field, items)| (field, FieldFilters::new(items))).collect(),
             conditions: conds,
             filter_conditions: group_conditions_by_field(table, filter_conditions),
         }
