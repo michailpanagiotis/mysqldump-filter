@@ -39,14 +39,6 @@ fn group_conditions_by_field<'a, I: Iterator<Item=&'a FilterCondition>>(table: &
     res
 }
 
-fn pick_conditions<'a>(conditions: &[&'a FilterCondition], table: &str, field: &str) -> Vec<&'a FilterCondition>  {
-    let mut res: Vec<&'a FilterCondition>  = Vec::new();
-    for cond in conditions.iter().filter(|c| c.table == table && c.field == field) {
-        res.push(cond);
-    }
-    res
-}
-
 #[derive(Debug)]
 #[derive(Clone)]
 enum FilterOperator {

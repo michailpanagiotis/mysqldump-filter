@@ -12,7 +12,7 @@ pub fn parse_input_file(config: &Configuration) {
     let filter_conditions: Vec<FilterCondition> = config.filter_conditions.iter().map(|(table, definition)| FilterCondition::new(table, definition)).collect();
     let ref_filter_conditions: Vec<&FilterCondition> = filter_conditions.iter().collect();
 
-    let mut filters = Filters::new(&config.filter_conditions, &ref_filter_conditions);
+    let mut filters = Filters::new(&ref_filter_conditions);
     let second_pass_tables = filters.get_foreign_tables();
 
     dbg!(&filters);
