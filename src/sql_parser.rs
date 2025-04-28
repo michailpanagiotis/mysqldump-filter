@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::iter::Filter;
 use std::path::PathBuf;
 use itertools::Itertools;
 use tempdir::TempDir;
@@ -7,20 +6,14 @@ use tempdir::TempDir;
 use crate::io_utils::{Configuration, combine_files, read_sql_file, write_sql_file};
 use crate::references::References;
 use crate::filters::{filter_sql_lines, Filters};
-use crate::expression_parser::{FilterCondition};
 
 pub fn parse_input_file(config: &Configuration) {
-    let filter_conditions: Vec<FilterCondition> = config.filter_conditions.iter().map(|(table, definition)| FilterCondition::new(table, definition)).collect();
-    let ref_filter_conditions: Vec<&FilterCondition> = filter_conditions.iter().collect();
-
-    let mut filters = Filters::new(&ref_filter_conditions);
+    let mut filters = Filters::new(&config.get_conditions());
     let second_pass_tables = filters.get_foreign_tables();
 
     dbg!(&filters);
 
-
-    let conditions: Vec<FilterCondition> = config.filter_conditions.iter().map(|(table, condition)| FilterCondition::new(table, condition)).collect();
-    let mut references = References::from_iter(conditions.iter().filter(|fc| fc.is_foreign_filter()).map(|fc| fc.get_foreign_key() ));
+    let mut references = References::from_iter(config.get_foreign_keys());
 
     let temp_dir = TempDir::new("sql_parser_intermediate").expect("cannot create temporary dir");
     let temp_dir_path = temp_dir.path().to_path_buf();

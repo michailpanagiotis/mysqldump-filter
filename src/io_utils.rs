@@ -4,7 +4,7 @@ use std::fs;
 use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use crate::expression_parser::get_table_from_comment;
+use crate::expression_parser::{get_table_from_comment, FilterCondition};
 
 #[derive(Debug)]
 pub struct Configuration {
@@ -12,7 +12,17 @@ pub struct Configuration {
     pub output_file: PathBuf,
     pub working_dir_path: PathBuf,
     pub requested_tables: HashSet<String>,
-    pub filter_conditions: Vec<(String, String)>,
+    pub filter_conditions: Vec<FilterCondition>,
+}
+
+impl Configuration {
+    pub fn get_conditions(&self) -> Vec<&FilterCondition> {
+        self.filter_conditions.iter().collect()
+    }
+
+    pub fn get_foreign_keys(&self) -> impl Iterator<Item=(String, String)> {
+        self.filter_conditions.iter().filter(|fc| fc.is_foreign_filter()).map(|fc| fc.get_foreign_key() )
+    }
 }
 
 pub fn read_config(
@@ -43,6 +53,8 @@ pub fn read_config(
                 (table.clone(), x.to_string())
             })
         }).collect();
+
+    let filter_conditions: Vec<FilterCondition> = filter_conditions.iter().map(|(table, definition)| FilterCondition::new(table, definition)).collect();
 
     Configuration {
         input_file: input_file.to_path_buf(),
