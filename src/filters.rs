@@ -13,13 +13,6 @@ enum FilterOperator {
 }
 
 #[derive(Debug)]
-#[derive(Clone)]
-pub struct TableField {
-    pub table: String,
-    pub field: String,
-}
-
-#[derive(Debug)]
 pub struct FilterCondition {
     table: String,
     field: String,
@@ -57,13 +50,6 @@ impl FilterCondition {
             FilterOperator::Reference => true,
             _ => false
 
-        }
-    }
-
-    pub fn get_table_field(&self) -> TableField {
-        TableField {
-            table: self.table.clone(),
-            field: self.field.clone(),
         }
     }
 }
@@ -213,7 +199,7 @@ impl Filters {
 impl<'a> FromIterator<&'a (String, String)> for Filters {
     fn from_iter<T: IntoIterator<Item=&'a (String, String)>>(items: T) -> Self {
         let conditions: Vec<FilterCondition> = items.into_iter().map(|(table, condition)| FilterCondition::new(table, condition)).collect();
-        let references = References::from_iter(conditions.iter().filter(|fc| fc.is_reference()).map(|fc| fc.get_table_field()));
+        let references = References::from_iter(conditions.iter().filter(|fc| fc.is_reference()).map(|fc| (fc.table.clone(), fc.field.clone())));
 
         let mut filters = Filters {
             inner: conditions.into_iter().chunk_by(|x| x.table.clone()).into_iter().map(|(table, items)| (table.clone(), {

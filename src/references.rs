@@ -2,7 +2,6 @@ use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 
 use crate::expression_parser::{parse_insert_fields, parse_insert_values};
-use crate::filters::TableField;
 
 #[derive(Debug)]
 pub struct TableReferences {
@@ -51,16 +50,16 @@ impl TableReferences {
     }
 }
 
-impl FromIterator<TableField> for TableReferences {
-    fn from_iter<T: IntoIterator<Item = TableField>>(iter: T) -> Self {
-        let fields: Vec<TableField> = iter.into_iter().collect();
+impl FromIterator<(String, String)> for TableReferences {
+    fn from_iter<T: IntoIterator<Item=(String, String)>>(iter: T) -> Self {
+        let fields: Vec<(String, String)> = iter.into_iter().collect();
 
-        let distinct: Vec<&TableField> = fields.iter().unique_by(|s| &s.table).collect();
+        let distinct: Vec<&(String, String)> = fields.iter().unique_by(|(table, _)| table.clone()).collect();
         if distinct.len() != 1 {
             panic!("fields have different tables");
         }
-        let table = distinct[0].table.to_string();
-        let values_per_field = fields.clone().into_iter().map(|table_field| (table_field.field.clone(), HashSet::new())).collect();
+        let table = distinct[0].0.to_string();
+        let values_per_field = fields.clone().into_iter().map(|(_, field)| (field.clone(), HashSet::new())).collect();
         TableReferences {
             table,
             position_per_field: HashMap::new(),
@@ -88,9 +87,9 @@ impl References {
     }
 }
 
-impl FromIterator<TableField> for References {
-    fn from_iter<T: IntoIterator<Item=TableField>>(items: T) -> Self {
-        let grouped = items.into_iter().into_group_map_by(|f| f.table.clone());
+impl FromIterator<(String, String)> for References {
+    fn from_iter<T: IntoIterator<Item=(String, String)>>(items: T) -> Self {
+        let grouped = items.into_iter().into_group_map_by(|(table, _)| table.clone());
         let inner: HashMap<String, TableReferences> = grouped.into_iter().map(|(table, tfs)| (table.to_string(), TableReferences::from_iter(tfs))).collect();
         References { inner }
     }
