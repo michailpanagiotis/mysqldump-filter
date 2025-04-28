@@ -8,7 +8,7 @@ use crate::references::References;
 enum FilterOperator {
     Equals,
     NotEquals,
-    Reference,
+    ForeignKey,
     Unknown,
 }
 
@@ -29,7 +29,7 @@ impl FilterCondition {
             operator: match operator {
                 "==" => FilterOperator::Equals,
                 "!=" => FilterOperator::NotEquals,
-                "->" => FilterOperator::Reference,
+                "->" => FilterOperator::ForeignKey,
                 _ => FilterOperator::Unknown,
             },
             value: value.to_string(),
@@ -40,14 +40,14 @@ impl FilterCondition {
         match &self.operator {
             FilterOperator::Equals => self.value == other_value,
             FilterOperator::NotEquals => self.value != other_value,
-            FilterOperator::Reference => true,
+            FilterOperator::ForeignKey => true,
             FilterOperator::Unknown => true
         }
     }
 
     pub fn is_reference(&self) -> bool {
         match self.operator {
-            FilterOperator::Reference => true,
+            FilterOperator::ForeignKey => true,
             _ => false
 
         }
