@@ -48,6 +48,14 @@ impl FilterCondition {
     pub fn is_foreign_filter(&self) -> bool {
         matches!(self.operator, FilterOperator::ForeignKey)
     }
+
+    pub fn get_foreign_key(&self) -> (String, String) {
+        let mut split = self.value.split('.');
+        let (Some(table), Some(field), None) = (split.next(), split.next(), split.next()) else {
+            panic!("malformed foreign key {}", self.value);
+        };
+        (table.to_string(), field.to_string())
+    }
 }
 
 #[derive(Debug)]
@@ -180,7 +188,8 @@ impl Filters {
         foreign_values: &Option<&HashMap<String, HashSet<String>>>,
     ) -> bool {
         let Some(t) = table else { return true };
-        self.inner.get_mut(t).unwrap().test_sql_statement(sql_statement, foreign_values)
+        let Some(f) = self.inner.get_mut(t) else { return true };
+        f.test_sql_statement(sql_statement, foreign_values)
     }
 
     pub fn get_foreign_tables(&self) -> HashSet<String> {
@@ -191,7 +200,7 @@ impl Filters {
 impl<'a> FromIterator<&'a (String, String)> for Filters {
     fn from_iter<T: IntoIterator<Item=&'a (String, String)>>(items: T) -> Self {
         let conditions: Vec<FilterCondition> = items.into_iter().map(|(table, condition)| FilterCondition::new(table, condition)).collect();
-        let references = References::from_iter(conditions.iter().filter(|fc| fc.is_foreign_filter()).map(|fc| (fc.table.clone(), fc.field.clone())));
+        let references = References::from_iter(conditions.iter().filter(|fc| fc.is_foreign_filter()).map(|fc| fc.get_foreign_key() ));
 
         let mut filters = Filters {
             inner: conditions.into_iter().chunk_by(|x| x.table.clone()).into_iter().map(|(table, items)| (table.clone(), {
