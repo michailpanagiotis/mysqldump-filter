@@ -5,6 +5,7 @@ use crate::expression_parser::{parse_filter, parse_insert_fields, parse_insert_v
 use crate::references::References;
 
 #[derive(Debug)]
+#[derive(Clone)]
 enum FilterOperator {
     Equals,
     NotEquals,
@@ -13,6 +14,7 @@ enum FilterOperator {
 }
 
 #[derive(Debug)]
+#[derive(Clone)]
 pub struct FilterCondition {
     table: String,
     field: String,
@@ -110,9 +112,22 @@ impl FieldFilters {
 #[derive(Default)]
 pub struct TableFilters {
     inner: HashMap<String, FieldFilters>,
+    conditions: Vec<FilterCondition>,
 }
 
 impl TableFilters {
+    fn new(conditions: Vec<FilterCondition>) -> Self {
+        let conds: Vec<FilterCondition> = conditions.iter().cloned().collect();
+        let distinct: Vec<&FilterCondition> = conditions.iter().unique_by(|s| &s.table).collect();
+        if distinct.len() != 1 {
+            panic!("conditions have different tables");
+        }
+        TableFilters {
+            inner: conditions.into_iter().chunk_by(|x| x.field.clone()).into_iter().map(|(field, items)| (field, FieldFilters::from_iter(items))).collect(),
+            conditions: conds,
+        }
+    }
+
     pub fn has_filters(&self) -> bool {
         !self.inner.is_empty()
     }
@@ -163,14 +178,7 @@ impl TableFilters {
 impl FromIterator<FilterCondition> for TableFilters {
     fn from_iter<T: IntoIterator<Item = FilterCondition>>(iter: T) -> Self {
         let conditions: Vec<FilterCondition> = iter.into_iter().collect();
-
-        let distinct: Vec<&FilterCondition> = conditions.iter().unique_by(|s| &s.table).collect();
-        if distinct.len() != 1 {
-            panic!("conditions have different tables");
-        }
-        TableFilters {
-            inner: conditions.into_iter().chunk_by(|x| x.field.clone()).into_iter().map(|(field, items)| (field, FieldFilters::from_iter(items))).collect(),
-        }
+        TableFilters::new(conditions)
     }
 }
 
