@@ -96,7 +96,7 @@ struct FieldFilters {
 }
 
 impl FieldFilters {
-    fn new<T: IntoIterator<Item = FilterCondition>>(iter: T) -> Self {
+    fn new<'a, T: IntoIterator<Item = FilterCondition>>(iter: T, filter_conditions: Vec<&'a FilterCondition>) -> Self {
         let conditions: Vec<FilterCondition> = iter.into_iter().collect();
 
         let distinct: Vec<&FilterCondition> = conditions.iter().unique_by(|s| (&s.table, &s.field)).collect();
@@ -149,11 +149,13 @@ impl<'a> TableFilters<'a> {
         if distinct.len() != 1 {
             panic!("conditions have different tables");
         }
+
+        let filter_conditions = group_conditions_by_field(table, filter_conditions);
         TableFilters {
             table: table.to_string(),
-            inner: conditions.into_iter().chunk_by(|x| x.field.clone()).into_iter().map(|(field, items)| (field, FieldFilters::new(items))).collect(),
+            inner: conditions.into_iter().chunk_by(|x| x.field.clone()).into_iter().map(|(field, items)| (field, FieldFilters::new(items, &filter_conditions[field]))).collect(),
             conditions: conds,
-            filter_conditions: group_conditions_by_field(table, filter_conditions),
+            filter_conditions,
         }
     }
 
