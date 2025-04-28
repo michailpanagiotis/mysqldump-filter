@@ -45,13 +45,13 @@ impl FilterCondition {
         }
     }
 
-    // pub fn is_reference(&self) -> bool {
-    //     match self.operator {
-    //         FilterOperator::ForeignKey => true,
-    //         _ => false
-    //
-    //     }
-    // }
+    pub fn is_reference(&self) -> bool {
+        match self.operator {
+            FilterOperator::ForeignKey => true,
+            _ => false
+
+        }
+    }
 }
 
 #[derive(Debug)]
