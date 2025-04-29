@@ -95,6 +95,7 @@ pub fn read_config(
 pub struct StatementIntoIterator<I: Iterator<Item=String>> {
     inner: I,
     cur_table: Option<String>,
+    cur_counter: u64,
 }
 
 impl<I: Iterator<Item=String>> Iterator for StatementIntoIterator<I> {
@@ -119,6 +120,7 @@ pub fn read_sql_file(sqldump_filepath: &Path, requested_tables: &HashSet<String>
     let mut iter = StatementIntoIterator {
         inner: read_file_lines(sqldump_filepath),
         cur_table: None,
+        cur_counter: 0,
     }.filter(|(table, _)| table.is_none() || table.as_ref().is_some_and(|t| requested_tables.contains(t)));
 
 
