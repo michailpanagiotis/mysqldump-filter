@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use itertools::Itertools;
 use tempdir::TempDir;
 
+use crate::expression_parser::get_data_types;
 use crate::io_utils::{Configuration, combine_files, read_sql_file, read_file_lines, write_sql_file};
 use crate::references::References;
 use crate::filters::{filter_sql_lines, Filters};
@@ -21,8 +22,16 @@ pub fn parse_input_file(config: &Configuration) {
     let mut filepaths: HashMap<Option<String>, PathBuf> = HashMap::new();
     for (table, statements) in all_statements.chunk_by(|(table, _)| table.clone()).into_iter() {
         let lines = filter_sql_lines(&mut filters, &mut references, None, table.clone(), statements.map(|(_, line)| line));
-        let filepath = write_sql_file(&table, config.get_working_dir_for_table(&table), lines);
-        filepaths.insert(table, filepath);
+        if table.is_none() {
+            let schema: Vec<String> = lines.collect();
+            let str: String = schema.iter().cloned().collect();
+            get_data_types(&str);
+            let filepath = write_sql_file(&table, config.get_working_dir_for_table(&table), schema.into_iter());
+            filepaths.insert(table, filepath);
+        } else {
+            let filepath = write_sql_file(&table, config.get_working_dir_for_table(&table), lines);
+            filepaths.insert(table, filepath);
+        }
     }
 
     println!("Second pass...");

@@ -12,6 +12,8 @@ use nom::{
 };
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
+use sqlparser::dialect::MySqlDialect;
+use sqlparser::parser::Parser as SqlParser;
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -76,6 +78,21 @@ pub fn parse_insert_values(insert_statement: &str) -> Vec<&str> {
     let res: IResult<&str, Vec<&str>> = parser.parse(insert_statement);
     let (_, values) = res.expect("cannot parse values");
     values
+}
+
+pub fn get_data_types(schema: &str) -> HashMap<String, sqlparser::ast::DataType> {
+    let mut data_types = HashMap::new();
+
+    let dialect = MySqlDialect {};
+    let ast = SqlParser::parse_sql(&dialect, schema).unwrap();
+    for st in ast.into_iter().filter(|x| matches!(x, sqlparser::ast::Statement::CreateTable(_))) {
+        if let sqlparser::ast::Statement::CreateTable(ct) = st {
+            for column in ct.columns.into_iter() {
+                data_types.insert(ct.name.0[0].as_ident().unwrap().value.to_string() + "." + column.name.value.as_str(), column.data_type);
+            }
+        }
+    }
+    data_types
 }
 
 #[derive(Debug)]
