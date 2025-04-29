@@ -35,10 +35,6 @@ impl<'a> FieldFilters<'a> {
     fn set_position(&mut self, pos: usize) {
         self.position = Some(pos);
     }
-
-    fn has_foreign_filters(&self) -> bool {
-        self.filter_conditions.iter().any(|c| c.is_foreign_filter())
-    }
 }
 
 #[derive(Debug)]
@@ -68,10 +64,6 @@ impl<'a> TableFilters<'a> {
         self.inner.values().all(|field_filters| {
             field_filters.position.is_some()
         })
-    }
-
-    fn has_foreign_filters(&self) -> bool {
-        self.inner.values().any(|ff| ff.has_foreign_filters())
     }
 
     fn resolve_positions(&mut self, insert_statement: &str) {
@@ -136,10 +128,6 @@ impl<'a> Filters<'a> {
         let Some(t) = table else { return true };
         let Some(f) = self.inner.get_mut(t) else { return true };
         f.test_sql_statement(sql_statement, foreign_values)
-    }
-
-    pub fn get_foreign_tables(&self) -> HashSet<String> {
-        self.inner.iter().filter(|(_, tf)| tf.has_foreign_filters()).map(|(table, _)| table.clone()).collect()
     }
 }
 

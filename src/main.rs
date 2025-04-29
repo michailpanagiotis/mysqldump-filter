@@ -36,16 +36,22 @@ fn main() {
         None => cli.working_dir.unwrap(),
     };
 
+    let second_pass_temp_dir = TempDir::new("sql_parser_intermediate").expect("cannot create temporary dir");
+
     let config = read_config(
         &config_file,
         input_file.as_path(),
         output_file.as_path(),
         &working_dir_path,
+        second_pass_temp_dir.path(),
     );
 
     parse_input_file(&config);
 
+    let _ = second_pass_temp_dir.close();
+
     if let Some(dir) = temp_dir {
        let _ = dir.close();
     }
+
 }

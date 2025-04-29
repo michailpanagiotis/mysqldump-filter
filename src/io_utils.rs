@@ -11,17 +11,68 @@ pub struct Configuration {
     pub input_file: PathBuf,
     pub output_file: PathBuf,
     pub working_dir_path: PathBuf,
+    pub temp_dir_path: PathBuf,
     pub requested_tables: HashSet<String>,
+    pub second_pass_tables: HashSet<String>,
     pub filter_conditions: Vec<FilterCondition>,
 }
 
 impl Configuration {
+    pub fn new(
+        settings: Config,
+        input_file: &Path,
+        output_file: &Path,
+        working_dir_path: &Path,
+        temp_dir_path: &Path,
+    ) -> Self {
+        let requested_tables: HashSet<_> = settings
+            .get_array("allow_data_on_tables")
+            .expect("no key 'allow_data_on_tables' in config")
+            .iter().map(|x| x.to_string()).collect();
+
+        let filter_inserts = settings
+                .get_table("filter_inserts")
+                .expect("no key 'filter_inserts' in config");
+
+        let filter_conditions: Vec<_> = filter_inserts
+            .iter()
+            .flat_map(|(table, conditions)| {
+                conditions.clone().into_array().expect("cannot parse config array").into_iter().map(move |x| {
+                    (table.clone(), x.to_string())
+                })
+            }).collect();
+
+        let filter_conditions: Vec<FilterCondition> = filter_conditions.iter().map(|(table, definition)| FilterCondition::new(table, definition)).collect();
+
+        Configuration {
+            input_file: input_file.to_path_buf(),
+            output_file: output_file.to_path_buf(),
+            working_dir_path: working_dir_path.to_path_buf(),
+            temp_dir_path: temp_dir_path.to_path_buf(),
+            requested_tables,
+            second_pass_tables: filter_conditions.iter().filter(|fc| fc.is_foreign_filter()).map(|fc| fc.table.clone()).collect(),
+            filter_conditions,
+        }
+    }
+
     pub fn get_conditions(&self) -> Vec<&FilterCondition> {
         self.filter_conditions.iter().collect()
     }
 
     pub fn get_foreign_keys(&self) -> impl Iterator<Item=(String, String)> {
         self.filter_conditions.iter().filter(|fc| fc.is_foreign_filter()).map(|fc| fc.get_foreign_key() )
+    }
+
+    pub fn get_working_dir_for_table(&self, table: &Option<String>) -> &PathBuf {
+        match table {
+            None => &self.working_dir_path,
+            Some(t) => {
+                match &self.second_pass_tables.contains(t) {
+                    false => &self.working_dir_path,
+                    true => &self.temp_dir_path,
+                }
+            }
+        }
     }
 }
 
@@ -30,6 +81,7 @@ pub fn read_config(
     input_file: &Path,
     output_file: &Path,
     working_dir_path: &Path,
+    temp_dir_path: &Path,
 ) -> Configuration {
     let settings = Config::builder()
         .add_source(File::new(config_file.to_str().expect("invalid config path"), FileFormat::Json))
@@ -37,32 +89,7 @@ pub fn read_config(
         .build()
         .unwrap();
 
-    let requested_tables: HashSet<_> = settings
-        .get_array("allow_data_on_tables")
-        .expect("no key 'allow_data_on_tables' in config")
-        .iter().map(|x| x.to_string()).collect();
-
-    let filter_inserts = settings
-            .get_table("filter_inserts")
-            .expect("no key 'filter_inserts' in config");
-
-    let filter_conditions: Vec<_> = filter_inserts
-        .iter()
-        .flat_map(|(table, conditions)| {
-            conditions.clone().into_array().expect("cannot parse config array").into_iter().map(move |x| {
-                (table.clone(), x.to_string())
-            })
-        }).collect();
-
-    let filter_conditions: Vec<FilterCondition> = filter_conditions.iter().map(|(table, definition)| FilterCondition::new(table, definition)).collect();
-
-    Configuration {
-        input_file: input_file.to_path_buf(),
-        output_file: output_file.to_path_buf(),
-        working_dir_path: working_dir_path.to_path_buf(),
-        requested_tables,
-        filter_conditions,
-    }
+    Configuration::new(settings, input_file, output_file, working_dir_path, temp_dir_path)
 }
 
 fn read_file_lines(filepath: &Path) -> impl Iterator<Item=String> + use<> {
