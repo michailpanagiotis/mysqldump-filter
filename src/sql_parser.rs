@@ -7,16 +7,16 @@ use crate::references::References;
 use crate::filters::{filter_insert_statements, Filters};
 
 pub fn parse_input_file(config: &Configuration) {
-    let mut filters = Filters::new(&config.get_conditions());
-
-    dbg!(&filters);
-
-    let mut references = References::from_iter(config.get_foreign_keys());
-
-    println!("First pass...");
+    println!("Capturing schema...");
     let (schema, all_statements) = read_sql_file(&config.input_file, &config.requested_tables);
     let data_types = get_data_types(&schema);
     dbg!(data_types);
+
+    let mut references = References::from_iter(config.get_foreign_keys());
+    let mut filters = Filters::new(&config.get_conditions());
+    dbg!(&filters);
+
+    println!("First pass...");
     let mut first_pass_filepaths: Vec<(Option<String>, PathBuf)> = Vec::new();
     for (group, statements) in all_statements.chunk_by(|(table, _)| table.clone()).into_iter() {
         if let Some(ref table) = group {
@@ -27,7 +27,6 @@ pub fn parse_input_file(config: &Configuration) {
     }
 
     println!("Second pass...");
-
     let second_pass_filepaths: Vec<PathBuf> = first_pass_filepaths.iter().map(|(table, path)| {
         match table {
             None => path.clone(),
