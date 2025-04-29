@@ -1,5 +1,5 @@
 use config::{Config, Environment, File, FileFormat};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};

@@ -122,28 +122,25 @@ impl<'a> Filters<'a> {
     pub fn test_sql_statement(
         &mut self,
         sql_statement: &str,
-        table: &Option<String>,
+        table: &str,
         foreign_values: &Option<&HashMap<String, HashSet<String>>>,
     ) -> bool {
-        let Some(t) = table else { return true };
-        let Some(f) = self.inner.get_mut(t) else { return true };
+        let Some(f) = self.inner.get_mut(table) else { return true };
         f.test_sql_statement(sql_statement, foreign_values)
     }
 }
 
-pub fn filter_sql_lines<'a, I: Iterator<Item=String>>(
+pub fn filter_insert_statements<'a, I: Iterator<Item=String>>(
     filters: &'a mut Filters,
     references: &'a mut References,
     foreign_values: Option<&'a HashMap<String, HashSet<String>>>,
-    table: Option<String>,
+    table: &str,
     lines: I,
 ) -> impl Iterator<Item=String> {
     lines.filter(move |st| {
-        let should_keep = filters.test_sql_statement(st, &table, &foreign_values);
+        let should_keep = filters.test_sql_statement(st, table, &foreign_values);
         if should_keep {
-            if let Some(ref t) = table {
-                references.capture(t, st);
-            }
+            references.capture(table, st);
         }
         should_keep
     })

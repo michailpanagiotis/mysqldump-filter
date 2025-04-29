@@ -139,6 +139,10 @@ impl FilterCondition {
         }
     }
 
+    pub fn set_data_type(&mut self, data_types: &HashMap<String, sqlparser::ast::DataType>) {
+
+    }
+
     pub fn test(&self, other_value: &str) -> bool {
         match &self.operator {
             FilterOperator::Equals => self.value == other_value,
