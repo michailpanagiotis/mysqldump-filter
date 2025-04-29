@@ -1,4 +1,5 @@
 use lazy_static::lazy_static;
+use cel_interpreter::{Context, Program};
 use nom::{
   IResult,
   Parser,
@@ -82,6 +83,7 @@ enum FilterOperator {
     Equals,
     NotEquals,
     ForeignKey,
+    Cel(Program),
     Unknown,
 }
 
@@ -95,6 +97,17 @@ pub struct FilterCondition {
 
 impl FilterCondition {
     pub fn new(table: &str, definition: &str) -> FilterCondition {
+        if definition.starts_with("cel:") {
+            let program = Program::compile(&definition[4..]).unwrap();
+            let variables: Vec<String> = program.references().variables().iter().map(|f| f.to_string()).collect();
+            dbg!(&variables);
+            return FilterCondition {
+                table: table.to_string(),
+                field: variables[0].to_string(),
+                operator: FilterOperator::Cel(program),
+                value: definition.to_string(),
+            }
+        }
         let (field, operator, value) = parse_filter(definition);
         FilterCondition {
             table: table.to_string(),
@@ -114,6 +127,19 @@ impl FilterCondition {
             FilterOperator::Equals => self.value == other_value,
             FilterOperator::NotEquals => self.value != other_value,
             FilterOperator::ForeignKey => true,
+            FilterOperator::Cel(program) => {
+                let mut context = Context::default();
+                let val: u64 = other_value.parse().unwrap();
+                context.add_variable(self.field.clone(), val).unwrap();
+
+                let value = program.execute(&context).unwrap();
+                let res = match value {
+                    cel_interpreter::objects::Value::Bool(v) => v,
+                    _ => false,
+                };
+                println!("testing {} -> {}", &val, &res);
+                res
+            },
             FilterOperator::Unknown => true
         }
     }
