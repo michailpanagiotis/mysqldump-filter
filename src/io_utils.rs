@@ -101,6 +101,8 @@ pub struct StatementIntoIterator<I: Iterator<Item=String>> {
 impl<I: Iterator<Item=String>> Iterator for StatementIntoIterator<I> {
     type Item = (Option<String>, String);
     fn next(&mut self) -> Option<(Option<String>, String)> {
+        self.cur_counter += 1;
+        println!("{}", &self.cur_counter);
         let line = self.inner.next()?;
 
         if let Some(t) = get_table_from_comment(&line) {
