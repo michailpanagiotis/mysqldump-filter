@@ -1,5 +1,5 @@
 use config::{Config, Environment, File, FileFormat};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -98,16 +98,19 @@ pub fn read_file_lines(filepath: &Path) -> impl Iterator<Item=String> + use<> {
         .map_while(Result::ok)
 }
 
-pub fn read_sql_file(sqldump_filepath: &Path, requested_tables: &HashSet<String>) -> impl Iterator<Item = (Option<String>, String)> {
+pub fn read_sql_file(sqldump_filepath: &Path, requested_tables: &HashSet<String>) -> (Vec<String>, impl Iterator<Item = (Option<String>, String)>) {
     let mut cur_table: Option<String> = None;
-    read_file_lines(sqldump_filepath)
+    let mut iter = read_file_lines(sqldump_filepath)
         .map(move |line| {
             if let Some(t) = get_table_from_comment(&line) {
                 cur_table = Some(t);
             }
             (cur_table.clone(), line)
         })
-        .filter(|(table, _)| table.is_none() || table.as_ref().is_some_and(|t| requested_tables.contains(t)))
+        .filter(|(table, _)| table.is_none() || table.as_ref().is_some_and(|t| requested_tables.contains(t)));
+
+    let schema: Vec<String> = iter.by_ref().take_while(|(table,_)| table.is_none()).map(|(_, line)| line + "\n").collect();
+    (schema, iter)
 }
 
 pub fn write_file_lines<I: Iterator<Item=String>>(filepath: &PathBuf, lines: I) -> PathBuf {

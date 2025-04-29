@@ -14,21 +14,15 @@ pub fn parse_input_file(config: &Configuration) {
     let mut references = References::from_iter(config.get_foreign_keys());
 
     println!("First pass...");
-    let all_statements = read_sql_file(&config.input_file, &config.requested_tables);
+    let (schema, all_statements) = read_sql_file(&config.input_file, &config.requested_tables);
+    let data_types = get_data_types(&schema);
+    dbg!(data_types);
     let mut first_pass_filepaths: Vec<(Option<String>, PathBuf)> = Vec::new();
     for (group, statements) in all_statements.chunk_by(|(table, _)| table.clone()).into_iter() {
-        match group {
-            None => {
-                let schema: Vec<String> = statements.map(|(_, line)| line).collect();
-                let str: String = schema.iter().cloned().collect();
-                let filepath = write_sql_file(&group, config.get_working_dir_for_table(&group), schema.into_iter());
-                first_pass_filepaths.push((group, filepath));
-            },
-            Some(ref table) => {
-                let lines = filter_insert_statements(&mut filters, &mut references, None, table, statements.map(|(_, line)| line));
-                let filepath = write_sql_file(&group, config.get_working_dir_for_table(&group), lines);
-                first_pass_filepaths.push((group, filepath));
-            }
+        if let Some(ref table) = group {
+            let lines = filter_insert_statements(&mut filters, &mut references, None, table, statements.map(|(_, line)| line));
+            let filepath = write_sql_file(&group, config.get_working_dir_for_table(&group), lines);
+            first_pass_filepaths.push((group, filepath));
         }
     }
 

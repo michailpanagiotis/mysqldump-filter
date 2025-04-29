@@ -80,11 +80,13 @@ pub fn parse_insert_values(insert_statement: &str) -> Vec<&str> {
     values
 }
 
-pub fn get_data_types(schema: &str) -> HashMap<String, sqlparser::ast::DataType> {
+pub fn get_data_types(schema: &[String]) -> HashMap<String, sqlparser::ast::DataType> {
     let mut data_types = HashMap::new();
 
+    let sql: String = schema.iter().filter(|x| !x.starts_with("--")).cloned().collect();
+
     let dialect = MySqlDialect {};
-    let ast = SqlParser::parse_sql(&dialect, schema).unwrap();
+    let ast = SqlParser::parse_sql(&dialect, &sql).unwrap();
     for st in ast.into_iter().filter(|x| matches!(x, sqlparser::ast::Statement::CreateTable(_))) {
         if let sqlparser::ast::Statement::CreateTable(ct) = st {
             for column in ct.columns.into_iter() {
@@ -115,7 +117,8 @@ pub struct FilterCondition {
 impl FilterCondition {
     pub fn new(table: &str, definition: &str) -> FilterCondition {
         if definition.starts_with("cel:") {
-            let program = Program::compile(&definition[4..]).unwrap();
+            let Some(end) = definition.strip_prefix("cel:") else { panic!("cannot parse cel expression") };
+            let program = Program::compile(end).unwrap();
             let variables: Vec<String> = program.references().variables().iter().map(|f| f.to_string()).collect();
             dbg!(&variables);
             return FilterCondition {
@@ -137,10 +140,6 @@ impl FilterCondition {
             },
             value: value.to_string(),
         }
-    }
-
-    pub fn set_data_type(&mut self, data_types: &HashMap<String, sqlparser::ast::DataType>) {
-
     }
 
     pub fn test(&self, other_value: &str) -> bool {
