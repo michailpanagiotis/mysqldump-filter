@@ -120,7 +120,6 @@ impl FilterCondition {
             let Some(end) = definition.strip_prefix("cel:") else { panic!("cannot parse cel expression") };
             let program = Program::compile(end).unwrap();
             let variables: Vec<String> = program.references().variables().iter().map(|f| f.to_string()).collect();
-            dbg!(&variables);
             return FilterCondition {
                 table: table.to_string(),
                 field: variables[0].to_string(),

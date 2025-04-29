@@ -92,6 +92,23 @@ pub fn read_config(
     Configuration::new(settings, input_file, output_file, working_dir_path, temp_dir_path)
 }
 
+pub struct StatementIntoIterator<I: Iterator<Item=String>> {
+    inner: I,
+    cur_table: Option<String>,
+}
+
+impl<I: Iterator<Item=String>> Iterator for StatementIntoIterator<I> {
+    type Item = (Option<String>, String);
+    fn next(&mut self) -> Option<(Option<String>, String)> {
+        let line = self.inner.next()?;
+
+        if let Some(t) = get_table_from_comment(&line) {
+            self.cur_table = Some(t);
+        }
+        Some((self.cur_table.clone(), line))
+    }
+}
+
 pub fn read_file_lines(filepath: &Path) -> impl Iterator<Item=String> + use<> {
     let file = fs::File::open(filepath).expect("Cannot open file");
     io::BufReader::new(file).lines()
@@ -99,15 +116,11 @@ pub fn read_file_lines(filepath: &Path) -> impl Iterator<Item=String> + use<> {
 }
 
 pub fn read_sql_file(sqldump_filepath: &Path, requested_tables: &HashSet<String>) -> (Vec<String>, impl Iterator<Item = (Option<String>, String)>) {
-    let mut cur_table: Option<String> = None;
-    let mut iter = read_file_lines(sqldump_filepath)
-        .map(move |line| {
-            if let Some(t) = get_table_from_comment(&line) {
-                cur_table = Some(t);
-            }
-            (cur_table.clone(), line)
-        })
-        .filter(|(table, _)| table.is_none() || table.as_ref().is_some_and(|t| requested_tables.contains(t)));
+    let mut iter = StatementIntoIterator {
+        inner: read_file_lines(sqldump_filepath),
+        cur_table: None,
+    }.filter(|(table, _)| table.is_none() || table.as_ref().is_some_and(|t| requested_tables.contains(t)));
+
 
     let schema: Vec<String> = iter.by_ref().take_while(|(table,_)| table.is_none()).map(|(_, line)| line + "\n").collect();
     (schema, iter)
