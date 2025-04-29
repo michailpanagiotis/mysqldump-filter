@@ -21,9 +21,7 @@ pub fn parse_input_file(config: &Configuration) {
     let mut filepaths: HashMap<Option<String>, PathBuf> = HashMap::new();
     for (table, statements) in all_statements.chunk_by(|(table, _)| table.clone()).into_iter() {
         let lines = filter_sql_lines(&mut filters, &mut references, None, table.clone(), statements.map(|(_, line)| line));
-        let working_dir_path = config.get_working_dir_for_table(&table);
-
-        let filepath = write_sql_file(&table, working_dir_path, lines);
+        let filepath = write_sql_file(&table, config.get_working_dir_for_table(&table), lines);
         filepaths.insert(table, filepath);
     }
 
