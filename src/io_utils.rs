@@ -92,7 +92,7 @@ pub fn read_config(
     Configuration::new(settings, input_file, output_file, working_dir_path, temp_dir_path)
 }
 
-fn read_file_lines(filepath: &Path) -> impl Iterator<Item=String> + use<> {
+pub fn read_file_lines(filepath: &Path) -> impl Iterator<Item=String> + use<> {
     let file = fs::File::open(filepath).expect("Cannot open file");
     io::BufReader::new(file).lines()
         .map_while(Result::ok)

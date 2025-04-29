@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use itertools::Itertools;
 use tempdir::TempDir;
 
-use crate::io_utils::{Configuration, combine_files, read_sql_file, write_sql_file};
+use crate::io_utils::{Configuration, combine_files, read_sql_file, read_file_lines, write_sql_file};
 use crate::references::References;
 use crate::filters::{filter_sql_lines, Filters};
 
@@ -28,8 +28,8 @@ pub fn parse_input_file(config: &Configuration) {
     println!("Second pass...");
     for table in config.second_pass_tables.iter() {
         let input_file = &filepaths[&Some(table.clone())];
-        let statements = read_sql_file(input_file, &config.requested_tables);
-        let lines = filter_sql_lines(&mut filters, &mut references, None, Some(table.clone()), statements.map(|(_, line)| line));
+        let statements = read_file_lines(input_file);
+        let lines = filter_sql_lines(&mut filters, &mut references, None, Some(table.clone()), statements);
         let filepath = write_sql_file(&Some(table.clone()), &config.working_dir_path, lines);
         filepaths.insert(Some(table.clone()), filepath);
     }
