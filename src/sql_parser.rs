@@ -1,7 +1,5 @@
 use std::path::PathBuf;
 use itertools::Itertools;
-use tempdir::TempDir;
-use tempfile::tempdir;
 
 use crate::expression_parser::get_data_types;
 use crate::io_utils::{Configuration, combine_files, read_sql_file, read_file_lines, write_sql_file};
