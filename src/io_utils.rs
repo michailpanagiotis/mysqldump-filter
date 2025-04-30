@@ -1,11 +1,12 @@
 use config::{Config, Environment, File, FileFormat};
 use core::panic;
+use itertools::Itertools;
 use std::collections::HashSet;
 use std::fs;
 use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use crate::expression_parser::{extract_table, get_table_from_comment, FilterCondition};
+use crate::expression_parser::{extract_table, FilterCondition};
 
 #[derive(Debug)]
 pub struct Configuration {
@@ -97,39 +98,20 @@ pub fn read_config(
     Configuration::new(settings, input_file, output_file, working_dir_path, temp_dir_path)
 }
 
-pub struct StatementIntoIterator<I: Iterator<Item=String>> {
-    inner: I,
-    cur_table: Option<String>,
-    cur_counter: u64,
-}
-
-impl<I: Iterator<Item=String>> Iterator for StatementIntoIterator<I> {
-    type Item = (Option<String>, String);
-    fn next(&mut self) -> Option<(Option<String>, String)> {
-        self.cur_counter += 1;
-        println!("{}", &self.cur_counter);
-        let line = self.inner.next()?;
-
-        if let Some(t) = get_table_from_comment(&line) {
-            self.cur_table = Some(t);
-        }
-        Some((self.cur_table.clone(), line))
-    }
-}
-
 pub struct Statements<B> {
     buf: B,
     cur_table: Option<String>,
-}
-
-pub enum StatementError {
-    Plain,
-    Utf8Error(())
+    last_statement: Option<(Option<String>, String)>,
 }
 
 impl<B: BufRead> Iterator for Statements<B> {
-    type Item = Result<(Option<String>, String), StatementError>;
-    fn next(&mut self) -> Option<Result<(Option<String>, String), StatementError>> {
+    type Item = (Option<String>, String);
+    fn next(&mut self) -> Option<(Option<String>, String)> {
+        // if let Some(ref st) = self.last_statement {
+        //     let res = st.clone();
+        //     self.last_statement = None;
+        //     return Some(res);
+        // }
         let mut buf8 = vec![];
         match self.buf.read_until(b';', &mut buf8) {
             Ok(0) => None,
@@ -140,24 +122,29 @@ impl<B: BufRead> Iterator for Statements<B> {
                             let table = extract_table(&line);
                             self.cur_table = Some(table);
                         }
-                        Some(Ok((self.cur_table.clone(), line)))
+                        Some((self.cur_table.clone(), line))
                     }
-                    Err(_) => Some(Err(StatementError::Plain))
+                    Err(_) => None,
                 }
             }
-            Err(_) => Some(Err(StatementError::Plain {})),
+            Err(_) => None,
         }
-
     }
 }
 
-pub fn read_statements(filepath: &Path) -> impl Iterator<Item=(Option<String>, String)> + use<> {
-    let f1 = fs::File::open(filepath).expect("Cannot open file");
-    let st1 = Statements {
-        buf: io::BufReader::new(f1),
-        cur_table: None,
-    };
-    st1.map_while(Result::ok)
+impl<B: BufRead> itertools::PeekingNext for Statements<B> {
+    fn peeking_next<F>(&mut self, accept: F) -> Option<Self::Item>
+      where Self: Sized,
+            F: FnOnce(&Self::Item) -> bool
+    {
+        self.last_statement = self.next();
+        let Some(ref st) = self.last_statement else { return None };
+        let should_accept = accept(st);
+        if !should_accept {
+            return None;
+        }
+        self.last_statement.clone()
+    }
 }
 
 pub fn read_file_lines(filepath: &Path) -> impl Iterator<Item=String> + use<> {
@@ -167,9 +154,17 @@ pub fn read_file_lines(filepath: &Path) -> impl Iterator<Item=String> + use<> {
 }
 
 pub fn read_sql_file(sqldump_filepath: &Path, requested_tables: &HashSet<String>) -> (Vec<String>, impl Iterator<Item = (Option<String>, String)>) {
-    let mut iter = read_statements(sqldump_filepath).filter(|(table, _)| table.is_none() || table.as_ref().is_some_and(|t| requested_tables.contains(t)));
-    let schema: Vec<String> = iter.by_ref().take_while(|(table,_)| table.is_none()).map(|(_, line)| line).collect();
-    (schema, iter)
+    let f1 = fs::File::open(sqldump_filepath).expect("Cannot open file");
+    let mut iter = Statements {
+        buf: io::BufReader::new(f1),
+        cur_table: None,
+        last_statement: None,
+    };
+    let peekable = iter.by_ref().peeking_take_while(|(table,_)| table.is_none()).map(|(_, line)| line);
+    let schema: Vec<String> = peekable.collect();
+    (schema, iter.filter(|(table, _)| {
+        table.is_none() || table.as_ref().is_some_and(|t| requested_tables.contains(t))
+    }))
 }
 
 pub fn write_file_lines<I: Iterator<Item=String>>(filepath: &PathBuf, lines: I) -> PathBuf {
