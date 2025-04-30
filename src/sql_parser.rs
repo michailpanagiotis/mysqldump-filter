@@ -20,9 +20,9 @@ pub fn parse_input_file(config: &Configuration) {
 
     println!("First pass...");
     let mut first_pass_filepaths: Vec<(Option<String>, PathBuf)> = Vec::new();
-    for (group, statements) in all_statements.chunk_by(|(table, _)| table.clone()).into_iter() {
+    for (group, statements) in all_statements.chunk_by(|(_, table, _)| table.clone()).into_iter() {
         if let Some(ref table) = group {
-            let lines = filter_insert_statements(&mut filters, &mut references, None, table, statements.map(|(_, line)| line));
+            let lines = filter_insert_statements(&mut filters, &mut references, None, table, statements.map(|(_, _, line)| line));
             let filepath = write_sql_file(&group, config.get_working_dir_for_table(&group), lines);
             first_pass_filepaths.push((group, filepath));
         } else {
