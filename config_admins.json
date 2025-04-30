@@ -1,5 +1,8 @@
 {
   "allow_data_on_tables": ["admins"],
   "filter_inserts": {
+    "admins": [
+      "cel:is_super==1"
+    ]
   }
 }

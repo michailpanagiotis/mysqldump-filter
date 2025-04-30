@@ -101,23 +101,18 @@ pub fn read_config(
 pub struct Statements<B> {
     buf: B,
     cur_table: Option<String>,
-    last_statement: Option<(Option<String>, String)>,
 }
 
 impl<B: BufRead> Iterator for Statements<B> {
     type Item = (Option<String>, String);
     fn next(&mut self) -> Option<(Option<String>, String)> {
-        // if let Some(ref st) = self.last_statement {
-        //     let res = st.clone();
-        //     self.last_statement = None;
-        //     return Some(res);
-        // }
         let mut buf8 = vec![];
         match self.buf.read_until(b';', &mut buf8) {
             Ok(0) => None,
             Ok(_n) => {
                 match String::from_utf8(buf8) {
-                    Ok(line) => {
+                    Ok(l) => {
+                        let line = l.split('\n').filter(|x| !x.is_empty()).join("\n") + "\n";
                         if line.trim().starts_with("--\n-- Dumping data for table") {
                             let table = extract_table(&line);
                             self.cur_table = Some(table);
@@ -137,13 +132,12 @@ impl<B: BufRead> itertools::PeekingNext for Statements<B> {
       where Self: Sized,
             F: FnOnce(&Self::Item) -> bool
     {
-        self.last_statement = self.next();
-        let Some(ref st) = self.last_statement else { return None };
-        let should_accept = accept(st);
-        if !should_accept {
+        let last_statement = self.next();
+        let st = last_statement.as_ref()?;
+        if !accept(st) {
             return None;
         }
-        self.last_statement.clone()
+        last_statement
     }
 }
 
@@ -158,7 +152,6 @@ pub fn read_sql_file(sqldump_filepath: &Path, requested_tables: &HashSet<String>
     let mut iter = Statements {
         buf: io::BufReader::new(f1),
         cur_table: None,
-        last_statement: None,
     };
     let peekable = iter.by_ref().peeking_take_while(|(table,_)| table.is_none()).map(|(_, line)| line);
     let schema: Vec<String> = peekable.collect();
