@@ -31,7 +31,7 @@ pub fn parse_input_file(config: &Configuration) {
     }
 
     println!("Second pass...");
-    let second_pass_filepaths: Vec<PathBuf> = first_pass_filepaths.iter().map(|(table, path)| {
+    let second_pass_filepaths: Vec<PathBuf> = std::iter::once(schema_path).chain(first_pass_filepaths.iter().map(|(table, path)| {
         match table {
             None => path.clone(),
             Some(t) => {
@@ -43,7 +43,7 @@ pub fn parse_input_file(config: &Configuration) {
                 write_sql_file(table, &config.working_dir_path, lines)
             }
         }
-    }).collect();
+    })).collect();
 
     dbg!(&second_pass_filepaths);
 

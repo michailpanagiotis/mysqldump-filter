@@ -172,11 +172,12 @@ pub fn read_sql_file(sqldump_filepath: &Path, requested_tables: &HashSet<String>
         last_statement: None,
         section: StatementSection::Header,
     };
-    let peekable = iter.by_ref().peeking_take_while(|(_, table,_)| table.is_none()).map(|(_, _, line)| line);
-    let schema: Vec<String> = peekable.collect();
-    (schema, iter.filter(|(_, table, _)| {
+    let schema: Vec<String> = iter.by_ref().peeking_take_while(|(_, table,_)| table.is_none()).map(|(_, _, line)| line).collect();
+    let inserts = iter.filter(|(_, table, _)| {
         table.is_none() || table.as_ref().is_some_and(|t| requested_tables.contains(t))
-    }))
+    });
+
+    (schema, inserts)
 }
 
 pub fn write_file_lines<I: Iterator<Item=String>>(filepath: &PathBuf, lines: I) -> PathBuf {
