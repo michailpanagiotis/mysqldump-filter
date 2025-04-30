@@ -145,3 +145,19 @@ pub fn filter_insert_statements<'a, I: Iterator<Item=String>>(
         should_keep
     })
 }
+
+pub fn filter_statements<'a, I: Iterator<Item=(Option<String>, String)>>(
+    filters: &'a mut Filters,
+    references: &'a mut References,
+    foreign_values: Option<&'a HashMap<String, HashSet<String>>>,
+    lines: I,
+) -> impl Iterator<Item=(Option<String>, String)> {
+    lines.filter(move |(t, st)| {
+        let Some(table) = t else { return true };
+        let should_keep = filters.test_sql_statement(st, table, &foreign_values);
+        if should_keep {
+            references.capture(table, st);
+        }
+        should_keep
+    })
+}

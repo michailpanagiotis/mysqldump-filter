@@ -131,6 +131,7 @@ impl<B: BufRead> Iterator for Statements<B> {
                             if self.cur_table.is_none() {
                                 self.section = StatementSection::Insert;
                             }
+                            println!("reading table {}", &table);
                             self.cur_table = Some(table);
                         }
                         self.last_statement = Some(line.clone());
