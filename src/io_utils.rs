@@ -69,10 +69,15 @@ impl Configuration {
         self.working_dir_path.join("INFORMATION_SCHEMA").with_extension("sql")
     }
 
-    pub fn get_working_dir_for_table(&self, table: &str) -> &PathBuf {
-        match &self.second_pass_tables.contains(table) {
-            false => &self.working_dir_path,
-            true => &self.temp_dir_path,
+    pub fn get_working_dir_for_table(&self, table: &Option<String>) -> &PathBuf {
+        match table {
+            None => &self.working_dir_path,
+            Some(t) => {
+                match &self.second_pass_tables.contains(t) {
+                    false => &self.working_dir_path,
+                    true => &self.temp_dir_path,
+                }
+            }
         }
     }
 }
@@ -96,6 +101,7 @@ pub fn read_config(
 pub struct Statements<B> {
     buf: B,
     cur_table: Option<String>,
+    last_statement: Option<String>,
 }
 
 impl<B: BufRead> Iterator for Statements<B> {
@@ -107,11 +113,15 @@ impl<B: BufRead> Iterator for Statements<B> {
             Ok(_n) => {
                 match String::from_utf8(buf8) {
                     Ok(l) => {
+                        if self.last_statement.as_ref().is_some_and(|x| x.starts_with("UNLOCK TABLES;")) {
+                            self.cur_table = None;
+                        }
                         let line = l.split('\n').filter(|x| !x.is_empty()).join("\n") + "\n";
                         if line.trim().starts_with("--\n-- Dumping data for table") {
                             let table = extract_table(&line);
                             self.cur_table = Some(table);
                         }
+                        self.last_statement = Some(line.clone());
                         Some((self.cur_table.clone(), line))
                     }
                     Err(_) => None,
@@ -142,17 +152,18 @@ pub fn read_file_lines(filepath: &Path) -> impl Iterator<Item=String> + use<> {
         .map_while(Result::ok)
 }
 
-pub fn read_sql_file(sqldump_filepath: &Path, requested_tables: &HashSet<String>) -> (Vec<String>, impl Iterator<Item = (String, String)>) {
+pub fn read_sql_file(sqldump_filepath: &Path, requested_tables: &HashSet<String>) -> (Vec<String>, impl Iterator<Item = (Option<String>, String)>) {
     let f1 = fs::File::open(sqldump_filepath).expect("Cannot open file");
     let mut iter = Statements {
         buf: io::BufReader::new(f1),
         cur_table: None,
+        last_statement: None,
     };
     let peekable = iter.by_ref().peeking_take_while(|(table,_)| table.is_none()).map(|(_, line)| line);
     let schema: Vec<String> = peekable.collect();
     (schema, iter.filter(|(table, _)| {
-        table.as_ref().is_some_and(|t| requested_tables.contains(t))
-    }).map(|(table, line)| (table.unwrap(), line)))
+        table.is_none() || table.as_ref().is_some_and(|t| requested_tables.contains(t))
+    }))
 }
 
 pub fn write_file_lines<I: Iterator<Item=String>>(filepath: &PathBuf, lines: I) -> PathBuf {
@@ -174,8 +185,11 @@ pub fn write_file_lines<I: Iterator<Item=String>>(filepath: &PathBuf, lines: I) 
     filepath.clone()
 }
 
-pub fn write_sql_file<I: Iterator<Item=String>>(table: &str, working_dir_path: &Path, lines: I) -> PathBuf {
-    let filepath =  working_dir_path.join(table).with_extension("sql");
+pub fn write_sql_file<I: Iterator<Item=String>>(table: &Option<String>, working_dir_path: &Path, lines: I) -> PathBuf {
+    let filepath = match table {
+        Some(x) => working_dir_path.join(x).with_extension("sql"),
+        None => working_dir_path.join("INFORMATION_SCHEMA").with_extension("sql"),
+    };
     write_file_lines(&filepath, lines);
     filepath
 }

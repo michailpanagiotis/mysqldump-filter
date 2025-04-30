@@ -15,22 +15,23 @@ pub fn parse_input_file(config: &Configuration) {
 
 
     let data_types = get_data_types(&schema);
-    dbg!(data_types);
-
     let mut references = References::from_iter(config.get_foreign_keys());
     let mut filters = Filters::new(&config.get_conditions());
-    dbg!(&filters);
 
     println!("First pass...");
     let mut first_pass_filepaths: Vec<(Option<String>, PathBuf)> = Vec::new();
-    for (table, statements) in all_statements.chunk_by(|(table, _)| table.clone()).into_iter() {
-        let lines = filter_insert_statements(&mut filters, &mut references, None, &table, statements.map(|(_, line)| line));
-        let filepath = write_sql_file(&table, config.get_working_dir_for_table(&table), lines);
-        first_pass_filepaths.push((Some(table.clone()), filepath));
+    for (group, statements) in all_statements.chunk_by(|(table, _)| table.clone()).into_iter() {
+        if let Some(ref table) = group {
+            let lines = filter_insert_statements(&mut filters, &mut references, None, table, statements.map(|(_, line)| line));
+            let filepath = write_sql_file(&group, config.get_working_dir_for_table(&group), lines);
+            first_pass_filepaths.push((group, filepath));
+        } else {
+            println!("OUT");
+        }
     }
 
     println!("Second pass...");
-    let second_pass_filepaths: Vec<PathBuf> = std::iter::once(config.get_schema_path()).chain(first_pass_filepaths.iter().map(|(table, path)| {
+    let second_pass_filepaths: Vec<PathBuf> = first_pass_filepaths.iter().map(|(table, path)| {
         match table {
             None => path.clone(),
             Some(t) => {
@@ -39,10 +40,10 @@ pub fn parse_input_file(config: &Configuration) {
                 }
                 let statements = read_file_lines(path);
                 let lines = filter_insert_statements(&mut filters, &mut references, None, t, statements);
-                write_sql_file(t, &config.working_dir_path, lines)
+                write_sql_file(table, &config.working_dir_path, lines)
             }
         }
-    })).collect();
+    }).collect();
 
     dbg!(&second_pass_filepaths);
 
