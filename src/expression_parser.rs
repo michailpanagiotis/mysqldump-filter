@@ -80,7 +80,7 @@ pub fn parse_insert_values(insert_statement: &str) -> Vec<&str> {
         )
     );
     let res: IResult<&str, Vec<&str>> = parser.parse(insert_statement);
-    let (_, values) = res.expect("cannot parse values");
+    let (_, values) = res.expect(&format!("cannot parse values for {}", &insert_statement));
     values
 }
 

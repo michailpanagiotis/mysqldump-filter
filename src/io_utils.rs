@@ -69,6 +69,10 @@ impl Configuration {
         self.working_dir_path.join("INFORMATION_SCHEMA").with_extension("sql")
     }
 
+    pub fn get_working_file_path(&self) -> PathBuf {
+        self.temp_dir_path.join("INTERIM").with_extension("sql")
+    }
+
     pub fn get_working_dir_for_table(&self, table: &Option<String>) -> &PathBuf {
         match table {
             None => &self.working_dir_path,
@@ -112,6 +116,24 @@ struct Statements<B> {
     section: StatementSection,
 }
 
+impl<B: BufRead> Statements<B> {
+    fn capture_table(&mut self, cur_statement: &str) {
+        if self.last_statement.as_ref().is_some_and(|x| x.starts_with("UNLOCK TABLES;")) {
+            self.cur_table = None;
+            self.section = StatementSection::Footer;
+        }
+        if cur_statement.starts_with("--\n-- Dumping data for table") {
+            let table = extract_table(cur_statement);
+            if self.cur_table.is_none() {
+                self.section = StatementSection::Insert;
+            }
+            println!("reading table {}", &table);
+            self.cur_table = Some(table);
+        }
+        self.last_statement = Some(cur_statement.to_string());
+    }
+}
+
 impl<B: BufRead> Iterator for Statements<B> {
     type Item = (StatementSection, Option<String>, String);
     fn next(&mut self) -> Option<(StatementSection, Option<String>, String)> {
@@ -119,22 +141,12 @@ impl<B: BufRead> Iterator for Statements<B> {
         match self.buf.read_until(b';', &mut buf8) {
             Ok(0) => None,
             Ok(_n) => {
+                // make sure that the ';' is right at the end of the line
+                self.buf.read_until(b'\n', &mut buf8);
                 match String::from_utf8(buf8) {
                     Ok(l) => {
                         let line = (l.split('\n').filter(|x| !x.is_empty()).join("\n")).trim().to_string() + "\n";
-                        if self.last_statement.as_ref().is_some_and(|x| x.starts_with("UNLOCK TABLES;")) {
-                            self.cur_table = None;
-                            self.section = StatementSection::Footer;
-                        }
-                        if line.starts_with("--\n-- Dumping data for table") {
-                            let table = extract_table(&line);
-                            if self.cur_table.is_none() {
-                                self.section = StatementSection::Insert;
-                            }
-                            println!("reading table {}", &table);
-                            self.cur_table = Some(table);
-                        }
-                        self.last_statement = Some(line.clone());
+                        self.capture_table(&line);
                         Some((self.section.clone(), self.cur_table.clone(), line))
                     }
                     Err(_) => None,

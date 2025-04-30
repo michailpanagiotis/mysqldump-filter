@@ -1,27 +1,22 @@
-use std::path::PathBuf;
-use itertools::Itertools;
-
+use std::fs;
 use crate::expression_parser::get_data_types;
 use crate::io_utils::{combine_files, read_file_lines, read_sql_file, write_file_lines, write_sql_file, Configuration};
 use crate::references::References;
-use crate::filters::{filter_statements, filter_insert_statements, Filters};
+use crate::filters::{filter_statements, Filters};
 
 pub fn parse_input_file(config: &Configuration) {
     println!("Capturing schema...");
     let (schema, all_statements) = read_sql_file(&config.input_file, &config.requested_tables);
-
-    let schema_path = config.get_schema_path();
-    write_file_lines(&schema_path, schema.iter().cloned());
 
     let data_types = get_data_types(&schema);
     let mut references = References::from_iter(config.get_foreign_keys());
     let mut filters = Filters::new(&config.get_conditions());
 
     println!("First pass...");
-    let mut first_pass_filepaths: Vec<(Option<String>, PathBuf)> = Vec::new();
-
     let filtered = filter_statements(&mut filters, &mut references, None, all_statements.map(|(_, table, field)| (table, field)));
-    write_file_lines(&config.output_file, filtered.map(|(_, line)| line));
+    write_file_lines(&config.get_working_file_path(), schema.iter().cloned().chain(filtered.map(|(_, line)| line)));
+
+    fs::rename(&config.get_working_file_path(), &config.output_file).expect("cannot rename output file");
 }
 
 // pub fn parse_input_file(config: &Configuration) {
