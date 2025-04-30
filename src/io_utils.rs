@@ -121,7 +121,7 @@ impl<B: BufRead> Iterator for Statements<B> {
             Ok(_n) => {
                 match String::from_utf8(buf8) {
                     Ok(l) => {
-                        let line = (l.split('\n').filter(|x| !x.is_empty()).join("\n") + "\n").trim().to_string();
+                        let line = (l.split('\n').filter(|x| !x.is_empty()).join("\n")).trim().to_string() + "\n";
                         if self.last_statement.as_ref().is_some_and(|x| x.starts_with("UNLOCK TABLES;")) {
                             self.cur_table = None;
                             self.section = StatementSection::Footer;
