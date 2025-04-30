@@ -2,13 +2,18 @@ use std::path::PathBuf;
 use itertools::Itertools;
 
 use crate::expression_parser::get_data_types;
-use crate::io_utils::{Configuration, combine_files, read_sql_file, read_file_lines, write_sql_file};
+use crate::io_utils::{combine_files, read_file_lines, read_sql_file, write_file_lines, write_sql_file, Configuration};
 use crate::references::References;
 use crate::filters::{filter_insert_statements, Filters};
 
 pub fn parse_input_file(config: &Configuration) {
     println!("Capturing schema...");
     let (schema, all_statements) = read_sql_file(&config.input_file, &config.requested_tables);
+
+    let schema_path = config.get_schema_path();
+    write_file_lines(&schema_path, schema.iter().cloned());
+
+
     let data_types = get_data_types(&schema);
     dbg!(data_types);
 

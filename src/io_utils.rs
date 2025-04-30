@@ -1,10 +1,11 @@
 use config::{Config, Environment, File, FileFormat};
+use core::panic;
 use std::collections::HashSet;
 use std::fs;
 use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use crate::expression_parser::{get_table_from_comment, FilterCondition};
+use crate::expression_parser::{extract_table, get_table_from_comment, FilterCondition};
 
 #[derive(Debug)]
 pub struct Configuration {
@@ -63,6 +64,10 @@ impl Configuration {
         self.filter_conditions.iter().filter(|fc| fc.is_foreign_filter()).map(|fc| fc.get_foreign_key() )
     }
 
+    pub fn get_schema_path(&self) -> PathBuf {
+        self.working_dir_path.join("INFORMATION_SCHEMA").with_extension("sql")
+    }
+
     pub fn get_working_dir_for_table(&self, table: &Option<String>) -> &PathBuf {
         match table {
             None => &self.working_dir_path,
@@ -112,6 +117,49 @@ impl<I: Iterator<Item=String>> Iterator for StatementIntoIterator<I> {
     }
 }
 
+pub struct Statements<B> {
+    buf: B,
+    cur_table: Option<String>,
+}
+
+pub enum StatementError {
+    Plain,
+    Utf8Error(())
+}
+
+impl<B: BufRead> Iterator for Statements<B> {
+    type Item = Result<(Option<String>, String), StatementError>;
+    fn next(&mut self) -> Option<Result<(Option<String>, String), StatementError>> {
+        let mut buf8 = vec![];
+        match self.buf.read_until(b';', &mut buf8) {
+            Ok(0) => None,
+            Ok(_n) => {
+                match String::from_utf8(buf8) {
+                    Ok(line) => {
+                        if line.trim().starts_with("--\n-- Dumping data for table") {
+                            let table = extract_table(&line);
+                            self.cur_table = Some(table);
+                        }
+                        Some(Ok((self.cur_table.clone(), line)))
+                    }
+                    Err(_) => Some(Err(StatementError::Plain))
+                }
+            }
+            Err(_) => Some(Err(StatementError::Plain {})),
+        }
+
+    }
+}
+
+pub fn read_statements(filepath: &Path) -> impl Iterator<Item=(Option<String>, String)> + use<> {
+    let f1 = fs::File::open(filepath).expect("Cannot open file");
+    let st1 = Statements {
+        buf: io::BufReader::new(f1),
+        cur_table: None,
+    };
+    st1.map_while(Result::ok)
+}
+
 pub fn read_file_lines(filepath: &Path) -> impl Iterator<Item=String> + use<> {
     let file = fs::File::open(filepath).expect("Cannot open file");
     io::BufReader::new(file).lines()
@@ -119,14 +167,8 @@ pub fn read_file_lines(filepath: &Path) -> impl Iterator<Item=String> + use<> {
 }
 
 pub fn read_sql_file(sqldump_filepath: &Path, requested_tables: &HashSet<String>) -> (Vec<String>, impl Iterator<Item = (Option<String>, String)>) {
-    let mut iter = StatementIntoIterator {
-        inner: read_file_lines(sqldump_filepath),
-        cur_table: None,
-        cur_counter: 0,
-    }.filter(|(table, _)| table.is_none() || table.as_ref().is_some_and(|t| requested_tables.contains(t)));
-
-
-    let schema: Vec<String> = iter.by_ref().take_while(|(table,_)| table.is_none()).map(|(_, line)| line + "\n").collect();
+    let mut iter = read_statements(sqldump_filepath).filter(|(table, _)| table.is_none() || table.as_ref().is_some_and(|t| requested_tables.contains(t)));
+    let schema: Vec<String> = iter.by_ref().take_while(|(table,_)| table.is_none()).map(|(_, line)| line).collect();
     (schema, iter)
 }
 
@@ -143,7 +185,6 @@ pub fn write_file_lines<I: Iterator<Item=String>>(filepath: &PathBuf, lines: I) 
 
     for line in lines {
         writer.write_all(line.as_bytes()).expect("Cannot write to file");
-        writer.write_all(b"\n").expect("Cannot write to file");
     };
 
     writer.flush().expect("Cannot flush buffer");
