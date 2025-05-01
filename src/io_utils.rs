@@ -13,7 +13,7 @@ pub struct Configuration {
     pub input_file: PathBuf,
     pub output_file: PathBuf,
     pub temp_dir_path: PathBuf,
-    pub requested_tables: HashSet<String>,
+    pub allowed_tables: HashSet<String>,
     pub filter_conditions: Vec<FilterCondition>,
 }
 
@@ -24,7 +24,7 @@ impl Configuration {
         output_file: &Path,
         temp_dir_path: &Path,
     ) -> Self {
-        let requested_tables: HashSet<_> = settings
+        let allowed_tables: HashSet<_> = settings
             .get_array("allow_data_on_tables")
             .expect("no key 'allow_data_on_tables' in config")
             .iter().map(|x| x.to_string()).collect();
@@ -47,7 +47,7 @@ impl Configuration {
             input_file: input_file.to_path_buf(),
             output_file: output_file.to_path_buf(),
             temp_dir_path: temp_dir_path.to_path_buf(),
-            requested_tables,
+            allowed_tables,
             filter_conditions,
         }
     }
@@ -84,6 +84,7 @@ struct Statements<B> {
     buf: B,
     cur_table: Option<String>,
     last_statement: Option<String>,
+    allowed_tables: HashSet<String>,
 }
 
 impl<B: BufRead> Statements<B> {
@@ -98,11 +99,8 @@ impl<B: BufRead> Statements<B> {
         }
         self.last_statement = Some(cur_statement.to_string());
     }
-}
 
-impl<B: BufRead> Iterator for Statements<B> {
-    type Item = (Option<String>, String);
-    fn next(&mut self) -> Option<(Option<String>, String)> {
+    fn next_statement(&mut self) -> Option<(Option<String>, String)> {
         let mut buf8 = vec![];
         while {
             let first_read_bytes = self.buf.read_until(b';', &mut buf8).ok()?;
@@ -120,6 +118,17 @@ impl<B: BufRead> Iterator for Statements<B> {
     }
 }
 
+impl<B: BufRead> Iterator for Statements<B> {
+    type Item = (Option<String>, String);
+    fn next(&mut self) -> Option<(Option<String>, String)> {
+        let (mut table, mut line) = self.next_statement()?;
+        while table.as_ref().is_some_and(|t| !self.allowed_tables.contains(t)) {
+            (table, line) = self.next_statement()?;
+        }
+        Some((table, line))
+    }
+}
+
 impl<B: BufRead> itertools::PeekingNext for Statements<B> {
     fn peeking_next<F>(&mut self, accept: F) -> Option<Self::Item>
       where Self: Sized,
@@ -134,21 +143,20 @@ impl<B: BufRead> itertools::PeekingNext for Statements<B> {
     }
 }
 
-pub fn read_sql_file(sqldump_filepath: &Path, requested_tables: &HashSet<String>) -> (HashMap<String, sqlparser::ast::DataType>, impl Iterator<Item = (Option<String>, String)>) {
+pub fn read_sql_file(sqldump_filepath: &Path, allowed_tables: &HashSet<String>) -> (HashMap<String, sqlparser::ast::DataType>, impl Iterator<Item = (Option<String>, String)>) {
     let file = fs::File::open(sqldump_filepath).expect("Cannot open file");
     let mut iter = Statements {
         buf: io::BufReader::new(file),
         cur_table: None,
         last_statement: None,
+        allowed_tables: allowed_tables.clone(),
     };
 
     let schema: Vec<String> = iter.by_ref().peeking_take_while(|(table,_)| table.is_none()).map(|(_, line)| line).collect();
     let schema_sql: String = schema.iter().filter(|x| !x.starts_with("--")).cloned().map(|x| x.replace('\n', " ")).collect();
 
     let data_types = get_data_types(&schema_sql);
-    let all_statements = schema.into_iter().map(|x| (None, x.clone())).chain(iter.filter(|(table, _)| {
-        table.is_none() || table.as_ref().is_some_and(|t| requested_tables.contains(t))
-    }));
+    let all_statements = schema.into_iter().map(|x| (None, x.clone())).chain(iter);
 
     (data_types, all_statements)
 }

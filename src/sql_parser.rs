@@ -6,7 +6,7 @@ use crate::filters::{filter_statements, Filters};
 
 pub fn parse_input_file(config: &Configuration) {
     println!("Capturing schema...");
-    let (data_types, all_statements) = read_sql_file(&config.input_file, &config.requested_tables);
+    let (data_types, all_statements) = read_sql_file(&config.input_file, &config.allowed_tables);
 
     let mut references = References::from_iter(config.get_foreign_keys());
     let mut filters = Filters::new(&config.get_conditions());
