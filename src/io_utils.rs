@@ -1,12 +1,12 @@
 use config::{Config, Environment, File, FileFormat};
 use core::panic;
 use itertools::Itertools;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use crate::expression_parser::{extract_table, FilterCondition};
+use crate::expression_parser::{extract_table, get_data_types, FilterCondition};
 
 #[derive(Debug)]
 pub struct Configuration {
@@ -80,7 +80,6 @@ pub fn read_config(
     Configuration::new(settings, input_file, output_file, temp_dir_path)
 }
 
-
 struct Statements<B> {
     buf: B,
     cur_table: Option<String>,
@@ -135,19 +134,23 @@ impl<B: BufRead> itertools::PeekingNext for Statements<B> {
     }
 }
 
-pub fn read_sql_file(sqldump_filepath: &Path, requested_tables: &HashSet<String>) -> (Vec<String>, impl Iterator<Item = (Option<String>, String)>) {
-    let f1 = fs::File::open(sqldump_filepath).expect("Cannot open file");
+pub fn read_sql_file(sqldump_filepath: &Path, requested_tables: &HashSet<String>) -> (HashMap<String, sqlparser::ast::DataType>, impl Iterator<Item = (Option<String>, String)>) {
+    let file = fs::File::open(sqldump_filepath).expect("Cannot open file");
     let mut iter = Statements {
-        buf: io::BufReader::new(f1),
+        buf: io::BufReader::new(file),
         cur_table: None,
         last_statement: None,
     };
-    let schema: Vec<String> = iter.by_ref().peeking_take_while(|(table,_)| table.is_none()).map(|(_, line)| line).collect();
-    let inserts = iter.filter(|(table, _)| {
-        table.is_none() || table.as_ref().is_some_and(|t| requested_tables.contains(t))
-    });
 
-    (schema, inserts)
+    let schema: Vec<String> = iter.by_ref().peeking_take_while(|(table,_)| table.is_none()).map(|(_, line)| line).collect();
+    let schema_sql: String = schema.iter().filter(|x| !x.starts_with("--")).cloned().map(|x| x.replace('\n', " ")).collect();
+
+    let data_types = get_data_types(&schema_sql);
+    let all_statements = schema.into_iter().map(|x| (None, x.clone())).chain(iter.filter(|(table, _)| {
+        table.is_none() || table.as_ref().is_some_and(|t| requested_tables.contains(t))
+    }));
+
+    (data_types, all_statements)
 }
 
 pub fn write_file_lines<I: Iterator<Item=String>>(filepath: &PathBuf, lines: I) -> PathBuf {

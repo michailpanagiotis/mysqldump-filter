@@ -75,10 +75,9 @@ pub fn parse_insert_values(insert_statement: &str) -> Vec<&str> {
     values
 }
 
-pub fn get_data_types(statements: &[String]) -> HashMap<String, sqlparser::ast::DataType> {
+pub fn get_data_types(sql: &str) -> HashMap<String, sqlparser::ast::DataType> {
     let mut data_types = HashMap::new();
     let dialect = MySqlDialect {};
-    let sql: String = statements.iter().filter(|x| !x.starts_with("--")).cloned().map(|x| x.replace('\n', " ")).collect();
     let ast = SqlParser::parse_sql(&dialect, &sql).unwrap();
     for st in ast.into_iter().filter(|x| matches!(x, sqlparser::ast::Statement::CreateTable(_))) {
         if let sqlparser::ast::Statement::CreateTable(ct) = st {
