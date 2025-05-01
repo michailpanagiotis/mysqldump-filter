@@ -3,7 +3,7 @@ use core::panic;
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::{self, BufRead, BufWriter, Write};
+use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use crate::expression_parser::{extract_table, get_data_types, FilterCondition};
@@ -80,14 +80,24 @@ pub fn read_config(
     Configuration::new(settings, input_file, output_file, temp_dir_path)
 }
 
-struct Statements<B> {
-    buf: B,
+struct Statements {
+    buf: io::BufReader<fs::File>,
     cur_table: Option<String>,
     last_statement: Option<String>,
     allowed_tables: HashSet<String>,
 }
 
-impl<B: BufRead> Statements<B> {
+impl Statements {
+    pub fn from_file(sqldump_filepath: &Path, allowed_tables: &HashSet<String>) -> Self {
+        let file = fs::File::open(sqldump_filepath).expect("Cannot open file");
+        Statements {
+            buf: io::BufReader::new(file),
+            cur_table: None,
+            last_statement: None,
+            allowed_tables: allowed_tables.clone(),
+        }
+    }
+
     fn capture_table(&mut self, cur_statement: &str) {
         if self.last_statement.as_ref().is_some_and(|x| x.starts_with("UNLOCK TABLES;")) {
             self.cur_table = None;
@@ -118,7 +128,7 @@ impl<B: BufRead> Statements<B> {
     }
 }
 
-impl<B: BufRead> Iterator for Statements<B> {
+impl Iterator for Statements {
     type Item = (Option<String>, String);
     fn next(&mut self) -> Option<(Option<String>, String)> {
         let (mut table, mut line) = self.next_statement()?;
@@ -129,7 +139,7 @@ impl<B: BufRead> Iterator for Statements<B> {
     }
 }
 
-impl<B: BufRead> itertools::PeekingNext for Statements<B> {
+impl itertools::PeekingNext for Statements {
     fn peeking_next<F>(&mut self, accept: F) -> Option<Self::Item>
       where Self: Sized,
             F: FnOnce(&Self::Item) -> bool
@@ -144,13 +154,7 @@ impl<B: BufRead> itertools::PeekingNext for Statements<B> {
 }
 
 pub fn read_sql_file(sqldump_filepath: &Path, allowed_tables: &HashSet<String>) -> (HashMap<String, sqlparser::ast::DataType>, impl Iterator<Item = (Option<String>, String)>) {
-    let file = fs::File::open(sqldump_filepath).expect("Cannot open file");
-    let mut iter = Statements {
-        buf: io::BufReader::new(file),
-        cur_table: None,
-        last_statement: None,
-        allowed_tables: allowed_tables.clone(),
-    };
+    let mut iter = Statements::from_file(sqldump_filepath, allowed_tables);
 
     let schema: Vec<String> = iter.by_ref().peeking_take_while(|(table,_)| table.is_none()).map(|(_, line)| line).collect();
     let schema_sql: String = schema.iter().filter(|x| !x.starts_with("--")).cloned().map(|x| x.replace('\n', " ")).collect();
