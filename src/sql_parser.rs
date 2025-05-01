@@ -1,6 +1,6 @@
 use std::fs;
 use crate::expression_parser::get_data_types;
-use crate::io_utils::{combine_files, read_file_lines, read_sql_file, write_file_lines, write_sql_file, Configuration};
+use crate::io_utils::{read_sql_file, write_file_lines, Configuration};
 use crate::references::References;
 use crate::filters::{filter_statements, Filters};
 
@@ -13,52 +13,8 @@ pub fn parse_input_file(config: &Configuration) {
     let mut filters = Filters::new(&config.get_conditions());
 
     println!("First pass...");
-    let filtered = filter_statements(&mut filters, &mut references, None, all_statements.map(|(_, table, field)| (table, field)));
+    let filtered = filter_statements(&mut filters, &mut references, None, all_statements);
     write_file_lines(&config.get_working_file_path(), schema.iter().cloned().chain(filtered.map(|(_, line)| line)));
 
-    fs::rename(&config.get_working_file_path(), &config.output_file).expect("cannot rename output file");
+    fs::rename(config.get_working_file_path(), &config.output_file).expect("cannot rename output file");
 }
-
-// pub fn parse_input_file(config: &Configuration) {
-//     println!("Capturing schema...");
-//     let (schema, all_statements) = read_sql_file(&config.input_file, &config.requested_tables);
-//
-//     let schema_path = config.get_schema_path();
-//     write_file_lines(&schema_path, schema.iter().cloned());
-//
-//
-//     let data_types = get_data_types(&schema);
-//     let mut references = References::from_iter(config.get_foreign_keys());
-//     let mut filters = Filters::new(&config.get_conditions());
-//
-//     println!("First pass...");
-//     let mut first_pass_filepaths: Vec<(Option<String>, PathBuf)> = Vec::new();
-//     for (group, statements) in all_statements.chunk_by(|(_, table, _)| table.clone()).into_iter() {
-//         if let Some(ref table) = group {
-//             let lines = filter_insert_statements(&mut filters, &mut references, None, table, statements.map(|(_, _, line)| line));
-//             let filepath = write_sql_file(&group, config.get_working_dir_for_table(&group), lines);
-//             first_pass_filepaths.push((group, filepath));
-//         } else {
-//             println!("OUT");
-//         }
-//     }
-//
-//     println!("Second pass...");
-//     let second_pass_filepaths: Vec<PathBuf> = std::iter::once(schema_path).chain(first_pass_filepaths.iter().map(|(table, path)| {
-//         match table {
-//             None => path.clone(),
-//             Some(t) => {
-//                 if !config.second_pass_tables.contains(t) {
-//                     return path.clone();
-//                 }
-//                 let statements = read_file_lines(path);
-//                 let lines = filter_insert_statements(&mut filters, &mut references, None, t, statements);
-//                 write_sql_file(table, &config.working_dir_path, lines)
-//             }
-//         }
-//     })).collect();
-//
-//     dbg!(&second_pass_filepaths);
-//
-//     combine_files(second_pass_filepaths.iter(), &config.output_file);
-// }

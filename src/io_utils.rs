@@ -12,10 +12,8 @@ use crate::expression_parser::{extract_table, FilterCondition};
 pub struct Configuration {
     pub input_file: PathBuf,
     pub output_file: PathBuf,
-    pub working_dir_path: PathBuf,
     pub temp_dir_path: PathBuf,
     pub requested_tables: HashSet<String>,
-    pub second_pass_tables: HashSet<String>,
     pub filter_conditions: Vec<FilterCondition>,
 }
 
@@ -24,7 +22,6 @@ impl Configuration {
         settings: Config,
         input_file: &Path,
         output_file: &Path,
-        working_dir_path: &Path,
         temp_dir_path: &Path,
     ) -> Self {
         let requested_tables: HashSet<_> = settings
@@ -49,10 +46,8 @@ impl Configuration {
         Configuration {
             input_file: input_file.to_path_buf(),
             output_file: output_file.to_path_buf(),
-            working_dir_path: working_dir_path.to_path_buf(),
             temp_dir_path: temp_dir_path.to_path_buf(),
             requested_tables,
-            second_pass_tables: filter_conditions.iter().filter(|fc| fc.is_foreign_filter()).map(|fc| fc.table.clone()).collect(),
             filter_conditions,
         }
     }
@@ -65,24 +60,8 @@ impl Configuration {
         self.filter_conditions.iter().filter(|fc| fc.is_foreign_filter()).map(|fc| fc.get_foreign_key() )
     }
 
-    pub fn get_schema_path(&self) -> PathBuf {
-        self.working_dir_path.join("INFORMATION_SCHEMA").with_extension("sql")
-    }
-
     pub fn get_working_file_path(&self) -> PathBuf {
         self.temp_dir_path.join("INTERIM").with_extension("sql")
-    }
-
-    pub fn get_working_dir_for_table(&self, table: &Option<String>) -> &PathBuf {
-        match table {
-            None => &self.working_dir_path,
-            Some(t) => {
-                match &self.second_pass_tables.contains(t) {
-                    false => &self.working_dir_path,
-                    true => &self.temp_dir_path,
-                }
-            }
-        }
     }
 }
 
@@ -90,7 +69,6 @@ pub fn read_config(
     config_file: &Path,
     input_file: &Path,
     output_file: &Path,
-    working_dir_path: &Path,
     temp_dir_path: &Path,
 ) -> Configuration {
     let settings = Config::builder()
@@ -99,7 +77,7 @@ pub fn read_config(
         .build()
         .unwrap();
 
-    Configuration::new(settings, input_file, output_file, working_dir_path, temp_dir_path)
+    Configuration::new(settings, input_file, output_file, temp_dir_path)
 }
 
 
@@ -157,12 +135,6 @@ impl<B: BufRead> itertools::PeekingNext for Statements<B> {
     }
 }
 
-pub fn read_file_lines(filepath: &Path) -> impl Iterator<Item=String> + use<> {
-    let file = fs::File::open(filepath).expect("Cannot open file");
-    io::BufReader::new(file).lines()
-        .map_while(Result::ok)
-}
-
 pub fn read_sql_file(sqldump_filepath: &Path, requested_tables: &HashSet<String>) -> (Vec<String>, impl Iterator<Item = (Option<String>, String)>) {
     let f1 = fs::File::open(sqldump_filepath).expect("Cannot open file");
     let mut iter = Statements {
@@ -195,23 +167,4 @@ pub fn write_file_lines<I: Iterator<Item=String>>(filepath: &PathBuf, lines: I) 
 
     writer.flush().expect("Cannot flush buffer");
     filepath.clone()
-}
-
-pub fn write_sql_file<I: Iterator<Item=String>>(table: &Option<String>, working_dir_path: &Path, lines: I) -> PathBuf {
-    let filepath = match table {
-        Some(x) => working_dir_path.join(x).with_extension("sql"),
-        None => working_dir_path.join("INFORMATION_SCHEMA").with_extension("sql"),
-    };
-    write_file_lines(&filepath, lines);
-    filepath
-}
-
-pub fn combine_files<'a, I: Iterator<Item=&'a PathBuf>>(all_files: I, output: &Path) {
-    println!("Combining files");
-    let mut output_file = fs::File::create(output).expect("cannot create output file");
-    for f in all_files {
-        dbg!(f);
-        let mut input = fs::File::open(f).expect("cannot open file");
-        io::copy(&mut input, &mut output_file).expect("cannot copy file");
-    }
 }

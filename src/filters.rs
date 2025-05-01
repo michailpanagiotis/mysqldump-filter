@@ -130,22 +130,6 @@ impl<'a> Filters<'a> {
     }
 }
 
-pub fn filter_insert_statements<'a, I: Iterator<Item=String>>(
-    filters: &'a mut Filters,
-    references: &'a mut References,
-    foreign_values: Option<&'a HashMap<String, HashSet<String>>>,
-    table: &str,
-    lines: I,
-) -> impl Iterator<Item=String> {
-    lines.filter(move |st| {
-        let should_keep = filters.test_sql_statement(st, table, &foreign_values);
-        if should_keep {
-            references.capture(table, st);
-        }
-        should_keep
-    })
-}
-
 pub fn filter_statements<'a, I: Iterator<Item=(Option<String>, String)>>(
     filters: &'a mut Filters,
     references: &'a mut References,
