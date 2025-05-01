@@ -102,31 +102,20 @@ pub fn read_config(
     Configuration::new(settings, input_file, output_file, working_dir_path, temp_dir_path)
 }
 
-#[derive(Clone)]
-pub enum StatementSection {
-    Header,
-    Insert,
-    Footer,
-}
 
 struct Statements<B> {
     buf: B,
     cur_table: Option<String>,
     last_statement: Option<String>,
-    section: StatementSection,
 }
 
 impl<B: BufRead> Statements<B> {
     fn capture_table(&mut self, cur_statement: &str) {
         if self.last_statement.as_ref().is_some_and(|x| x.starts_with("UNLOCK TABLES;")) {
             self.cur_table = None;
-            self.section = StatementSection::Footer;
         }
         if cur_statement.starts_with("--\n-- Dumping data for table") {
             let table = extract_table(cur_statement);
-            if self.cur_table.is_none() {
-                self.section = StatementSection::Insert;
-            }
             println!("reading table {}", &table);
             self.cur_table = Some(table);
         }
@@ -135,8 +124,8 @@ impl<B: BufRead> Statements<B> {
 }
 
 impl<B: BufRead> Iterator for Statements<B> {
-    type Item = (StatementSection, Option<String>, String);
-    fn next(&mut self) -> Option<(StatementSection, Option<String>, String)> {
+    type Item = (Option<String>, String);
+    fn next(&mut self) -> Option<(Option<String>, String)> {
         let mut buf8 = vec![];
         while {
             let first_read_bytes = self.buf.read_until(b';', &mut buf8).ok()?;
@@ -148,7 +137,7 @@ impl<B: BufRead> Iterator for Statements<B> {
             false => {
                 let statement = String::from_utf8(buf8).ok()?.split('\n').filter(|x| !x.is_empty()).map(|x| x.trim()).join("\n") + "\n";
                 self.capture_table(&statement);
-                Some((self.section.clone(), self.cur_table.clone(), statement))
+                Some((self.cur_table.clone(), statement))
             }
         }
     }
@@ -174,16 +163,15 @@ pub fn read_file_lines(filepath: &Path) -> impl Iterator<Item=String> + use<> {
         .map_while(Result::ok)
 }
 
-pub fn read_sql_file(sqldump_filepath: &Path, requested_tables: &HashSet<String>) -> (Vec<String>, impl Iterator<Item = (StatementSection, Option<String>, String)>) {
+pub fn read_sql_file(sqldump_filepath: &Path, requested_tables: &HashSet<String>) -> (Vec<String>, impl Iterator<Item = (Option<String>, String)>) {
     let f1 = fs::File::open(sqldump_filepath).expect("Cannot open file");
     let mut iter = Statements {
         buf: io::BufReader::new(f1),
         cur_table: None,
         last_statement: None,
-        section: StatementSection::Header,
     };
-    let schema: Vec<String> = iter.by_ref().peeking_take_while(|(_, table,_)| table.is_none()).map(|(_, _, line)| line).collect();
-    let inserts = iter.filter(|(_, table, _)| {
+    let schema: Vec<String> = iter.by_ref().peeking_take_while(|(table,_)| table.is_none()).map(|(_, line)| line).collect();
+    let inserts = iter.filter(|(table, _)| {
         table.is_none() || table.as_ref().is_some_and(|t| requested_tables.contains(t))
     });
 

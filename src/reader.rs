@@ -49,5 +49,5 @@ fn main() {
 
     let (schema, all_statements) = read_sql_file(&input_file, &config.requested_tables);
 
-    write_file_lines(&output_file, schema.iter().cloned().chain(all_statements.map(|(_, _, line)| line)));
+    write_file_lines(&output_file, schema.iter().cloned().chain(all_statements.map(|(_, line)| line)));
 }
