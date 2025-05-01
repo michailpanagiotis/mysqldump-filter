@@ -126,7 +126,11 @@ impl<B: BufRead> Statements<B> {
         } {}
         match buf8.is_empty() {
             true => None,
-            false => Some(String::from_utf8(buf8).ok()?)
+            false => {
+                let statement = String::from_utf8(buf8).ok()?;
+                let trimmed = (statement.split('\n').filter(|x| !x.is_empty()).join("\n")).trim().to_string() + "\n";
+                Some(trimmed)
+            }
         }
     }
 
@@ -151,9 +155,8 @@ impl<B: BufRead> Iterator for Statements<B> {
     type Item = (StatementSection, Option<String>, String);
     fn next(&mut self) -> Option<(StatementSection, Option<String>, String)> {
         let statement = self.read_statement()?;
-        let trimmed = (statement.split('\n').filter(|x| !x.is_empty()).join("\n")).trim().to_string() + "\n";
-        self.capture_table(&trimmed);
-        Some((self.section.clone(), self.cur_table.clone(), trimmed))
+        self.capture_table(&statement);
+        Some((self.section.clone(), self.cur_table.clone(), statement))
     }
 }
 
