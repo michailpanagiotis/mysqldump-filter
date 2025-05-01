@@ -117,6 +117,19 @@ struct Statements<B> {
 }
 
 impl<B: BufRead> Statements<B> {
+    fn read_statement(&mut self) -> Option<String> {
+        let mut buf8 = vec![];
+        while {
+            let first_read_bytes = self.buf.read_until(b';', &mut buf8).ok()?;
+            let second_read_bytes = if first_read_bytes > 0 { self.buf.read_until(b'\n', &mut buf8).ok()? } else { 0 };
+            second_read_bytes > 1
+        } {}
+        match buf8.is_empty() {
+            true => None,
+            false => Some(String::from_utf8(buf8).ok()?)
+        }
+    }
+
     fn capture_table(&mut self, cur_statement: &str) {
         if self.last_statement.as_ref().is_some_and(|x| x.starts_with("UNLOCK TABLES;")) {
             self.cur_table = None;
@@ -137,23 +150,10 @@ impl<B: BufRead> Statements<B> {
 impl<B: BufRead> Iterator for Statements<B> {
     type Item = (StatementSection, Option<String>, String);
     fn next(&mut self) -> Option<(StatementSection, Option<String>, String)> {
-        let mut buf8 = vec![];
-        match self.buf.read_until(b';', &mut buf8) {
-            Ok(0) => None,
-            Ok(_n) => {
-                // make sure that the ';' is right at the end of the line
-                self.buf.read_until(b'\n', &mut buf8);
-                match String::from_utf8(buf8) {
-                    Ok(l) => {
-                        let line = (l.split('\n').filter(|x| !x.is_empty()).join("\n")).trim().to_string() + "\n";
-                        self.capture_table(&line);
-                        Some((self.section.clone(), self.cur_table.clone(), line))
-                    }
-                    Err(_) => None,
-                }
-            }
-            Err(_) => None,
-        }
+        let statement = self.read_statement()?;
+        let trimmed = (statement.split('\n').filter(|x| !x.is_empty()).join("\n")).trim().to_string() + "\n";
+        self.capture_table(&trimmed);
+        Some((self.section.clone(), self.cur_table.clone(), trimmed))
     }
 }
 

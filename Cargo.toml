@@ -11,6 +11,9 @@ path = "src/main.rs"
 name = "analyzer"
 path = "src/analyzer.rs"
 
+[[bin]]
+name = "reader"
+path = "src/reader.rs"
 
 [profile.release]
 opt-level = 3
