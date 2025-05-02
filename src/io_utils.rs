@@ -3,7 +3,7 @@ use core::panic;
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::{self, BufRead, BufReader, BufWriter, Write};
+use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use crate::expression_parser::{extract_table, get_data_types, FilterCondition};
@@ -81,6 +81,7 @@ pub fn read_config(
 }
 
 struct FileStatements {
+    filepath: PathBuf,
     buf: io::BufReader<fs::File>,
     cur_table: Option<String>,
     last_statement: Option<String>,
@@ -91,11 +92,18 @@ impl FileStatements {
     pub fn from_file(sqldump_filepath: &Path, allowed_tables: &HashSet<String>) -> Self {
         let file = fs::File::open(sqldump_filepath).expect("Cannot open file");
         FileStatements {
+            filepath: sqldump_filepath.to_owned(),
             buf: io::BufReader::new(file),
             cur_table: None,
             last_statement: None,
             allowed_tables: allowed_tables.clone(),
         }
+    }
+
+    fn read_schema(&self) -> String {
+        let mut copied = FileStatements::from_file(&self.filepath, &self.allowed_tables);
+        let schema: Vec<String> = copied.by_ref().peeking_take_while(|(table,_)| table.is_none()).map(|(_, line)| line).collect();
+        schema.iter().filter(|x| !x.starts_with("--")).cloned().map(|x| x.replace('\n', " ")).collect()
     }
 
     fn capture_table(&mut self, cur_statement: &str) {
@@ -154,18 +162,12 @@ impl itertools::PeekingNext for FileStatements {
 }
 
 pub fn read_sql_file(sqldump_filepath: &Path, allowed_tables: &HashSet<String>) -> (impl Iterator<Item = (Option<String>, String)>, HashMap<String, sqlparser::ast::DataType>) {
-    let mut iter = FileStatements::from_file(sqldump_filepath, allowed_tables);
-
-    let schema: Vec<String> = iter.by_ref().peeking_take_while(|(table,_)| table.is_none()).map(|(_, line)| line).collect();
-    let schema_sql: String = schema.iter().filter(|x| !x.starts_with("--")).cloned().map(|x| x.replace('\n', " ")).collect();
-
-    let data_types = get_data_types(&schema_sql);
-    let all_statements = schema.into_iter().map(|x| (None, x.clone())).chain(iter);
-
-    (all_statements, data_types)
+    let iter = FileStatements::from_file(sqldump_filepath, allowed_tables);
+    let data_types = get_data_types(&iter.read_schema());
+    (iter, data_types)
 }
 
-pub fn write_file_lines<I: Iterator<Item=String>>(filepath: &PathBuf, lines: I) -> PathBuf {
+pub fn write_sql_file<I: Iterator<Item=(Option<String>, String)>>(filepath: &PathBuf, lines: I) -> PathBuf {
     fs::File::create(filepath).unwrap_or_else(|_| panic!("Unable to create file {}", &filepath.display()));
     let file = fs::OpenOptions::new()
         .append(true)
@@ -176,7 +178,7 @@ pub fn write_file_lines<I: Iterator<Item=String>>(filepath: &PathBuf, lines: I) 
 
     println!("Writing to {}", &filepath.display());
 
-    for line in lines {
+    for line in lines.map(|(_, line)| line) {
         writer.write_all(line.as_bytes()).expect("Cannot write to file");
     };
 
