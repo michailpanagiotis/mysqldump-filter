@@ -104,19 +104,29 @@ pub struct FilterCondition {
     pub field: String,
     operator: FilterOperator,
     value: String,
+    data_type: sqlparser::ast::DataType,
 }
 
 impl FilterCondition {
-    pub fn new(table: &str, definition: &str) -> FilterCondition {
+    fn get_data_type(data_types: &HashMap<String, sqlparser::ast::DataType>, table: &str, field: &str) -> sqlparser::ast::DataType {
+        match data_types.get(&(table.to_owned() + "." + field)) {
+            None => panic!("{}", format!("cannot find data type for {}.{}", table, field)),
+            Some(data_type) => data_type.to_owned()
+        }
+    }
+
+    pub fn new(table: &str, definition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> FilterCondition {
         if definition.starts_with("cel:") {
             let Some(end) = definition.strip_prefix("cel:") else { panic!("cannot parse cel expression") };
             let program = Program::compile(end).unwrap();
             let variables: Vec<String> = program.references().variables().iter().map(|f| f.to_string()).collect();
+            let field = &variables[0];
             return FilterCondition {
                 table: table.to_string(),
-                field: variables[0].to_string(),
+                field: field.to_string(),
                 operator: FilterOperator::Cel(program),
                 value: definition.to_string(),
+                data_type: FilterCondition::get_data_type(data_types, table, &field),
             }
         }
         let (field, operator, value) = parse_filter(definition);
@@ -130,6 +140,7 @@ impl FilterCondition {
                 _ => FilterOperator::Unknown,
             },
             value: value.to_string(),
+            data_type: FilterCondition::get_data_type(data_types, table, field),
         }
     }
 
@@ -144,6 +155,7 @@ impl FilterCondition {
                     if other_value == "NULL" {
                         return false;
                     }
+                    dbg!(&self.data_type);
                     panic!("{}", format!("cannot parse value {}", other_value));
                 };
                 context.add_variable(self.field.clone(), val).unwrap();
