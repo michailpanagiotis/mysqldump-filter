@@ -10,9 +10,6 @@ use crate::expression_parser::{extract_table, get_data_types, FilterCondition};
 
 #[derive(Debug)]
 pub struct Configuration {
-    pub input_file: PathBuf,
-    pub output_file: PathBuf,
-    pub temp_dir_path: PathBuf,
     pub allowed_tables: HashSet<String>,
     pub filter_conditions: Vec<FilterCondition>,
 }
@@ -20,9 +17,6 @@ pub struct Configuration {
 impl Configuration {
     pub fn new(
         settings: Config,
-        input_file: &Path,
-        output_file: &Path,
-        temp_dir_path: &Path,
     ) -> Self {
         let allowed_tables: HashSet<_> = settings
             .get_array("allow_data_on_tables")
@@ -44,9 +38,6 @@ impl Configuration {
         let filter_conditions: Vec<FilterCondition> = filter_conditions.iter().map(|(table, definition)| FilterCondition::new(table, definition)).collect();
 
         Configuration {
-            input_file: input_file.to_path_buf(),
-            output_file: output_file.to_path_buf(),
-            temp_dir_path: temp_dir_path.to_path_buf(),
             allowed_tables,
             filter_conditions,
         }
@@ -59,25 +50,18 @@ impl Configuration {
     pub fn get_foreign_keys(&self) -> impl Iterator<Item=(String, String)> {
         self.filter_conditions.iter().filter(|fc| fc.is_foreign_filter()).map(|fc| fc.get_foreign_key() )
     }
-
-    pub fn get_working_file_path(&self) -> PathBuf {
-        self.temp_dir_path.join("INTERIM").with_extension("sql")
-    }
 }
 
-pub fn read_config(
-    config_file: &Path,
-    input_file: &Path,
-    output_file: &Path,
-    temp_dir_path: &Path,
-) -> Configuration {
-    let settings = Config::builder()
-        .add_source(File::new(config_file.to_str().expect("invalid config path"), FileFormat::Json))
-        .add_source(Environment::with_prefix("MYSQLDUMP_FILTER"))
-        .build()
-        .unwrap();
+impl From<&PathBuf> for Configuration {
+    fn from(config_file: &PathBuf) -> Self {
+        let settings = Config::builder()
+            .add_source(File::new(config_file.to_str().expect("invalid config path"), FileFormat::Json))
+            .add_source(Environment::with_prefix("MYSQLDUMP_FILTER"))
+            .build()
+            .unwrap();
 
-    Configuration::new(settings, input_file, output_file, temp_dir_path)
+        Configuration::new(settings)
+    }
 }
 
 struct FileStatements {
