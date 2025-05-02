@@ -80,17 +80,17 @@ pub fn read_config(
     Configuration::new(settings, input_file, output_file, temp_dir_path)
 }
 
-struct Statements {
+struct FileStatements {
     buf: io::BufReader<fs::File>,
     cur_table: Option<String>,
     last_statement: Option<String>,
     allowed_tables: HashSet<String>,
 }
 
-impl Statements {
+impl FileStatements {
     pub fn from_file(sqldump_filepath: &Path, allowed_tables: &HashSet<String>) -> Self {
         let file = fs::File::open(sqldump_filepath).expect("Cannot open file");
-        Statements {
+        FileStatements {
             buf: io::BufReader::new(file),
             cur_table: None,
             last_statement: None,
@@ -128,7 +128,7 @@ impl Statements {
     }
 }
 
-impl Iterator for Statements {
+impl Iterator for FileStatements {
     type Item = (Option<String>, String);
     fn next(&mut self) -> Option<(Option<String>, String)> {
         let (mut table, mut line) = self.next_statement()?;
@@ -139,7 +139,7 @@ impl Iterator for Statements {
     }
 }
 
-impl itertools::PeekingNext for Statements {
+impl itertools::PeekingNext for FileStatements {
     fn peeking_next<F>(&mut self, accept: F) -> Option<Self::Item>
       where Self: Sized,
             F: FnOnce(&Self::Item) -> bool
@@ -154,7 +154,7 @@ impl itertools::PeekingNext for Statements {
 }
 
 pub fn read_sql_file(sqldump_filepath: &Path, allowed_tables: &HashSet<String>) -> (impl Iterator<Item = (Option<String>, String)>, HashMap<String, sqlparser::ast::DataType>) {
-    let mut iter = Statements::from_file(sqldump_filepath, allowed_tables);
+    let mut iter = FileStatements::from_file(sqldump_filepath, allowed_tables);
 
     let schema: Vec<String> = iter.by_ref().peeking_take_while(|(table,_)| table.is_none()).map(|(_, line)| line).collect();
     let schema_sql: String = schema.iter().filter(|x| !x.starts_with("--")).cloned().map(|x| x.replace('\n', " ")).collect();
