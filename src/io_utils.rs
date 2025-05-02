@@ -153,7 +153,7 @@ impl itertools::PeekingNext for Statements {
     }
 }
 
-pub fn read_sql_file(sqldump_filepath: &Path, allowed_tables: &HashSet<String>) -> (HashMap<String, sqlparser::ast::DataType>, impl Iterator<Item = (Option<String>, String)>) {
+pub fn read_sql_file(sqldump_filepath: &Path, allowed_tables: &HashSet<String>) -> (impl Iterator<Item = (Option<String>, String)>, HashMap<String, sqlparser::ast::DataType>) {
     let mut iter = Statements::from_file(sqldump_filepath, allowed_tables);
 
     let schema: Vec<String> = iter.by_ref().peeking_take_while(|(table,_)| table.is_none()).map(|(_, line)| line).collect();
@@ -162,7 +162,7 @@ pub fn read_sql_file(sqldump_filepath: &Path, allowed_tables: &HashSet<String>) 
     let data_types = get_data_types(&schema_sql);
     let all_statements = schema.into_iter().map(|x| (None, x.clone())).chain(iter);
 
-    (data_types, all_statements)
+    (all_statements, data_types)
 }
 
 pub fn write_file_lines<I: Iterator<Item=String>>(filepath: &PathBuf, lines: I) -> PathBuf {
