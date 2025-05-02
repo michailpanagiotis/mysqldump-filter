@@ -8,9 +8,11 @@
       "cel:processed==0"
     ],
     "invoices": [
-      "cel:owner_id==7"
+      "cel:owner_id==7",
+      "cel:date>\"2025-01-01\""
     ],
     "invoice_items": [
+      "cel:user_id==7",
       "invoice_id->invoices.id"
     ],
     "transactions": [

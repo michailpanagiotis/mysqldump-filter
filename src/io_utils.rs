@@ -11,7 +11,7 @@ use crate::expression_parser::{extract_table, get_data_types, FilterCondition};
 #[derive(Debug)]
 pub struct Configuration {
     pub allowed_tables: HashSet<String>,
-    pub filter_conditions: Vec<FilterCondition>,
+    filter_config: Vec<(String, String)>,
 }
 
 impl Configuration {
@@ -27,7 +27,7 @@ impl Configuration {
                 .get_table("filter_inserts")
                 .expect("no key 'filter_inserts' in config");
 
-        let filter_conditions: Vec<_> = filter_inserts
+        let filter_config: Vec<_> = filter_inserts
             .iter()
             .flat_map(|(table, conditions)| {
                 conditions.clone().into_array().expect("cannot parse config array").into_iter().map(move |x| {
@@ -35,20 +35,17 @@ impl Configuration {
                 })
             }).collect();
 
-        let filter_conditions: Vec<FilterCondition> = filter_conditions.iter().map(|(table, definition)| FilterCondition::new(table, definition)).collect();
+        // let filter_conditions: Vec<FilterCondition> = filter_conditions.iter().map(|(table, definition)| FilterCondition::new(table, definition)).collect();
 
         Configuration {
             allowed_tables,
-            filter_conditions,
+            filter_config,
         }
     }
 
-    pub fn get_conditions(&self) -> Vec<&FilterCondition> {
-        self.filter_conditions.iter().collect()
-    }
-
-    pub fn get_foreign_keys(&self) -> impl Iterator<Item=(String, String)> {
-        self.filter_conditions.iter().filter(|fc| fc.is_foreign_filter()).map(|fc| fc.get_foreign_key() )
+    pub fn get_conditions(&self, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Vec<FilterCondition> {
+        let conditions = self.filter_config.iter().map(|(table, definition)| FilterCondition::new(table, definition)).collect();
+        conditions
     }
 }
 

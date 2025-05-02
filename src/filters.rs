@@ -109,11 +109,11 @@ pub struct Filters<'a> {
 }
 
 impl<'a> Filters<'a> {
-    pub fn new<'b>(filter_conditions: &'b Vec<&'a FilterCondition>) -> Self
+    pub fn new<'b, I: Iterator<Item=&'a FilterCondition>>(filter_conditions: I) -> Self
         where 'a : 'b
     {
-        let inner = filter_conditions.iter().chunk_by(|c| &c.table).into_iter().map(|(table, conds)| {
-            let v: Vec<&'a FilterCondition> = conds.into_iter().copied().collect();
+        let inner = filter_conditions.chunk_by(|c| &c.table).into_iter().map(|(table, conds)| {
+            let v: Vec<&'a FilterCondition> = conds.into_iter().collect();
             (table.clone(), TableFilters::new(&v))
         }).collect();
 

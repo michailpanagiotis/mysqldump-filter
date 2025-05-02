@@ -7,6 +7,7 @@ mod filters;
 mod io_utils;
 mod references;
 
+use expression_parser::FilterCondition;
 use io_utils::{Configuration, read_sql_file, write_sql_file};
 use references::References;
 use filters::{filter_statements, Filters};
@@ -39,10 +40,12 @@ fn main() {
     let working_file_path = working_dir_path.join("INTERIM").with_extension("sql");
 
     let config = Configuration::from(&config_file);
-    let mut references = References::from_iter(config.get_foreign_keys());
-    let mut filters = Filters::new(&config.get_conditions());
 
-    let (all_statements, _) = read_sql_file(input_file.as_path(), &config.allowed_tables);
+    let (all_statements, data_types) = read_sql_file(input_file.as_path(), &config.allowed_tables);
+
+    let conditions = &config.get_conditions(&data_types);
+    let mut filters = Filters::new(conditions.iter());
+    let mut references = References::from_iter(FilterCondition::get_foreign_keys(conditions.iter()));
 
     println!("First pass...");
     let filtered = filter_statements(&mut filters, &mut references, all_statements);
