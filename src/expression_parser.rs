@@ -38,19 +38,17 @@ pub fn parse_filter(filter_definition: &str) -> (&str, &str, &str) {
 }
 
 pub fn parse_insert_fields(insert_statement: &str) -> HashMap<String, usize> {
-    let mut parser = preceded(
-        take_until("("), preceded(take_until("`"), take_until(")"))
-    ).and_then(
-      separated_list0(
-          tag(", "),
-          delimited(char('`'), is_not("`"), char('`')),
-      )
+    let dialect = MySqlDialect {};
+    let ast = SqlParser::parse_sql(&dialect, insert_statement).unwrap();
+
+    let st = ast.first().unwrap();
+    let sqlparser::ast::Statement::Insert(x) = st else { panic!("stop") };
+
+    let positions: HashMap<String, usize> = HashMap::from_iter(
+        x.columns.iter().enumerate().map(|(idx, c)| (c.value.to_owned(), idx))
     );
-    let res: IResult<&str, Vec<&str>> = parser.parse(insert_statement);
-    let (_, fields) = res.expect("cannot parse fields");
-    HashMap::from_iter(
-        fields.iter().enumerate().map(|(idx, item)| (item.to_string(), idx))
-    )
+
+    positions
 }
 
 pub fn parse_insert_values(insert_statement: &str) -> Vec<&str> {
@@ -74,7 +72,7 @@ pub fn parse_insert_values(insert_statement: &str) -> Vec<&str> {
         )
     );
     let res: IResult<&str, Vec<&str>> = parser.parse(insert_statement);
-    let (_, values) = res.expect(&format!("cannot parse values for {}", &insert_statement));
+    let (_, values) = res.unwrap_or_else(|_| panic!("cannot parse values for {}", &insert_statement));
     values
 }
 
@@ -197,7 +195,7 @@ impl FilterCondition {
                     cel_interpreter::objects::Value::Bool(v) => v,
                     _ => false,
                 };
-                println!("testing {}.{} {} -> {}", self.table, self.field, &other_value, &res);
+                // println!("testing {}.{} {} -> {}", self.table, self.field, &other_value, &res);
                 res
             },
             FilterOperator::Unknown => true
