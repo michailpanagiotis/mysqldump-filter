@@ -1,4 +1,3 @@
-use std::fs;
 use clap::Parser;
 use std::path::PathBuf;
 use tempdir::TempDir;
@@ -40,20 +39,21 @@ fn main() {
     let working_file_path = working_dir_path.join("INTERIM").with_extension("sql");
 
     let config = Configuration::from(&config_file);
-
-    let (all_statements, data_types) = read_sql_file(input_file.as_path(), &config.allowed_tables);
-
     let mut references = References::from_iter(config.get_foreign_keys());
     let mut filters = Filters::new(&config.get_conditions());
 
+    let (all_statements, _) = read_sql_file(input_file.as_path(), &config.allowed_tables);
+
     println!("First pass...");
-    let filtered = filter_statements(&mut filters, &mut references, None, all_statements);
+    let filtered = filter_statements(&mut filters, &mut references, all_statements);
     write_sql_file(&working_file_path, filtered);
 
-    fs::rename(working_file_path, output_file.as_path()).expect("cannot rename output file");
+    println!("Second pass...");
+    let (all_statements, _) = read_sql_file(&working_file_path, &config.allowed_tables);
+    let filtered = filter_statements(&mut filters, &mut references, all_statements);
+    write_sql_file(&output_file, filtered);
 
     if let Some(dir) = temp_dir {
        let _ = dir.close();
     }
-
 }

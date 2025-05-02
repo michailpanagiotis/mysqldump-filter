@@ -1,0 +1,20 @@
+{
+  "allow_data_on_tables": ["admins", "invoice_items", "invoices", "organizations", "transactions" ],
+  "filter_inserts": {
+    "admins": [
+      "cel:is_super==1"
+    ],
+    "service_orders": [
+      "cel:processed==0"
+    ],
+    "invoices": [
+      "cel:owner_id==7"
+    ],
+    "invoice_items": [
+      "invoice_id->invoices.id"
+    ],
+    "transactions": [
+      "invoice_id->invoices.id"
+    ]
+  }
+}

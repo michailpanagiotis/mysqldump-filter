@@ -140,7 +140,12 @@ impl FilterCondition {
             FilterOperator::ForeignKey => true,
             FilterOperator::Cel(program) => {
                 let mut context = Context::default();
-                let val: u64 = other_value.parse().unwrap();
+                let Ok(val): Result<u64, _> = other_value.parse() else {
+                    if other_value == "NULL" {
+                        return false;
+                    }
+                    panic!("{}", format!("cannot parse value {}", other_value));
+                };
                 context.add_variable(self.field.clone(), val).unwrap();
 
                 let value = program.execute(&context).unwrap();
@@ -148,7 +153,7 @@ impl FilterCondition {
                     cel_interpreter::objects::Value::Bool(v) => v,
                     _ => false,
                 };
-                println!("testing {} -> {}", &val, &res);
+                // println!("testing {} -> {}", &val, &res);
                 res
             },
             FilterOperator::Unknown => true

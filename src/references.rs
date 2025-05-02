@@ -11,6 +11,10 @@ pub struct TableReferences {
 }
 
 impl TableReferences {
+    fn is_empty(&self) -> bool {
+        self.values_per_field.values().all(|x| x.is_empty())
+    }
+
     fn has_referenced_fields(&self) -> bool {
         !self.values_per_field.is_empty()
     }
@@ -73,16 +77,24 @@ impl FromIterator<(String, String)> for TableReferences {
 
 #[derive(Debug)]
 pub struct References {
-    pub inner: HashMap<String, TableReferences>
+    pub inner: HashMap<String, TableReferences>,
 }
 
 impl References {
+    pub fn is_empty(&self) -> bool {
+        self.inner.values().all(|x| x.is_empty())
+    }
+
     pub fn get_table_references(&self) -> &HashMap<String, TableReferences> {
         &self.inner
     }
 
     pub fn get_tables(&self) -> impl Iterator<Item=&String> {
         self.inner.keys()
+    }
+
+    pub fn get_lookup_table(&self) -> HashMap<String, HashSet<String>> {
+        self.inner.values().flat_map(|v| v.entries()).collect()
     }
 
     pub fn capture(&mut self, table: &str, insert_statement: &str) {

@@ -22,13 +22,13 @@ impl<'a> FieldFilters<'a> {
         }
     }
 
-    fn test_value(&self, value: &str, foreign_values: &Option<&HashMap<String, HashSet<String>>>) -> bool {
+    fn test_value(&self, value: &str, lookup_table: &Option<&HashMap<String, HashSet<String>>>) -> bool {
         let direct = self.filter_conditions.iter().filter(|x| !x.is_foreign_filter()).all(|condition| condition.test(value));
         if !direct {
             return false;
         }
         self.filter_conditions.iter().filter(|x| x.is_foreign_filter()).all(|condition| {
-            condition.test_foreign(value, foreign_values)
+            condition.test_foreign(value, lookup_table)
         })
     }
 
@@ -69,7 +69,10 @@ impl<'a> TableFilters<'a> {
     fn resolve_positions(&mut self, insert_statement: &str) {
         let positions: HashMap<String, usize> = parse_insert_fields(insert_statement);
         for filter in self.inner.values_mut() {
-            filter.set_position(positions[&filter.field])
+            match positions.get(&filter.field) {
+                Some(pos) => filter.set_position(*pos),
+                None => panic!("{}", format!("unknown column {}", filter.field)),
+            }
         }
         assert!(self.has_resolved_positions());
     }
@@ -77,7 +80,7 @@ impl<'a> TableFilters<'a> {
     pub fn test_sql_statement(
         &mut self,
         sql_statement: &str,
-        foreign_values: &Option<&HashMap<String, HashSet<String>>>,
+        lookup_table: &Option<&HashMap<String, HashSet<String>>>,
     ) -> bool {
         if !sql_statement.starts_with("INSERT") {
             return true;
@@ -89,7 +92,7 @@ impl<'a> TableFilters<'a> {
             let values = parse_insert_values(sql_statement);
 
             if !self.inner.values().all(|field_filters| {
-                field_filters.position.is_some_and(|p| field_filters.test_value(values[p], foreign_values))
+                field_filters.position.is_some_and(|p| field_filters.test_value(values[p], lookup_table))
             }) {
                 return false;
             }
@@ -102,6 +105,7 @@ impl<'a> TableFilters<'a> {
 #[derive(Debug)]
 pub struct Filters<'a> {
     inner: HashMap<String, TableFilters<'a>>,
+    lookup_table: Option<HashMap<String, HashSet<String>>>
 }
 
 impl<'a> Filters<'a> {
@@ -116,29 +120,35 @@ impl<'a> Filters<'a> {
 
         Filters {
             inner,
+            lookup_table: None,
         }
+    }
+
+    fn set_lookup(&mut self, lookup_table: HashMap<String, HashSet<String>>) {
+        self.lookup_table = Some(lookup_table);
     }
 
     pub fn test_sql_statement(
         &mut self,
         sql_statement: &str,
         table: &str,
-        foreign_values: &Option<&HashMap<String, HashSet<String>>>,
     ) -> bool {
         let Some(f) = self.inner.get_mut(table) else { return true };
-        f.test_sql_statement(sql_statement, foreign_values)
+        f.test_sql_statement(sql_statement, &self.lookup_table.as_ref())
     }
 }
 
 pub fn filter_statements<'a, I: Iterator<Item=(Option<String>, String)>>(
     filters: &'a mut Filters,
     references: &'a mut References,
-    foreign_values: Option<&'a HashMap<String, HashSet<String>>>,
     lines: I,
 ) -> impl Iterator<Item=(Option<String>, String)> {
+    if !references.is_empty() {
+        filters.set_lookup(references.get_lookup_table());
+    }
     lines.filter(move |(t, st)| {
         let Some(table) = t else { return true };
-        let should_keep = filters.test_sql_statement(st, table, &foreign_values);
+        let should_keep = filters.test_sql_statement(st, table);
         if should_keep {
             references.capture(table, st);
         }
