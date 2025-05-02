@@ -189,14 +189,13 @@ impl FilterCondition {
             FilterOperator::ForeignKey => true,
             FilterOperator::Cel(program) => {
                 let context = self.build_context(other_value);
-
-                let value = program.execute(&context).unwrap();
-                let res = match value {
-                    cel_interpreter::objects::Value::Bool(v) => v,
-                    _ => false,
-                };
-                // println!("testing {}.{} {} -> {}", self.table, self.field, &other_value, &res);
-                res
+                match program.execute(&context).unwrap() {
+                    cel_interpreter::objects::Value::Bool(v) => {
+                        // println!("testing {}.{} {} -> {}", self.table, self.field, &other_value, &v);
+                        v
+                    }
+                    _ => panic!("filter does not return a boolean"),
+                }
             },
             FilterOperator::Unknown => true
         }
