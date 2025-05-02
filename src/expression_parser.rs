@@ -1,5 +1,6 @@
 use lazy_static::lazy_static;
 use cel_interpreter::{Context, Program};
+use cel_interpreter::extractors::This;
 use nom::{
   IResult,
   Parser,
@@ -10,8 +11,10 @@ use nom::{
   multi::{separated_list0, separated_list1},
   sequence::{delimited, preceded},
 };
+use chrono::NaiveDateTime;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use sqlparser::dialect::MySqlDialect;
 use sqlparser::parser::Parser as SqlParser;
 
@@ -78,7 +81,7 @@ pub fn parse_insert_values(insert_statement: &str) -> Vec<&str> {
 pub fn get_data_types(sql: &str) -> HashMap<String, sqlparser::ast::DataType> {
     let mut data_types = HashMap::new();
     let dialect = MySqlDialect {};
-    let ast = SqlParser::parse_sql(&dialect, &sql).unwrap();
+    let ast = SqlParser::parse_sql(&dialect, sql).unwrap();
     for st in ast.into_iter().filter(|x| matches!(x, sqlparser::ast::Statement::CreateTable(_))) {
         if let sqlparser::ast::Statement::CreateTable(ct) = st {
             for column in ct.columns.into_iter() {
@@ -107,14 +110,29 @@ pub struct FilterCondition {
     data_type: sqlparser::ast::DataType,
 }
 
-impl FilterCondition {
-    fn get_data_type(data_types: &HashMap<String, sqlparser::ast::DataType>, table: &str, field: &str) -> sqlparser::ast::DataType {
-        match data_types.get(&(table.to_owned() + "." + field)) {
-            None => panic!("{}", format!("cannot find data type for {}.{}", table, field)),
-            Some(data_type) => data_type.to_owned()
-        }
+fn get_data_type(data_types: &HashMap<String, sqlparser::ast::DataType>, table: &str, field: &str) -> sqlparser::ast::DataType {
+    match data_types.get(&(table.to_owned() + "." + field)) {
+        None => panic!("{}", format!("cannot find data type for {table}.{field}")),
+        Some(data_type) => data_type.to_owned()
     }
+}
 
+fn parse_date(s: &str) -> i64 {
+    let to_parse = if s.len() == 10 { s.to_owned() + " 00:00:00" } else { s.to_owned() };
+    let val = NaiveDateTime::parse_from_str(&to_parse, "%Y-%m-%d %H:%M:%S").unwrap_or_else(|_| panic!("cannot parse timestamp {s}"));
+    let timestamp: i64 = val.and_utc().timestamp();
+    timestamp
+}
+
+fn parse_int(s: &str) -> i64 {
+    s.parse().unwrap_or_else(|_| panic!("cannot parse int {s}"))
+}
+
+fn timestamp(This(s): This<Arc<String>>) -> i64 {
+    parse_date(&s)
+}
+
+impl FilterCondition {
     pub fn new(table: &str, definition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> FilterCondition {
         if definition.starts_with("cel:") {
             let Some(end) = definition.strip_prefix("cel:") else { panic!("cannot parse cel expression") };
@@ -126,7 +144,7 @@ impl FilterCondition {
                 field: field.to_string(),
                 operator: FilterOperator::Cel(program),
                 value: definition.to_string(),
-                data_type: FilterCondition::get_data_type(data_types, table, &field),
+                data_type: get_data_type(data_types, table, field),
             }
         }
         let (field, operator, value) = parse_filter(definition);
@@ -140,8 +158,30 @@ impl FilterCondition {
                 _ => FilterOperator::Unknown,
             },
             value: value.to_string(),
-            data_type: FilterCondition::get_data_type(data_types, table, field),
+            data_type: get_data_type(data_types, table, field),
         }
+    }
+
+    pub fn build_context(&self, other_value: &str) -> Context {
+        let mut context = Context::default();
+        context.add_function("timestamp", timestamp);
+
+        if other_value == "NULL" {
+            context.add_variable(self.field.clone(), false).unwrap();
+            return context;
+        }
+
+        context.add_variable(self.field.clone(), match self.data_type {
+            sqlparser::ast::DataType::TinyInt(_) | sqlparser::ast::DataType::Int(_) => {
+                parse_int(other_value)
+            },
+            sqlparser::ast::DataType::Datetime(_) | sqlparser::ast::DataType::Date => {
+                parse_date(other_value)
+            },
+            _ => panic!("{}", format!("cannot parse {} for {}", other_value, self.data_type))
+        }).unwrap();
+
+        context
     }
 
     pub fn test(&self, other_value: &str) -> bool {
@@ -150,22 +190,14 @@ impl FilterCondition {
             FilterOperator::NotEquals => self.value != other_value,
             FilterOperator::ForeignKey => true,
             FilterOperator::Cel(program) => {
-                let mut context = Context::default();
-                let Ok(val): Result<u64, _> = other_value.parse() else {
-                    if other_value == "NULL" {
-                        return false;
-                    }
-                    dbg!(&self.data_type);
-                    panic!("{}", format!("cannot parse value {}", other_value));
-                };
-                context.add_variable(self.field.clone(), val).unwrap();
+                let context = self.build_context(other_value);
 
                 let value = program.execute(&context).unwrap();
                 let res = match value {
                     cel_interpreter::objects::Value::Bool(v) => v,
                     _ => false,
                 };
-                // println!("testing {} -> {}", &val, &res);
+                println!("testing {}.{} {} -> {}", self.table, self.field, &other_value, &res);
                 res
             },
             FilterOperator::Unknown => true

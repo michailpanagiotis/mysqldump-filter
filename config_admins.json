@@ -2,7 +2,8 @@
   "allow_data_on_tables": ["admins"],
   "filter_inserts": {
     "admins": [
-      "cel:created_at<\"2025-01-01\""
+      "cel:is_super==1",
+      "cel:created_at<timestamp(\"2021-01-01\")"
     ]
   }
 }
