@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 
-use crate::expression_parser::{parse_insert_fields, parse_insert_values};
+use crate::expression_parser::{get_field_positions, parse_insert_values};
 
 #[derive(Debug)]
 pub struct TableReferences {
@@ -20,11 +20,11 @@ impl TableReferences {
     }
 
     fn has_resolved_positions(&self) -> bool {
-        self.values_per_field.len() == self.position_per_field.len()
+        self.values_per_field.keys().all(|k| self.position_per_field.contains_key(k))
     }
 
     fn resolve_positions(&mut self, insert_statement: &str) {
-        self.position_per_field = HashMap::from_iter(parse_insert_fields(insert_statement).into_iter().filter(|(field, _)| self.values_per_field.contains_key(field)));
+        self.position_per_field = get_field_positions(insert_statement);
         assert!(self.has_resolved_positions());
     }
 
@@ -43,10 +43,11 @@ impl TableReferences {
             self.resolve_positions(insert_statement);
         }
 
-        let values = parse_insert_values(insert_statement);
+        let curr_values = parse_insert_values(insert_statement);
 
-        for (field, pos) in self.position_per_field.iter() {
-            self.values_per_field.get_mut(field).unwrap().insert(values[*pos].to_string());
+        for (field, values) in self.values_per_field.iter_mut() {
+            let pos = self.position_per_field[field];
+            values.insert(curr_values[pos].to_string());
         }
     }
 

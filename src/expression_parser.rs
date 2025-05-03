@@ -6,9 +6,9 @@ use nom::{
   Parser,
   branch::alt,
   bytes::complete::{escaped, is_not, take_until, tag, take_till},
-  character::complete::{char, one_of, none_of},
+  character::complete::{one_of, none_of},
   combinator::rest,
-  multi::{separated_list0, separated_list1},
+  multi::separated_list1,
   sequence::{delimited, preceded},
 };
 use chrono::NaiveDateTime;
@@ -37,7 +37,7 @@ pub fn parse_filter(filter_definition: &str) -> (&str, &str, &str) {
     parsed
 }
 
-pub fn parse_insert_fields(insert_statement: &str) -> HashMap<String, usize> {
+pub fn get_field_positions(insert_statement: &str) -> HashMap<String, usize> {
     let dialect = MySqlDialect {};
     let ast = SqlParser::parse_sql(&dialect, insert_statement).unwrap();
 

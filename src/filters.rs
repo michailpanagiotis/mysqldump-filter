@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 
-use crate::expression_parser::{FilterCondition, parse_insert_fields, parse_insert_values};
+use crate::expression_parser::{FilterCondition, get_field_positions, parse_insert_values};
 use crate::references::References;
 
 #[derive(Debug)]
@@ -67,7 +67,7 @@ impl<'a> TableFilters<'a> {
     }
 
     fn resolve_positions(&mut self, insert_statement: &str) {
-        let positions: HashMap<String, usize> = parse_insert_fields(insert_statement);
+        let positions: HashMap<String, usize> = get_field_positions(insert_statement);
         for filter in self.inner.values_mut() {
             match positions.get(&filter.field) {
                 Some(pos) => filter.set_position(*pos),
