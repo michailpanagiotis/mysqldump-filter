@@ -60,17 +60,17 @@ impl From<&PathBuf> for Configuration {
     }
 }
 
-struct FileStatements {
+struct SqlStatements {
     buf: io::BufReader<fs::File>,
     cur_table: Option<String>,
     last_statement: Option<String>,
     allowed_tables: HashSet<String>,
 }
 
-impl FileStatements {
+impl SqlStatements {
     pub fn from_file(sqldump_filepath: &Path, allowed_tables: &HashSet<String>) -> Self {
         let file = fs::File::open(sqldump_filepath).expect("Cannot open file");
-        FileStatements {
+        SqlStatements {
             buf: io::BufReader::new(file),
             cur_table: None,
             last_statement: None,
@@ -108,7 +108,7 @@ impl FileStatements {
     }
 }
 
-impl Iterator for FileStatements {
+impl Iterator for SqlStatements {
     type Item = (Option<String>, String);
     fn next(&mut self) -> Option<(Option<String>, String)> {
         let (mut table, mut line) = self.next_statement()?;
@@ -119,24 +119,16 @@ impl Iterator for FileStatements {
     }
 }
 
-impl itertools::PeekingNext for FileStatements {
-    fn peeking_next<F>(&mut self, accept: F) -> Option<Self::Item>
-      where Self: Sized,
-            F: FnOnce(&Self::Item) -> bool
-    {
-        let last_statement = self.next();
-        let st = last_statement.as_ref()?;
-        if !accept(st) {
-            return None;
-        }
-        last_statement
-    }
-}
-
-pub fn get_data_types(sql: &str) -> HashMap<String, sqlparser::ast::DataType> {
+pub fn get_data_types<I: Iterator<Item=(Option<String>, String)>>(statements: I) -> HashMap<String, sqlparser::ast::DataType> {
     let mut data_types = HashMap::new();
     let dialect = MySqlDialect {};
-    let ast = SqlParser::parse_sql(&dialect, sql).unwrap();
+    let sql: String = statements
+        .take_while(|(table,_)| table.is_none())
+        .map(|(_, line)| line)
+        .filter(|x| !x.starts_with("--"))
+        .map(|x| x.replace('\n', " "))
+        .collect();
+    let ast = SqlParser::parse_sql(&dialect, &sql).unwrap();
     for st in ast.into_iter().filter(|x| matches!(x, sqlparser::ast::Statement::CreateTable(_))) {
         if let sqlparser::ast::Statement::CreateTable(ct) = st {
             for column in ct.columns.into_iter() {
@@ -148,13 +140,8 @@ pub fn get_data_types(sql: &str) -> HashMap<String, sqlparser::ast::DataType> {
 }
 
 pub fn read_sql_file(sqldump_filepath: &Path, allowed_tables: &HashSet<String>) -> (impl Iterator<Item = (Option<String>, String)>, HashMap<String, sqlparser::ast::DataType>) {
-    let iter = FileStatements::from_file(sqldump_filepath, allowed_tables);
-
-    let mut copied = FileStatements::from_file(sqldump_filepath, allowed_tables);
-    let schema: Vec<String> = copied.by_ref().peeking_take_while(|(table,_)| table.is_none()).map(|(_, line)| line).collect();
-
-    let sch: String = schema.iter().filter(|x| !x.starts_with("--")).cloned().map(|x| x.replace('\n', " ")).collect();
-    let data_types = get_data_types(&sch);
+    let iter = SqlStatements::from_file(sqldump_filepath, allowed_tables);
+    let data_types = get_data_types(SqlStatements::from_file(sqldump_filepath, allowed_tables));
 
     (iter, data_types)
 }
