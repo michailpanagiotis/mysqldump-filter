@@ -76,19 +76,6 @@ pub fn parse_insert_values(insert_statement: &str) -> Vec<&str> {
     values
 }
 
-pub fn get_data_types(sql: &str) -> HashMap<String, sqlparser::ast::DataType> {
-    let mut data_types = HashMap::new();
-    let dialect = MySqlDialect {};
-    let ast = SqlParser::parse_sql(&dialect, sql).unwrap();
-    for st in ast.into_iter().filter(|x| matches!(x, sqlparser::ast::Statement::CreateTable(_))) {
-        if let sqlparser::ast::Statement::CreateTable(ct) = st {
-            for column in ct.columns.into_iter() {
-                data_types.insert(ct.name.0[0].as_ident().unwrap().value.to_string() + "." + column.name.value.as_str(), column.data_type);
-            }
-        }
-    }
-    data_types
-}
 
 #[derive(Debug)]
 enum FilterOperator {
