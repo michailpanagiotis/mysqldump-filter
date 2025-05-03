@@ -25,6 +25,10 @@ struct Cli {
     working_dir: Option<PathBuf>,
 }
 
+fn process(output_file: &str) {
+
+}
+
 fn main() {
     let cli = Cli::parse();
     let input_file = std::env::current_dir().unwrap().to_path_buf().join(cli.input);

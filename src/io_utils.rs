@@ -35,8 +35,6 @@ impl Configuration {
                 })
             }).collect();
 
-        // let filter_conditions: Vec<FilterCondition> = filter_conditions.iter().map(|(table, definition)| FilterCondition::new(table, definition)).collect();
-
         Configuration {
             allowed_tables,
             filter_config,
@@ -44,8 +42,7 @@ impl Configuration {
     }
 
     pub fn get_conditions(&self, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Vec<FilterCondition> {
-        let conditions = self.filter_config.iter().map(|(table, definition)| FilterCondition::new(table, definition, data_types)).collect();
-        conditions
+        self.filter_config.iter().map(|(table, definition)| FilterCondition::new(table, definition, data_types)).collect()
     }
 }
 
