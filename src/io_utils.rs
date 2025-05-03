@@ -120,15 +120,10 @@ impl Iterator for SqlStatements {
 }
 
 pub fn get_data_types(sqldump_filepath: &Path) -> HashMap<String, sqlparser::ast::DataType> {
-    let statements = SqlStatements::from_file(sqldump_filepath, &HashSet::default());
+    let file = fs::File::open(sqldump_filepath).expect("Cannot open file");
+    let sql = io::BufReader::new(file).lines().map_while(|x| x.ok()).filter(|x| !x.starts_with("--")).take_while(|x| !x.starts_with("INSERT")).join("\n");
     let mut data_types = HashMap::new();
     let dialect = MySqlDialect {};
-    let sql: String = statements
-        .take_while(|(table,_)| table.is_none())
-        .map(|(_, line)| line)
-        .filter(|x| !x.starts_with("--"))
-        .map(|x| x.replace('\n', " "))
-        .collect();
     let ast = SqlParser::parse_sql(&dialect, &sql).unwrap();
     for st in ast.into_iter().filter(|x| matches!(x, sqlparser::ast::Statement::CreateTable(_))) {
         if let sqlparser::ast::Statement::CreateTable(ct) = st {

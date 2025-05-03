@@ -44,6 +44,8 @@ fn main() {
     let working_file_path = working_dir_path.join("INTERIM").with_extension("sql");
     let data_types = get_data_types(input_file.as_path());
 
+    println!("Read data types!");
+
     let config = Configuration::from(&config_file);
     let conditions = &config.get_conditions(&data_types);
 

@@ -83,7 +83,6 @@ enum FilterOperator {
     NotEquals,
     ForeignKey,
     Cel(Program),
-    Unknown,
 }
 
 #[derive(Debug)]
@@ -140,7 +139,7 @@ impl FilterCondition {
                 "==" => FilterOperator::Equals,
                 "!=" => FilterOperator::NotEquals,
                 "->" => FilterOperator::ForeignKey,
-                _ => FilterOperator::Unknown,
+                _ => panic!("unknown filter operator"),
             },
             value: value.to_string(),
             data_type: get_data_type(data_types, table, field),
@@ -184,7 +183,6 @@ impl FilterCondition {
                     _ => panic!("filter does not return a boolean"),
                 }
             },
-            FilterOperator::Unknown => true
         }
     }
 
