@@ -7,7 +7,6 @@ mod filters;
 mod io_utils;
 mod references;
 
-use expression_parser::FilterCondition;
 use io_utils::{get_data_types, read_sql_file, write_sql_file, Configuration};
 use references::References;
 use filters::{filter_statements, Filters};
@@ -23,10 +22,6 @@ struct Cli {
     output: PathBuf,
     #[clap(short, long, required = false)]
     working_dir: Option<PathBuf>,
-}
-
-fn process(output_file: &str) {
-
 }
 
 fn main() {
