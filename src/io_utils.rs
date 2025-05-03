@@ -119,7 +119,8 @@ impl Iterator for SqlStatements {
     }
 }
 
-pub fn get_data_types<I: Iterator<Item=(Option<String>, String)>>(statements: I) -> HashMap<String, sqlparser::ast::DataType> {
+pub fn get_data_types(sqldump_filepath: &Path) -> HashMap<String, sqlparser::ast::DataType> {
+    let statements = SqlStatements::from_file(sqldump_filepath, &HashSet::default());
     let mut data_types = HashMap::new();
     let dialect = MySqlDialect {};
     let sql: String = statements
@@ -139,11 +140,8 @@ pub fn get_data_types<I: Iterator<Item=(Option<String>, String)>>(statements: I)
     data_types
 }
 
-pub fn read_sql_file(sqldump_filepath: &Path, allowed_tables: &HashSet<String>) -> (impl Iterator<Item = (Option<String>, String)>, HashMap<String, sqlparser::ast::DataType>) {
-    let iter = SqlStatements::from_file(sqldump_filepath, allowed_tables);
-    let data_types = get_data_types(SqlStatements::from_file(sqldump_filepath, allowed_tables));
-
-    (iter, data_types)
+pub fn read_sql_file(sqldump_filepath: &Path, allowed_tables: &HashSet<String>) -> impl Iterator<Item = (Option<String>, String)> {
+    SqlStatements::from_file(sqldump_filepath, allowed_tables)
 }
 
 pub fn write_sql_file<I: Iterator<Item=(Option<String>, String)>>(filepath: &PathBuf, lines: I) -> PathBuf {
