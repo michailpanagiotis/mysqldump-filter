@@ -49,8 +49,8 @@ fn main() {
     let config = Configuration::from(&config_file);
     let conditions = &config.get_conditions(&data_types);
 
-    let mut filters = Filters::new(conditions.iter());
-    let mut references = References::from_iter(FilterCondition::get_foreign_keys(conditions.iter()));
+    let mut filters = Filters::from_iter(conditions);
+    let mut references = References::from_iter(conditions);
 
     println!("First pass...");
     let all_statements = read_sql_file(input_file.as_path(), &config.allowed_tables);

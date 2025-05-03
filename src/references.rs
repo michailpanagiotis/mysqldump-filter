@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 
-use crate::expression_parser::{get_field_positions, parse_insert_values};
+use crate::expression_parser::{FilterCondition, get_field_positions, parse_insert_values};
 
 #[derive(Debug)]
 pub struct TableReferences {
@@ -103,8 +103,9 @@ impl References {
     }
 }
 
-impl FromIterator<(String, String)> for References {
-    fn from_iter<T: IntoIterator<Item=(String, String)>>(items: T) -> Self {
+impl<'a> FromIterator<&'a FilterCondition> for References {
+    fn from_iter<I: IntoIterator<Item = &'a FilterCondition>>(iter: I) -> Self {
+        let items = iter.into_iter().filter(|fc| fc.is_foreign_filter()).map(|fc| fc.get_foreign_key() );
         let grouped = items.into_iter().into_group_map_by(|(table, _)| table.clone());
         let inner: HashMap<String, TableReferences> = grouped.into_iter().map(|(table, tfs)| (table.to_string(), TableReferences::from_iter(tfs))).collect();
         References { inner }

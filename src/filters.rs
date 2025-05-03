@@ -109,21 +109,6 @@ pub struct Filters<'a> {
 }
 
 impl<'a> Filters<'a> {
-    pub fn new<'b, I: Iterator<Item=&'a FilterCondition>>(filter_conditions: I) -> Self
-        where 'a : 'b
-    {
-        let inner = filter_conditions.chunk_by(|c| &c.table).into_iter().map(|(table, conds)| {
-            let v: Vec<&'a FilterCondition> = conds.into_iter().collect();
-            (table.clone(), TableFilters::new(&v))
-        }).collect();
-
-
-        Filters {
-            inner,
-            lookup_table: None,
-        }
-    }
-
     fn set_lookup(&mut self, lookup_table: HashMap<String, HashSet<String>>) {
         self.lookup_table = Some(lookup_table);
     }
@@ -135,6 +120,21 @@ impl<'a> Filters<'a> {
     ) -> bool {
         let Some(f) = self.inner.get_mut(table) else { return true };
         f.test_sql_statement(sql_statement, &self.lookup_table.as_ref())
+    }
+}
+
+impl<'a> FromIterator<&'a FilterCondition> for Filters<'a> {
+    fn from_iter<I: IntoIterator<Item = &'a FilterCondition>>(iter: I) -> Self {
+        let inner = iter.into_iter().chunk_by(|c| &c.table).into_iter().map(|(table, conds)| {
+            let v: Vec<&'a FilterCondition> = conds.into_iter().collect();
+            (table.clone(), TableFilters::new(&v))
+        }).collect();
+
+
+        Filters {
+            inner,
+            lookup_table: None,
+        }
     }
 }
 
