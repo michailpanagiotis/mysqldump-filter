@@ -7,8 +7,10 @@ mod expression_parser;
 mod filters;
 mod io_utils;
 mod references;
+mod sql;
 
-use io_utils::{get_data_types, read_sql_file, write_sql_file, Configuration};
+use io_utils::Configuration;
+use sql::{get_data_types, read_sql_file, write_sql_file};
 use references::References;
 use filters::{filter_statements, Filters};
 
@@ -48,7 +50,7 @@ fn main() {
 
     println!("Read data types!");
 
-    let config = Configuration::from(&config_file);
+    let config = Configuration::from(config_file.as_path());
     let conditions = &config.get_conditions(&data_types);
 
     let mut filters = Filters::from_iter(conditions);

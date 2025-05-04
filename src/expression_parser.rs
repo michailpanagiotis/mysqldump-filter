@@ -1,4 +1,3 @@
-use lazy_static::lazy_static;
 use cel_interpreter::{Context, Program};
 use cel_interpreter::extractors::This;
 use nom::{
@@ -12,19 +11,11 @@ use nom::{
   sequence::{delimited, preceded},
 };
 use chrono::NaiveDateTime;
-use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use sqlparser::dialect::MySqlDialect;
 use sqlparser::parser::Parser as SqlParser;
 
-lazy_static! {
-    static ref TABLE_DUMP_RE: Regex = Regex::new(r"--\n-- Dumping data for table `([^`]*)`").unwrap();
-}
-
-pub fn extract_table(sql_comment: &str) -> String {
-    TABLE_DUMP_RE.captures(sql_comment).unwrap().get(1).unwrap().as_str().to_string()
-}
 
 pub fn parse_filter(filter_definition: &str) -> (&str, &str, &str) {
     let mut parser = (
