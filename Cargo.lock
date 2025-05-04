@@ -770,6 +770,7 @@ dependencies = [
  "lazy_static",
  "nom 8.0.0",
  "regex",
+ "serde",
  "sqlparser",
  "tempdir",
  "tempfile",

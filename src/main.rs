@@ -10,7 +10,7 @@ mod io_utils;
 mod references;
 mod sql;
 
-use io_utils::Configuration;
+use io_utils::read_config;
 use sql::{get_data_types, read_sql_file, write_sql_file};
 use references::References;
 use filters::{filter_statements, Filters};
@@ -28,8 +28,8 @@ struct Cli {
     working_dir: Option<PathBuf>,
 }
 
-fn process_file(input_file: &Path, output_file: &Path, allowed_tables: &HashSet<String>, filters: &mut Filters, references: &mut References) {
-    let all_statements = read_sql_file(input_file, allowed_tables);
+fn process_file(input_file: &Path, output_file: &Path, allow_data_on_tables: &HashSet<String>, filters: &mut Filters, references: &mut References) {
+    let all_statements = read_sql_file(input_file, allow_data_on_tables);
     let filtered = filter_statements(filters, references, all_statements);
     write_sql_file(output_file, filtered);
 }
@@ -51,18 +51,18 @@ fn main() {
 
     println!("Read data types!");
 
-    let config = Configuration::from(config_file.as_path());
+    let config = read_config(config_file.as_path());
     let conditions = &config.get_conditions(&data_types);
 
     let mut filters = Filters::from_iter(conditions);
     let mut references = References::from_iter(conditions);
 
     println!("First pass...");
-    process_file(input_file.as_path(), output_file.as_path(), &config.allowed_tables, &mut filters, &mut references);
+    process_file(input_file.as_path(), output_file.as_path(), &config.allow_data_on_tables, &mut filters, &mut references);
 
     println!("Second pass...");
     fs::rename(output_file.as_path(), &working_file_path).expect("cannot rename");
-    process_file(&working_file_path, output_file.as_path(), &config.allowed_tables, &mut filters, &mut references);
+    process_file(&working_file_path, output_file.as_path(), &config.allow_data_on_tables, &mut filters, &mut references);
 
     if let Some(dir) = temp_dir {
        let _ = dir.close();
