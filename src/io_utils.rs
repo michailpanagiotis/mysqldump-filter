@@ -11,9 +11,7 @@ pub struct Configuration {
 }
 
 impl Configuration {
-    pub fn new(
-        settings: Config,
-    ) -> Self {
+    pub fn new(settings: Config) -> Self {
         let allowed_tables: HashSet<_> = settings
             .get_array("allow_data_on_tables")
             .expect("no key 'allow_data_on_tables' in config")
