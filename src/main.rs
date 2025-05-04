@@ -1,5 +1,6 @@
+use std::fs;
 use clap::Parser;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tempdir::TempDir;
 
 mod expression_parser;
@@ -22,6 +23,12 @@ struct Cli {
     output: PathBuf,
     #[clap(short, long, required = false)]
     working_dir: Option<PathBuf>,
+}
+
+fn process_file(input_file: &Path, output_file: &Path, config: &Configuration, filters: &mut Filters, references: &mut References) {
+    let all_statements = read_sql_file(input_file, &config.allowed_tables);
+    let filtered = filter_statements(filters, references, all_statements);
+    write_sql_file(output_file, filtered);
 }
 
 fn main() {
@@ -48,14 +55,11 @@ fn main() {
     let mut references = References::from_iter(conditions);
 
     println!("First pass...");
-    let all_statements = read_sql_file(input_file.as_path(), &config.allowed_tables);
-    let filtered = filter_statements(&mut filters, &mut references, all_statements);
-    write_sql_file(&working_file_path, filtered);
+    process_file(input_file.as_path(), output_file.as_path(), &config, &mut filters, &mut references);
 
     println!("Second pass...");
-    let all_statements = read_sql_file(&working_file_path, &config.allowed_tables);
-    let filtered = filter_statements(&mut filters, &mut references, all_statements);
-    write_sql_file(&output_file, filtered);
+    fs::rename(output_file.as_path(), &working_file_path).expect("cannot rename");
+    process_file(&working_file_path, output_file.as_path(), &config, &mut filters, &mut references);
 
     if let Some(dir) = temp_dir {
        let _ = dir.close();

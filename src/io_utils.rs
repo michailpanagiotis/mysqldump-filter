@@ -139,7 +139,7 @@ pub fn read_sql_file(sqldump_filepath: &Path, allowed_tables: &HashSet<String>) 
     SqlStatements::from_file(sqldump_filepath, allowed_tables)
 }
 
-pub fn write_sql_file<I: Iterator<Item=(Option<String>, String)>>(filepath: &PathBuf, lines: I) -> PathBuf {
+pub fn write_sql_file<I: Iterator<Item=(Option<String>, String)>>(filepath: &Path, lines: I) -> PathBuf {
     fs::File::create(filepath).unwrap_or_else(|_| panic!("Unable to create file {}", &filepath.display()));
     let file = fs::OpenOptions::new()
         .append(true)
@@ -155,5 +155,5 @@ pub fn write_sql_file<I: Iterator<Item=(Option<String>, String)>>(filepath: &Pat
     };
 
     writer.flush().expect("Cannot flush buffer");
-    filepath.clone()
+    filepath.to_path_buf()
 }
