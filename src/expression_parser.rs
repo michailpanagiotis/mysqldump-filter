@@ -209,9 +209,4 @@ impl FilterCondition {
         };
         (table.to_string(), field.to_string())
     }
-
-    pub fn get_foreign_keys<'a, I: Iterator<Item=&'a FilterCondition>>(conditions: I) -> impl Iterator<Item=(String, String)> {
-        conditions.filter(|fc| fc.is_foreign_filter()).map(|fc| fc.get_foreign_key() )
-
-    }
 }
