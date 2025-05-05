@@ -108,7 +108,22 @@ fn timestamp(This(s): This<Arc<String>>) -> i64 {
 }
 
 impl FilterCondition {
-    pub fn new(table: &str, definition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> FilterCondition {
+    pub fn cascade(table: &str, definition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Self {
+        let mut split = definition.split("->");
+        let (Some(field), Some(foreign_key), None) = (split.next(), split.next(), split.next()) else {
+            panic!("cannot parse cascade");
+        };
+
+        FilterCondition {
+            table: table.to_string(),
+            field: field.to_string(),
+            operator: FilterOperator::ForeignKey,
+            value: foreign_key.to_string(),
+            data_type: get_data_type(data_types, table, field),
+        }
+    }
+
+    pub fn new(table: &str, definition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Self {
         if definition.starts_with("cel:") {
             let Some(end) = definition.strip_prefix("cel:") else { panic!("cannot parse cel expression") };
             let program = Program::compile(end).unwrap();

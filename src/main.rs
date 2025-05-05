@@ -1,19 +1,45 @@
 use clap::Parser;
-use std::collections::HashSet;
+use serde::Deserialize;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempdir::TempDir;
 
 mod expression_parser;
 mod filters;
-mod io_utils;
 mod references;
 mod sql;
 
-use io_utils::read_config;
+use expression_parser::FilterCondition;
 use sql::{get_data_types, read_sql_file, write_sql_file};
 use references::References;
 use filters::{filter_statements, Filters};
+
+#[derive(Deserialize)]
+#[serde(rename = "name")]
+pub struct Config {
+    pub allow_data_on_tables: HashSet<String>,
+    pub cascades: HashMap<String, Vec<String>>,
+    filter_inserts: HashMap<String, Vec<String>>
+}
+
+impl Config {
+    fn from_file(config_file: &Path) -> Self {
+        let file = config::File::new(config_file.to_str().expect("invalid config path"), config::FileFormat::Json);
+        let settings = config::Config::builder().add_source(file).build().expect("cannot read config file");
+        settings.try_deserialize::<Config>().expect("malformed config")
+    }
+
+    fn get_conditions(&self, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Vec<FilterCondition> {
+        self.filter_inserts
+            .iter()
+            .flat_map(|(table, conditions)| conditions.iter().map(|c| FilterCondition::new(table, c, data_types)))
+            .chain(
+                self.cascades.iter().flat_map(|(table, conditions)| conditions.iter().map(|c| FilterCondition::cascade(table, c, data_types)))
+            )
+            .collect()
+    }
+}
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -51,7 +77,7 @@ fn main() {
 
     println!("Read data types!");
 
-    let config = read_config(config_file.as_path());
+    let config = Config::from_file(config_file.as_path());
     let conditions = &config.get_conditions(&data_types);
 
     let mut filters = Filters::from_iter(conditions);

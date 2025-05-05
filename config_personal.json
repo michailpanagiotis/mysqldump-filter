@@ -1,5 +1,13 @@
 {
   "allow_data_on_tables": ["admins", "invoice_items", "invoices", "organizations", "transactions" ],
+  "cascades": {
+    "invoice_items": [
+      "invoice_id->invoices.id"
+    ],
+    "transactions": [
+      "invoice_id->invoices.id"
+    ]
+  },
   "filter_inserts": {
     "admins": [
       "cel:is_super==1"
@@ -12,11 +20,7 @@
       "cel:date>timestamp(\"2025-01-01\")"
     ],
     "invoice_items": [
-      "cel:user_id==7",
-      "invoice_id->invoices.id"
-    ],
-    "transactions": [
-      "invoice_id->invoices.id"
+      "cel:user_id==7"
     ]
   }
 }
