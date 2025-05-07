@@ -1,0 +1,36 @@
+{
+    "$schema": "https://raw.githubusercontent.com/mfussenegger/dapconfig-schema/master/dapconfig-schema.json",
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "codelldb",
+            "request": "launch",
+            "name": "Debug big",
+            "program": "${fileDirname}/../target/debug/mysqldump-filter",
+            "args": [
+                "big.sql",
+                "-c=config.json",
+                "-o=filtered.sql",
+                "-w=here/v1"
+            ],
+            "sourceLanguages": [
+                "rust"
+            ]
+        },
+        {
+            "type": "codelldb",
+            "request": "launch",
+            "name": "Debug small",
+            "program": "${fileDirname}/../target/debug/mysqldump-filter",
+            "args": [
+                "invoice_items_invoices.sql",
+                "-c=config.json",
+                "-o=filtered.sql",
+                "-w=here/v1"
+            ],
+            "sourceLanguages": [
+                "rust"
+            ]
+        }
+    ]
+}
