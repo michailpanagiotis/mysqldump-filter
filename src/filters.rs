@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::sql::{get_field_positions, get_values};
+use crate::references::References;
 
 #[derive(Debug)]
 pub struct CelTest {
@@ -128,6 +129,10 @@ impl LookupTest {
         (self.target_table.clone(), self.target_column.clone())
     }
 
+    pub fn get_target_table(&self) -> String {
+        self.target_table.clone()
+    }
+
     pub fn get_key(&self) -> String {
         self.target_table.clone() + "." + &self.target_column
     }
@@ -146,6 +151,7 @@ pub struct FieldCondition {
     pub field: String,
     pub test: Tests,
     pub position: Option<usize>,
+    pub used_during_pass: Option<usize>,
 }
 
 impl FieldCondition {
@@ -164,6 +170,7 @@ impl FieldCondition {
                     field,
                     test: Tests::Cel(condition),
                     position: None,
+                    used_during_pass: None,
                 }
             }));
         let cascade_iter = cascades.iter()
@@ -175,6 +182,7 @@ impl FieldCondition {
                     field,
                     test: Tests::Cascade(condition),
                     position: None,
+                    used_during_pass: None,
                 }
             }));
 
@@ -199,7 +207,11 @@ impl FieldCondition {
 
 #[derive(Debug)]
 pub struct FilterConditions {
-    pub inner: HashMap<String, HashMap<String, Vec<FieldCondition>>>
+    pub inner: HashMap<String, HashMap<String, Vec<FieldCondition>>>,
+    all_filtered_tables: HashSet<String>,
+    pub pending_tables: HashSet<String>,
+    pub fully_filtered_tables: HashMap<String, usize>,
+    pub current_pass: usize,
 }
 
 impl FilterConditions {
@@ -218,6 +230,7 @@ impl FilterConditions {
                     field,
                     test: Tests::Cel(condition),
                     position: None,
+                    used_during_pass: None,
                 }
             }));
         let cascade_iter = cascades.iter()
@@ -229,6 +242,7 @@ impl FilterConditions {
                     field,
                     test: Tests::Cascade(condition),
                     position: None,
+                    used_during_pass: None,
                 }
             }));
 
@@ -238,7 +252,11 @@ impl FilterConditions {
             inner: collected.into_iter()
                 .chunk_by(|x| x.table.to_string())
                 .into_iter()
-                .map(|(table, conds)| (table, conds.into_iter().into_group_map_by(|x| x.field.to_string()))).collect()
+                .map(|(table, conds)| (table, conds.into_iter().into_group_map_by(|x| x.field.to_string()))).collect(),
+            all_filtered_tables: HashSet::new(),
+            pending_tables: HashSet::new(),
+            fully_filtered_tables: HashMap::new(),
+            current_pass: 0,
         }
     }
 
@@ -259,6 +277,20 @@ impl FilterConditions {
         assert!(self.has_resolved_positions(table));
     }
 
+    pub fn get_table_dependencies(&self, table: &str) -> HashSet<String> {
+        let mut dependencies = HashSet::new();
+        if !self.inner.contains_key(table) || self.inner[table].is_empty() {
+            return dependencies;
+        }
+
+        for condition in self.inner[table].values().flatten() {
+            if let Tests::Cascade(ref t) = condition.test {
+                dependencies.insert(t.get_target_table());
+            }
+        }
+        dependencies
+    }
+
     pub fn can_table_be_fully_filtered(&self, table: &str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
         if !self.inner.contains_key(table) || self.inner[table].is_empty() {
             return false;
@@ -276,13 +308,40 @@ impl FilterConditions {
         return true;
     }
 
+    pub fn track_filtered(&mut self, table: &str) {
+        if !self.fully_filtered_tables.contains_key(table) {
+            let dependencies = self.get_table_dependencies(table);
+            for dependency in &dependencies {
+                if !self.fully_filtered_tables.contains_key(dependency) {
+                    self.pending_tables.insert(table.to_owned());
+                    return;
+                }
+            }
+
+            self.pending_tables.remove(table);
+
+            let last_pass: Option<usize> = dependencies.iter().map(|d| self.fully_filtered_tables[d]).max();
+            self.fully_filtered_tables.insert(table.to_owned(), self.current_pass);
+        }
+    }
+
     pub fn test_sql_statement(
         &mut self,
         sql_statement: &str,
         table: &str,
         lookup_table: &Option<HashMap<String, HashSet<String>>>,
     ) -> bool {
-        if !sql_statement.starts_with("INSERT") || !self.inner.contains_key(table) || self.inner[table].is_empty() {
+        if !sql_statement.starts_with("INSERT") {
+            return true;
+        }
+
+        if self.fully_filtered_tables.get(table).is_some_and(|x| x < &self.current_pass) {
+            return true;
+        }
+
+        self.track_filtered(table);
+
+        if !self.inner.contains_key(table) || self.inner[table].is_empty() {
             return true;
         }
 
@@ -299,5 +358,24 @@ impl FilterConditions {
         }
 
         true
+    }
+
+    pub fn filter<I: Iterator<Item=(Option<String>, String)>>(&mut self, statements: I, references: &mut References) -> impl Iterator<Item=(Option<String>, String)> {
+        self.current_pass += 1;
+        let lookup = if references.is_empty() { None } else {
+            let lookup = references.get_lookup_table();
+            dbg!(&self.fully_filtered_tables);
+            dbg!(&self.pending_tables);
+            references.clear();
+            Some(lookup)
+        };
+        statements.filter(move |(table_option, statement)| {
+            let Some(table) = table_option else { return true };
+            let should_keep = self.test_sql_statement(statement, table, &lookup);
+            if should_keep {
+                references.capture(table, statement);
+            }
+            should_keep
+        })
     }
 }

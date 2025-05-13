@@ -47,24 +47,8 @@ struct Cli {
 }
 
 fn process_file(input_file: &Path, output_file: &Path, allow_data_on_tables: &HashSet<String>, filters: &mut FilterConditions, references: &mut References) {
-    let lookup = if references.is_empty() { None } else {
-        let lookup = references.get_lookup_table();
-        dbg!(&lookup);
-        references.clear();
-        Some(lookup)
-    };
-
-    let filtered = read_sql_file(input_file, allow_data_on_tables).filter(move |(t, st)| {
-        let Some(table) = t else { return true };
-        let should_keep = filters.test_sql_statement(st, table, &lookup);
-        if should_keep {
-            references.capture(table, st);
-        }
-        should_keep
-    });
-
+    let filtered = filters.filter(read_sql_file(input_file, allow_data_on_tables), references);
     write_sql_file(output_file, filtered);
-
 }
 
 fn main() {
@@ -87,9 +71,7 @@ fn main() {
     let config = Config::from_file(config_file.as_path());
     let conditions = &config.get_conditions(&data_types);
     let mut fc = FilterConditions::new(&config.filters, &config.cascades, &data_types);
-
-    // let mut filters = Filters::new(&mut fc);
-    let mut references = References::new(conditions);
+    let mut references = References::new(conditions.as_slice());
 
     println!("First pass...");
     process_file(input_file.as_path(), output_file.as_path(), &config.allow_data_on_tables, &mut fc, &mut references);
@@ -97,6 +79,9 @@ fn main() {
     println!("Second pass...");
     fs::rename(output_file.as_path(), &working_file_path).expect("cannot rename");
     process_file(&working_file_path, output_file.as_path(), &config.allow_data_on_tables, &mut fc, &mut references);
+
+    dbg!(&fc.fully_filtered_tables);
+    dbg!(&fc.pending_tables);
 
     if let Some(dir) = temp_dir {
        let _ = dir.close();
