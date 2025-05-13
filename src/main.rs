@@ -64,6 +64,7 @@ fn process_file(input_file: &Path, output_file: &Path, allow_data_on_tables: &Ha
     });
 
     write_sql_file(output_file, filtered);
+
 }
 
 fn main() {

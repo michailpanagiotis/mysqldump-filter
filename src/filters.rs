@@ -259,6 +259,23 @@ impl FilterConditions {
         assert!(self.has_resolved_positions(table));
     }
 
+    pub fn can_table_be_fully_filtered(&self, table: &str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
+        if !self.inner.contains_key(table) || self.inner[table].is_empty() {
+            return false;
+        }
+        for condition in self.inner[table].values().flatten() {
+            if let Tests::Cascade(ref t) = condition.test {
+                let Some(l) = lookup_table else {
+                    return false;
+                };
+                if !l.contains_key(&t.get_key()) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
     pub fn test_sql_statement(
         &mut self,
         sql_statement: &str,
