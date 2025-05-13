@@ -47,7 +47,12 @@ struct Cli {
 }
 
 fn process_file(input_file: &Path, output_file: &Path, allow_data_on_tables: &HashSet<String>, filters: &mut FilterConditions, references: &mut References) {
-    let lookup = if references.is_empty() { None } else { Some(references.get_lookup_table()) };
+    let lookup = if references.is_empty() { None } else {
+        let lookup = references.get_lookup_table();
+        dbg!(&lookup);
+        references.clear();
+        Some(lookup)
+    };
 
     let filtered = read_sql_file(input_file, allow_data_on_tables).filter(move |(t, st)| {
         let Some(table) = t else { return true };
