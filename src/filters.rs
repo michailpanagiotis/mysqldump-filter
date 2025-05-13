@@ -146,16 +146,15 @@ pub enum Tests {
 }
 
 #[derive(Debug)]
-pub struct FieldCondition {
+pub struct ColumnTest {
     pub table: String,
     pub field: String,
     pub test: Tests,
     pub position: Option<usize>,
-    pub used_during_pass: Option<usize>,
 }
 
-impl FieldCondition {
-    pub fn from_config(filters: &HashMap<String, Vec<String>>, cascades: &HashMap<String, Vec<String>>, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Vec<FieldCondition> {
+impl ColumnTest {
+    pub fn from_config(filters: &HashMap<String, Vec<String>>, cascades: &HashMap<String, Vec<String>>, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Vec<ColumnTest> {
         let filter_iter = filters.iter()
             .flat_map(|(table, conditions)| conditions.iter().map(move |c| {
                 let field = CelTest::resolve_field(c);
@@ -165,24 +164,22 @@ impl FieldCondition {
                 };
 
                 let condition = CelTest::new(c, data_type);
-                FieldCondition {
+                ColumnTest {
                     table: table.clone(),
                     field,
                     test: Tests::Cel(condition),
                     position: None,
-                    used_during_pass: None,
                 }
             }));
         let cascade_iter = cascades.iter()
             .flat_map(|(table, conditions)| conditions.iter().map(|c| {
                 let field = LookupTest::resolve_field(c);
                 let condition = LookupTest::new(c);
-                FieldCondition {
+                ColumnTest {
                     table: table.clone(),
                     field,
                     test: Tests::Cascade(condition),
                     position: None,
-                    used_during_pass: None,
                 }
             }));
 
@@ -207,7 +204,7 @@ impl FieldCondition {
 
 #[derive(Debug)]
 pub struct FilterConditions {
-    pub inner: HashMap<String, HashMap<String, Vec<FieldCondition>>>,
+    pub inner: HashMap<String, HashMap<String, Vec<ColumnTest>>>,
     all_filtered_tables: HashSet<String>,
     pub pending_tables: HashSet<String>,
     pub fully_filtered_tables: HashMap<String, usize>,
@@ -225,28 +222,26 @@ impl FilterConditions {
                 };
 
                 let condition = CelTest::new(c, data_type);
-                FieldCondition {
+                ColumnTest {
                     table: table.clone(),
                     field,
                     test: Tests::Cel(condition),
                     position: None,
-                    used_during_pass: None,
                 }
             }));
         let cascade_iter = cascades.iter()
             .flat_map(|(table, conditions)| conditions.iter().map(|c| {
                 let field = LookupTest::resolve_field(c);
                 let condition = LookupTest::new(c);
-                FieldCondition {
+                ColumnTest {
                     table: table.clone(),
                     field,
                     test: Tests::Cascade(condition),
                     position: None,
-                    used_during_pass: None,
                 }
             }));
 
-        let mut collected: Vec<FieldCondition> = filter_iter.chain(cascade_iter).collect();
+        let mut collected: Vec<ColumnTest> = filter_iter.chain(cascade_iter).collect();
         collected.sort_by_key(|x| x.table.clone());
         FilterConditions {
             inner: collected.into_iter()
