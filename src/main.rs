@@ -18,7 +18,7 @@ use references::References;
 pub struct Config {
     pub allow_data_on_tables: HashSet<String>,
     pub cascades: HashMap<String, Vec<String>>,
-    filter_inserts: HashMap<String, Vec<String>>
+    filters: HashMap<String, Vec<String>>
 }
 
 impl Config {
@@ -29,7 +29,7 @@ impl Config {
     }
 
     fn get_conditions(&self, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Vec<FieldCondition> {
-        FieldCondition::from_config(&self.filter_inserts, &self.cascades, data_types)
+        FieldCondition::from_config(&self.filters, &self.cascades, data_types)
     }
 }
 
@@ -80,7 +80,7 @@ fn main() {
 
     let config = Config::from_file(config_file.as_path());
     let conditions = &config.get_conditions(&data_types);
-    let mut fc = FilterConditions::new(&config.filter_inserts, &config.cascades, &data_types);
+    let mut fc = FilterConditions::new(&config.filters, &config.cascades, &data_types);
 
     // let mut filters = Filters::new(&mut fc);
     let mut references = References::new(conditions);

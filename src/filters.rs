@@ -56,15 +56,18 @@ impl CelTest {
             return context;
         }
 
-        context.add_variable(self.field.clone(), match self.data_type {
+        match self.data_type {
             sqlparser::ast::DataType::TinyInt(_) | sqlparser::ast::DataType::Int(_) => {
-                parse_int(other_value)
+                context.add_variable(&self.field, parse_int(other_value)).unwrap();
             },
             sqlparser::ast::DataType::Datetime(_) | sqlparser::ast::DataType::Date => {
-                parse_date(other_value)
+                context.add_variable(&self.field, parse_date(other_value)).unwrap();
+            },
+            sqlparser::ast::DataType::Enum(_, _) => {
+                context.add_variable(&self.field, other_value).unwrap();
             },
             _ => panic!("{}", format!("cannot parse {} for {}", other_value, self.data_type))
-        }).unwrap();
+        };
 
         context
     }
@@ -225,8 +228,10 @@ impl FilterConditions {
                 }
             }));
 
+        let mut collected: Vec<FieldCondition> = filter_iter.chain(cascade_iter).collect();
+        collected.sort_by_key(|x| x.table.clone());
         FilterConditions {
-            inner: filter_iter.chain(cascade_iter)
+            inner: collected.into_iter()
                 .chunk_by(|x| x.table.to_string())
                 .into_iter()
                 .map(|(table, conds)| (table, conds.into_iter().into_group_map_by(|x| x.field.to_string()))).collect()
