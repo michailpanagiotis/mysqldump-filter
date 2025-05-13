@@ -12,14 +12,16 @@ pub struct References {
 }
 
 impl References {
-    pub fn new<'a, I: IntoIterator<Item = &'a FieldCondition>>(iter: I) -> Self {
-        let lookup_tests: Vec<&'a LookupTest> = iter
-            .into_iter()
+    pub fn new<'a>(conditions: &'a [FieldCondition]) -> Self {
+        let lookup_tests: Vec<&'a LookupTest> = conditions
+            .iter()
             .flat_map(|fc| match &fc.test {
                 Tests::Cascade(cond) => Some(cond),
                 _ => None,
             })
             .collect();
+
+        let values_per_field = HashMap::from_iter(lookup_tests.iter().map(|x| (x.get_key(), HashSet::new())));
 
         let fields: HashMap<String, HashSet<(String, String, String)>> = lookup_tests.iter()
             .map(|cond| {
@@ -31,7 +33,7 @@ impl References {
 
         References {
             fields,
-            values_per_field: HashMap::from_iter(lookup_tests.iter().map(|x| (x.get_key(), HashSet::new()))),
+            values_per_field,
             position_per_field: HashMap::new(),
         }
     }
