@@ -127,6 +127,10 @@ impl LookupTest {
     pub fn get_foreign_key(&self) -> (String, String) {
         (self.target_table.clone(), self.target_column.clone())
     }
+
+    pub fn get_key(&self) -> String {
+        self.target_table.clone() + "." + &self.target_column
+    }
 }
 
 
