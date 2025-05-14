@@ -10,7 +10,7 @@ mod filters;
 mod references;
 mod sql;
 
-use checks::ColumnTest;
+use checks::{ColumnTest, from_config};
 use filters::FilterConditions;
 use sql::{get_data_types, read_sql_file, write_sql_file};
 use references::References;
@@ -31,7 +31,7 @@ impl Config {
     }
 
     fn get_conditions(&self, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Vec<ColumnTest> {
-        ColumnTest::from_config(&self.filters, &self.cascades, data_types)
+        from_config(&self.filters, &self.cascades, data_types)
     }
 }
 

@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 
-use crate::checks::{ValueTest, ColumnTest, TestValue};
+use crate::checks::{ValueTest, ColumnTest, TestValue, from_config};
 use crate::sql::{get_column_positions, get_values};
 use crate::references::References;
 
@@ -16,12 +16,12 @@ pub struct FilterConditions {
 
 impl FilterConditions {
     pub fn new(filters: &HashMap<String, Vec<String>>, cascades: &HashMap<String, Vec<String>>, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Self {
-        let collected = ColumnTest::from_config(filters, cascades, data_types);
+        let collected = from_config(filters, cascades, data_types);
         FilterConditions {
             inner: collected.into_iter()
-                .chunk_by(|x| x.table.to_string())
+                .chunk_by(|x| x.get_table_name().to_owned())
                 .into_iter()
-                .map(|(table, conds)| (table, conds.into_iter().into_group_map_by(|x| x.column.to_string()))).collect(),
+                .map(|(table, conds)| (table, conds.into_iter().into_group_map_by(|x| x.get_column_name().to_owned()))).collect(),
             all_filtered_tables: HashSet::new(),
             pending_tables: HashSet::new(),
             fully_filtered_tables: HashMap::new(),
@@ -31,7 +31,7 @@ impl FilterConditions {
 
     fn has_resolved_positions(&self, table: &str) -> bool {
         self.inner[table].values().flatten().all(|condition| {
-            condition.position.is_some()
+            condition.has_resolved_position()
         })
     }
 
@@ -121,7 +121,7 @@ impl FilterConditions {
         let values = get_values(sql_statement);
 
         if !self.inner[table].values().flatten().all(|condition| {
-            condition.position.is_some_and(|p| condition.test(values[p], lookup_table))
+            condition.get_column_position().is_some_and(|p| condition.test(values[p], lookup_table))
         }) {
             return false;
         }

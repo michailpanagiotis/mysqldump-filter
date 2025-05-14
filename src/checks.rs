@@ -29,31 +29,40 @@ impl ColumnMeta {
         }
     }
 
-    pub fn set_position(&mut self, pos: usize) {
+    fn set_position(&mut self, pos: usize) {
         self.position = Some(pos);
     }
 }
 
 pub trait TestValue {
     fn from_definition(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Self;
-    fn get_column_meta(&mut self) -> &mut ColumnMeta;
+    fn get_column_meta(&self) -> &ColumnMeta;
+    fn get_column_meta_mut(&mut self) -> &mut ColumnMeta;
     fn test(&self, value:&str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool;
     fn as_column_test(self) -> ColumnTest;
 
-    fn get_table_name(&mut self) -> &str {
+    fn get_table_name(&self) -> &str {
         &self.get_column_meta().table
+    }
+
+    fn get_column_name(&self) -> &str {
+        &self.get_column_meta().column
+    }
+
+    fn get_column_position(&self) -> &Option<usize> {
+        &self.get_column_meta().position
+    }
+
+    fn has_resolved_position(&self) -> bool {
+        self.get_column_meta().position.is_some()
+    }
+
+    fn set_position(&mut self, pos: usize) {
+        self.get_column_meta_mut().set_position(pos);
     }
 
     fn extend_allowed_values(&mut self) {
 
-    }
-
-    fn get_column_name(&mut self) -> &str {
-        &self.get_column_meta().column
-    }
-
-    fn set_position(&mut self, pos: usize) {
-        self.get_column_meta().set_position(pos);
     }
 }
 
@@ -117,7 +126,11 @@ impl TestValue for CelTest {
         }
     }
 
-    fn get_column_meta(&mut self) -> &mut ColumnMeta {
+    fn get_column_meta(&self) -> &ColumnMeta {
+        &self.meta
+    }
+
+    fn get_column_meta_mut(&mut self) -> &mut ColumnMeta {
         &mut self.meta
     }
 
@@ -134,10 +147,7 @@ impl TestValue for CelTest {
 
     fn as_column_test(self) -> ColumnTest {
         ColumnTest {
-            table: self.meta.table.to_owned(),
-            column: self.meta.column.to_owned(),
             test: ValueTest::Cel(self),
-            position: None,
         }
     }
 }
@@ -188,7 +198,11 @@ impl TestValue for LookupTest {
         }
     }
 
-    fn get_column_meta(&mut self) -> &mut ColumnMeta {
+    fn get_column_meta(&self) -> &ColumnMeta {
+        &self.meta
+    }
+
+    fn get_column_meta_mut(&mut self) -> &mut ColumnMeta {
         &mut self.meta
     }
 
@@ -200,10 +214,7 @@ impl TestValue for LookupTest {
 
     fn as_column_test(self) -> ColumnTest {
         ColumnTest {
-            table: self.meta.table.to_owned(),
-            column: self.meta.column.to_owned(),
             test: ValueTest::Cascade(self),
-            position: None,
         }
     }
 }
@@ -216,22 +227,7 @@ pub enum ValueTest {
 
 #[derive(Debug)]
 pub struct ColumnTest {
-    pub table: String,
-    pub column: String,
     pub test: ValueTest,
-    pub position: Option<usize>,
-}
-
-impl ColumnTest {
-    pub fn from_config(filters: &HashMap<String, Vec<String>>, cascades: &HashMap<String, Vec<String>>, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Vec<ColumnTest> {
-        let mut collected: Vec<ColumnTest> = filters.iter().chain(cascades)
-            .flat_map(|(table, conditions)| conditions.iter().map(move |condition| {
-                Self::from_definition(table, condition, data_types)
-            }))
-            .collect();
-        collected.sort_by_key(|x| x.table.clone());
-        collected
-    }
 }
 
 impl TestValue for ColumnTest {
@@ -250,7 +246,14 @@ impl TestValue for ColumnTest {
         }
     }
 
-    fn get_column_meta(&mut self) -> &mut ColumnMeta {
+    fn get_column_meta(&self) -> &ColumnMeta {
+        match &self.test {
+            ValueTest::Cascade(t) => &t.meta,
+            ValueTest::Cel(t) => &t.meta
+        }
+    }
+
+    fn get_column_meta_mut(&mut self) -> &mut ColumnMeta {
         match self.test {
             ValueTest::Cascade(ref mut t) => &mut t.meta,
             ValueTest::Cel(ref mut t) => &mut t.meta
@@ -260,4 +263,14 @@ impl TestValue for ColumnTest {
     fn as_column_test(self) -> ColumnTest {
         self
     }
+}
+
+pub fn from_config(filters: &HashMap<String, Vec<String>>, cascades: &HashMap<String, Vec<String>>, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Vec<ColumnTest> {
+    let mut collected: Vec<ColumnTest> = filters.iter().chain(cascades)
+        .flat_map(|(table, conditions)| conditions.iter().map(move |condition| {
+            ColumnTest::from_definition(table, condition, data_types)
+        }))
+        .collect();
+    collected.sort_by_key(|x| x.get_table_name().to_owned());
+    collected
 }
