@@ -229,14 +229,14 @@ impl TestValue for LookupTest {
 
 #[derive(Debug)]
 pub enum ValueTest {
-    Cascade(LookupTest),
+    Lookup(LookupTest),
     Cel(CelTest),
 }
 
 impl ValueTest {
     fn from_definition(table: &str, condition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Self {
         if condition.contains("->") {
-            ValueTest::Cascade(LookupTest::from_definition(condition, table, data_types))
+            ValueTest::Lookup(LookupTest::from_definition(condition, table, data_types))
         } else {
             ValueTest::Cel(CelTest::from_definition(condition, table, data_types))
         }
@@ -247,20 +247,20 @@ impl TestValue for ValueTest {
     fn test(&self, value: &str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
         match &self {
             ValueTest::Cel(cond) => cond.test(value, lookup_table),
-            ValueTest::Cascade(cond) => cond.test(value, lookup_table),
+            ValueTest::Lookup(cond) => cond.test(value, lookup_table),
         }
     }
 
     fn get_column_meta(&self) -> &ColumnMeta {
         match &self {
-            ValueTest::Cascade(t) => &t.meta,
+            ValueTest::Lookup(t) => &t.meta,
             ValueTest::Cel(t) => &t.meta
         }
     }
 
     fn get_column_meta_mut(&mut self) -> &mut ColumnMeta {
         match self {
-            ValueTest::Cascade(t) => &mut t.meta,
+            ValueTest::Lookup(t) => &mut t.meta,
             ValueTest::Cel(t) => &mut t.meta
         }
     }
@@ -274,12 +274,4 @@ pub fn from_config(filters: &HashMap<String, Vec<String>>, cascades: &HashMap<St
         .collect();
     collected.sort_by_key(|x| x.get_table_name().to_owned());
     collected
-}
-
-
-#[derive(Debug)]
-pub enum ColumnTest {
-    Cascade(LookupTest),
-    Cel(CelTest),
-    Val(ValueTest),
 }

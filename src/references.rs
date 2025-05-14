@@ -16,7 +16,7 @@ impl References {
         let lookup_tests: Vec<&'a LookupTest> = conditions
             .iter()
             .flat_map(|fc| match &fc {
-                ValueTest::Cascade(cond) => Some(cond),
+                ValueTest::Lookup(cond) => Some(cond),
                 _ => None,
             })
             .collect();
