@@ -68,7 +68,7 @@ impl FilterConditions {
                 let Some(l) = lookup_table else {
                     return false;
                 };
-                if !l.contains_key(&t.get_key()) {
+                if !l.contains_key(t.get_column_key()) {
                     return false;
                 }
             }

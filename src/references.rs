@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 
-use crate::checks::{LookupTest, ValueTest};
+use crate::checks::{LookupTest, ValueTest, TestValue};
 use crate::sql::{get_column_positions, get_values};
 
 #[derive(Debug)]
@@ -21,12 +21,12 @@ impl References {
             })
             .collect();
 
-        let values_per_field = HashMap::from_iter(lookup_tests.iter().map(|x| (x.get_key(), HashSet::new())));
+        let values_per_field = HashMap::from_iter(lookup_tests.iter().map(|x| (x.get_column_key().to_owned(), HashSet::new())));
 
         let fields: HashMap<String, HashSet<(String, String, String)>> = lookup_tests.iter()
             .map(|cond| {
                 let (table, column) = cond.get_foreign_key();
-                (table.to_owned(), column.to_owned(), cond.get_key())
+                (table.to_owned(), column.to_owned(), cond.get_column_key().to_owned())
             })
             .into_grouping_map_by(|(table, _, _)| table.clone())
             .collect();

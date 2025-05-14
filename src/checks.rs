@@ -35,10 +35,13 @@ impl ColumnMeta {
 }
 
 pub trait TestValue {
-    fn from_definition(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Self;
     fn get_column_meta(&self) -> &ColumnMeta;
     fn get_column_meta_mut(&mut self) -> &mut ColumnMeta;
     fn test(&self, value:&str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool;
+
+    fn get_column_key(&self) -> &str {
+        &self.get_column_meta().key
+    }
 
     fn get_table_name(&self) -> &str {
         &self.get_column_meta().table
@@ -114,17 +117,6 @@ impl CelTest {
 }
 
 impl TestValue for CelTest {
-    fn from_definition(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Self {
-        let program = Program::compile(definition).unwrap();
-        let variables: Vec<String> = program.references().variables().iter().map(|f| f.to_string()).collect();
-        let column = &variables[0];
-
-        CelTest {
-            meta: ColumnMeta::new(table, column, data_types),
-            program,
-        }
-    }
-
     fn get_column_meta(&self) -> &ColumnMeta {
         &self.meta
     }
@@ -145,6 +137,20 @@ impl TestValue for CelTest {
     }
 }
 
+impl CelTest {
+    fn from_definition(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Self {
+        let program = Program::compile(definition).unwrap();
+        let variables: Vec<String> = program.references().variables().iter().map(|f| f.to_string()).collect();
+        let column = &variables[0];
+
+        CelTest {
+            meta: ColumnMeta::new(table, column, data_types),
+            program,
+        }
+    }
+}
+
+
 #[derive(Debug)]
 pub struct LookupTest {
     meta: ColumnMeta,
@@ -156,20 +162,6 @@ pub struct LookupTest {
 }
 
 impl LookupTest {
-    pub fn get_foreign_key(&self) -> (String, String) {
-        (self.target_table.clone(), self.target_column.clone())
-    }
-
-    pub fn get_target_table(&self) -> String {
-        self.target_table.clone()
-    }
-
-    pub fn get_key(&self) -> String {
-        self.target_table.clone() + "." + &self.target_column
-    }
-}
-
-impl TestValue for LookupTest {
     fn from_definition(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Self {
         let mut split = definition.split("->");
         let (Some(source_column), Some(foreign_key), None) = (split.next(), split.next(), split.next()) else {
@@ -191,6 +183,16 @@ impl TestValue for LookupTest {
         }
     }
 
+    pub fn get_foreign_key(&self) -> (String, String) {
+        (self.target_table.clone(), self.target_column.clone())
+    }
+
+    pub fn get_target_table(&self) -> String {
+        self.target_table.clone()
+    }
+}
+
+impl TestValue for LookupTest {
     fn get_column_meta(&self) -> &ColumnMeta {
         &self.meta
     }
@@ -212,7 +214,7 @@ pub enum ValueTest {
     Cel(CelTest),
 }
 
-impl TestValue for ValueTest {
+impl ValueTest {
     fn from_definition(table: &str, condition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Self {
         if condition.contains("->") {
             ValueTest::Cascade(LookupTest::from_definition(condition, table, data_types))
@@ -220,7 +222,9 @@ impl TestValue for ValueTest {
             ValueTest::Cel(CelTest::from_definition(condition, table, data_types))
         }
     }
+}
 
+impl TestValue for ValueTest {
     fn test(&self, value: &str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
         match &self {
             ValueTest::Cel(cond) => cond.test(value, lookup_table),
@@ -251,4 +255,12 @@ pub fn from_config(filters: &HashMap<String, Vec<String>>, cascades: &HashMap<St
         .collect();
     collected.sort_by_key(|x| x.get_table_name().to_owned());
     collected
+}
+
+
+#[derive(Debug)]
+pub enum ColumnTest {
+    Cascade(LookupTest),
+    Cel(CelTest),
+    Val(ValueTest),
 }
