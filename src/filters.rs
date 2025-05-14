@@ -38,9 +38,9 @@ impl FilterConditions {
     fn resolve_positions(&mut self, table: &str, insert_statement: &str) {
         let positions: HashMap<String, usize> = get_column_positions(insert_statement);
         for condition in self.inner.get_mut(table).expect("unknown table").values_mut().flatten() {
-            match positions.get(condition.get_column()) {
+            match positions.get(condition.get_column_name()) {
                 Some(pos) => condition.set_position(*pos),
-                None => panic!("{}", format!("unknown column {}", condition.get_column())),
+                None => panic!("{}", format!("unknown column {}", condition.get_column_name())),
             }
         }
         assert!(self.has_resolved_positions(table));
