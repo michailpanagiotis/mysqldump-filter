@@ -46,12 +46,8 @@ impl FilterConditions {
 
     fn resolve_positions(&mut self, table: &str, insert_statement: &str) {
         let positions: HashMap<String, usize> = get_column_positions(insert_statement);
-        for condition in self.inner.get_mut(table).expect("unknown table").values_mut().flatten() {
-            let mut c = condition.borrow_mut();
-            match positions.get(c.get_column_name()) {
-                Some(pos) => c.set_position(*pos),
-                None => panic!("{}", format!("unknown column {}", condition.borrow().get_column_name())),
-            }
+        for condition in self.inner.get(table).expect("unknown table").values().flatten() {
+            condition.borrow_mut().set_position_from_column_positions(&positions);
         }
         assert!(self.has_resolved_positions(table));
     }
@@ -63,9 +59,8 @@ impl FilterConditions {
         }
 
         for condition in self.inner[table].values().flatten() {
-            let c = condition.borrow();
-            if let ValueTest::Cascade(t) = &*c {
-                dependencies.insert(t.get_target_table());
+            for dependency in condition.borrow().get_table_dependencies() {
+                dependencies.insert(dependency);
             }
         }
         dependencies
@@ -108,15 +103,15 @@ impl FilterConditions {
             return true;
         }
 
+
+        let values = get_values(sql_statement);
+
         if !self.has_resolved_positions(table) {
             self.resolve_positions(table, sql_statement);
         }
 
-        let values = get_values(sql_statement);
-
         if !self.inner[table].values().flatten().all(|condition| {
-            let c = condition.borrow();
-            c.get_column_position().is_some_and(|p| c.test(values[p], lookup_table))
+            condition.borrow().test_row(&values, lookup_table)
         }) {
             return false;
         }

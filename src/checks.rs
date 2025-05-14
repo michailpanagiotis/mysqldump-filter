@@ -55,12 +55,27 @@ pub trait TestValue {
         &self.get_column_meta().position
     }
 
+    fn get_table_dependencies(&self) -> HashSet<String> {
+        HashSet::new()
+    }
+
     fn has_resolved_position(&self) -> bool {
         self.get_column_meta().position.is_some()
     }
 
     fn set_position(&mut self, pos: usize) {
         self.get_column_meta_mut().set_position(pos);
+    }
+
+    fn set_position_from_column_positions(&mut self, positions: &HashMap<String, usize>) {
+        match positions.get(self.get_column_name()) {
+            Some(pos) => self.set_position(*pos),
+            None => panic!("{}", format!("unknown column {}", self.get_column_name())),
+        }
+    }
+
+    fn test_row(&self, values: &[&str], lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
+        self.get_column_position().is_some_and(|p| self.test(values[p], lookup_table))
     }
 
     fn extend_allowed_values(&mut self) {
@@ -205,6 +220,10 @@ impl TestValue for LookupTest {
         let Some(fvs) = lookup_table else { return true };
         let Some(set) = fvs.get(self.lookup_key.as_str()) else { return false };
         set.contains(value)
+    }
+
+    fn get_table_dependencies(&self) -> HashSet<String> {
+        HashSet::from([self.get_target_table()])
     }
 }
 
