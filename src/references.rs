@@ -1,8 +1,8 @@
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 
-use crate::filters::{ColumnTest, LookupTest, Tests};
-use crate::sql::{get_field_positions, get_values};
+use crate::checks::{ColumnTest, LookupTest, ValueTest};
+use crate::sql::{get_column_positions, get_values};
 
 #[derive(Debug)]
 pub struct References {
@@ -16,7 +16,7 @@ impl References {
         let lookup_tests: Vec<&'a LookupTest> = conditions
             .iter()
             .flat_map(|fc| match &fc.test {
-                Tests::Cascade(cond) => Some(cond),
+                ValueTest::Cascade(cond) => Some(cond),
                 _ => None,
             })
             .collect();
@@ -55,7 +55,7 @@ impl References {
     }
 
     fn resolve_positions(&mut self, table: &str, insert_statement: &str) {
-        self.position_per_field.insert(table.to_owned(), get_field_positions(insert_statement));
+        self.position_per_field.insert(table.to_owned(), get_column_positions(insert_statement));
         assert!(self.has_resolved_positions(table));
     }
 

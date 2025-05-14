@@ -25,7 +25,7 @@ pub fn extract_table(sql_comment: &str) -> String {
     TABLE_DUMP_RE.captures(sql_comment).unwrap().get(1).unwrap().as_str().to_string()
 }
 
-pub fn get_field_positions(insert_statement: &str) -> HashMap<String, usize> {
+pub fn get_column_positions(insert_statement: &str) -> HashMap<String, usize> {
     let dialect = MySqlDialect {};
     let ast = SqlParser::parse_sql(&dialect, insert_statement).unwrap();
 

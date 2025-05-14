@@ -5,11 +5,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tempdir::TempDir;
 
+mod checks;
 mod filters;
 mod references;
 mod sql;
 
-use filters::{FilterConditions, ColumnTest};
+use checks::ColumnTest;
+use filters::FilterConditions;
 use sql::{get_data_types, read_sql_file, write_sql_file};
 use references::References;
 
