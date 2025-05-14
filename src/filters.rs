@@ -1,5 +1,7 @@
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
+use std::rc::{Rc, Weak};
+use std::cell::RefCell;
 
 use crate::checks::{ValueTest, TestValue};
 use crate::sql::{get_column_positions, get_values};
@@ -7,7 +9,8 @@ use crate::references::References;
 
 #[derive(Debug)]
 pub struct FilterConditions {
-    pub inner: HashMap<String, HashMap<String, Vec<ValueTest>>>,
+    collected: Vec<Rc<RefCell<ValueTest>>>,
+    pub inner: HashMap<String, HashMap<String, Vec<Rc<RefCell<ValueTest>>>>>,
     all_filtered_tables: HashSet<String>,
     pub pending_tables: HashSet<String>,
     pub fully_filtered_tables: HashMap<String, usize>,
@@ -16,11 +19,18 @@ pub struct FilterConditions {
 
 impl FilterConditions {
     pub fn new(collected: Vec<ValueTest>) -> Self {
-        FilterConditions {
-            inner: collected.into_iter()
-                .chunk_by(|x| x.get_table_name().to_owned())
+        let collected: Vec<Rc<RefCell<ValueTest>>> = collected.into_iter().map(|x| Rc::new(RefCell::new(x))).collect();
+        let inner: HashMap<String, HashMap<String, Vec<Rc<RefCell<ValueTest>>>>> = collected.iter()
+                .chunk_by(|x| x.borrow().get_table_name().to_owned())
                 .into_iter()
-                .map(|(table, conds)| (table, conds.into_iter().into_group_map_by(|x| x.get_column_name().to_owned()))).collect(),
+                .map(|(table, conds)| (table, conds.into_iter().map(|x| {
+                    let res: Rc<RefCell<ValueTest>> = Rc::clone(&x);
+                    res
+                }).into_group_map_by(|x| x.borrow().get_column_name().to_owned()))).collect();
+
+        FilterConditions {
+            collected,
+            inner,
             all_filtered_tables: HashSet::new(),
             pending_tables: HashSet::new(),
             fully_filtered_tables: HashMap::new(),
@@ -30,16 +40,17 @@ impl FilterConditions {
 
     fn has_resolved_positions(&self, table: &str) -> bool {
         self.inner[table].values().flatten().all(|condition| {
-            condition.has_resolved_position()
+            condition.borrow().has_resolved_position()
         })
     }
 
     fn resolve_positions(&mut self, table: &str, insert_statement: &str) {
         let positions: HashMap<String, usize> = get_column_positions(insert_statement);
         for condition in self.inner.get_mut(table).expect("unknown table").values_mut().flatten() {
-            match positions.get(condition.get_column_name()) {
-                Some(pos) => condition.set_position(*pos),
-                None => panic!("{}", format!("unknown column {}", condition.get_column_name())),
+            let mut c = condition.borrow_mut();
+            match positions.get(c.get_column_name()) {
+                Some(pos) => c.set_position(*pos),
+                None => panic!("{}", format!("unknown column {}", condition.borrow().get_column_name())),
             }
         }
         assert!(self.has_resolved_positions(table));
@@ -52,28 +63,12 @@ impl FilterConditions {
         }
 
         for condition in self.inner[table].values().flatten() {
-            if let ValueTest::Cascade(t) = condition {
+            let c = condition.borrow();
+            if let ValueTest::Cascade(t) = &*c {
                 dependencies.insert(t.get_target_table());
             }
         }
         dependencies
-    }
-
-    pub fn can_table_be_fully_filtered(&self, table: &str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
-        if !self.inner.contains_key(table) || self.inner[table].is_empty() {
-            return false;
-        }
-        for condition in self.inner[table].values().flatten() {
-            if let ValueTest::Cascade(t) = condition {
-                let Some(l) = lookup_table else {
-                    return false;
-                };
-                if !l.contains_key(t.get_column_key()) {
-                    return false;
-                }
-            }
-        }
-        return true;
     }
 
     pub fn track_filtered(&mut self, table: &str) {
@@ -120,7 +115,8 @@ impl FilterConditions {
         let values = get_values(sql_statement);
 
         if !self.inner[table].values().flatten().all(|condition| {
-            condition.get_column_position().is_some_and(|p| condition.test(values[p], lookup_table))
+            let c = condition.borrow();
+            c.get_column_position().is_some_and(|p| c.test(values[p], lookup_table))
         }) {
             return false;
         }
