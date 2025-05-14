@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 
-use crate::checks::{ColumnTest, LookupTest, ValueTest};
+use crate::checks::{LookupTest, ValueTest};
 use crate::sql::{get_column_positions, get_values};
 
 #[derive(Debug)]
@@ -12,10 +12,10 @@ pub struct References {
 }
 
 impl References {
-    pub fn new<'a>(conditions: &'a [ColumnTest]) -> Self {
+    pub fn new<'a>(conditions: &'a [ValueTest]) -> Self {
         let lookup_tests: Vec<&'a LookupTest> = conditions
             .iter()
-            .flat_map(|fc| match &fc.test {
+            .flat_map(|fc| match &fc {
                 ValueTest::Cascade(cond) => Some(cond),
                 _ => None,
             })

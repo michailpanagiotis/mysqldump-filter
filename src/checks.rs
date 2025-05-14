@@ -39,7 +39,6 @@ pub trait TestValue {
     fn get_column_meta(&self) -> &ColumnMeta;
     fn get_column_meta_mut(&mut self) -> &mut ColumnMeta;
     fn test(&self, value:&str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool;
-    fn as_column_test(self) -> ColumnTest;
 
     fn get_table_name(&self) -> &str {
         &self.get_column_meta().table
@@ -144,12 +143,6 @@ impl TestValue for CelTest {
             _ => panic!("filter does not return a boolean"),
         }
     }
-
-    fn as_column_test(self) -> ColumnTest {
-        ColumnTest {
-            test: ValueTest::Cel(self),
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -211,12 +204,6 @@ impl TestValue for LookupTest {
         let Some(set) = fvs.get(self.lookup_key.as_str()) else { return false };
         set.contains(value)
     }
-
-    fn as_column_test(self) -> ColumnTest {
-        ColumnTest {
-            test: ValueTest::Cascade(self),
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -254,56 +241,12 @@ impl TestValue for ValueTest {
             ValueTest::Cel(t) => &mut t.meta
         }
     }
-
-    fn as_column_test(self) -> ColumnTest {
-        ColumnTest { test: self }
-    }
 }
 
-#[derive(Debug)]
-pub struct ColumnTest {
-    pub test: ValueTest,
-}
-
-impl TestValue for ColumnTest {
-    fn from_definition(table: &str, condition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> ColumnTest {
-        if condition.contains("->") {
-            LookupTest::from_definition(condition, table, data_types).as_column_test()
-        } else {
-            CelTest::from_definition(condition, table, data_types).as_column_test()
-        }
-    }
-
-    fn test(&self, value: &str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
-        match &self.test {
-            ValueTest::Cel(cond) => cond.test(value, lookup_table),
-            ValueTest::Cascade(cond) => cond.test(value, lookup_table),
-        }
-    }
-
-    fn get_column_meta(&self) -> &ColumnMeta {
-        match &self.test {
-            ValueTest::Cascade(t) => &t.meta,
-            ValueTest::Cel(t) => &t.meta
-        }
-    }
-
-    fn get_column_meta_mut(&mut self) -> &mut ColumnMeta {
-        match self.test {
-            ValueTest::Cascade(ref mut t) => &mut t.meta,
-            ValueTest::Cel(ref mut t) => &mut t.meta
-        }
-    }
-
-    fn as_column_test(self) -> ColumnTest {
-        self
-    }
-}
-
-pub fn from_config(filters: &HashMap<String, Vec<String>>, cascades: &HashMap<String, Vec<String>>, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Vec<ColumnTest> {
-    let mut collected: Vec<ColumnTest> = filters.iter().chain(cascades)
+pub fn from_config(filters: &HashMap<String, Vec<String>>, cascades: &HashMap<String, Vec<String>>, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Vec<ValueTest> {
+    let mut collected: Vec<ValueTest> = filters.iter().chain(cascades)
         .flat_map(|(table, conditions)| conditions.iter().map(move |condition| {
-            ColumnTest::from_definition(table, condition, data_types)
+            ValueTest::from_definition(table, condition, data_types)
         }))
         .collect();
     collected.sort_by_key(|x| x.get_table_name().to_owned());

@@ -1,13 +1,13 @@
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 
-use crate::checks::{ValueTest, ColumnTest, TestValue};
+use crate::checks::{ValueTest, TestValue};
 use crate::sql::{get_column_positions, get_values};
 use crate::references::References;
 
 #[derive(Debug)]
 pub struct FilterConditions {
-    pub inner: HashMap<String, HashMap<String, Vec<ColumnTest>>>,
+    pub inner: HashMap<String, HashMap<String, Vec<ValueTest>>>,
     all_filtered_tables: HashSet<String>,
     pub pending_tables: HashSet<String>,
     pub fully_filtered_tables: HashMap<String, usize>,
@@ -15,7 +15,7 @@ pub struct FilterConditions {
 }
 
 impl FilterConditions {
-    pub fn new(collected: Vec<ColumnTest>) -> Self {
+    pub fn new(collected: Vec<ValueTest>) -> Self {
         FilterConditions {
             inner: collected.into_iter()
                 .chunk_by(|x| x.get_table_name().to_owned())
@@ -52,7 +52,7 @@ impl FilterConditions {
         }
 
         for condition in self.inner[table].values().flatten() {
-            if let ValueTest::Cascade(ref t) = condition.test {
+            if let ValueTest::Cascade(t) = condition {
                 dependencies.insert(t.get_target_table());
             }
         }
@@ -64,7 +64,7 @@ impl FilterConditions {
             return false;
         }
         for condition in self.inner[table].values().flatten() {
-            if let ValueTest::Cascade(ref t) = condition.test {
+            if let ValueTest::Cascade(t) = condition {
                 let Some(l) = lookup_table else {
                     return false;
                 };
