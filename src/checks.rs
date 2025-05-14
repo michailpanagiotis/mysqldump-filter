@@ -225,6 +225,41 @@ pub enum ValueTest {
     Cel(CelTest),
 }
 
+impl TestValue for ValueTest {
+    fn from_definition(table: &str, condition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Self {
+        if condition.contains("->") {
+            ValueTest::Cascade(LookupTest::from_definition(condition, table, data_types))
+        } else {
+            ValueTest::Cel(CelTest::from_definition(condition, table, data_types))
+        }
+    }
+
+    fn test(&self, value: &str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
+        match &self {
+            ValueTest::Cel(cond) => cond.test(value, lookup_table),
+            ValueTest::Cascade(cond) => cond.test(value, lookup_table),
+        }
+    }
+
+    fn get_column_meta(&self) -> &ColumnMeta {
+        match &self {
+            ValueTest::Cascade(t) => &t.meta,
+            ValueTest::Cel(t) => &t.meta
+        }
+    }
+
+    fn get_column_meta_mut(&mut self) -> &mut ColumnMeta {
+        match self {
+            ValueTest::Cascade(t) => &mut t.meta,
+            ValueTest::Cel(t) => &mut t.meta
+        }
+    }
+
+    fn as_column_test(self) -> ColumnTest {
+        ColumnTest { test: self }
+    }
+}
+
 #[derive(Debug)]
 pub struct ColumnTest {
     pub test: ValueTest,

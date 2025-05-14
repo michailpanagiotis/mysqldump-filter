@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 
-use crate::checks::{ValueTest, ColumnTest, TestValue, from_config};
+use crate::checks::{ValueTest, ColumnTest, TestValue};
 use crate::sql::{get_column_positions, get_values};
 use crate::references::References;
 
@@ -15,8 +15,7 @@ pub struct FilterConditions {
 }
 
 impl FilterConditions {
-    pub fn new(filters: &HashMap<String, Vec<String>>, cascades: &HashMap<String, Vec<String>>, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Self {
-        let collected = from_config(filters, cascades, data_types);
+    pub fn new(collected: Vec<ColumnTest>) -> Self {
         FilterConditions {
             inner: collected.into_iter()
                 .chunk_by(|x| x.get_table_name().to_owned())

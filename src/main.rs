@@ -71,9 +71,9 @@ fn main() {
     println!("Read data types!");
 
     let config = Config::from_file(config_file.as_path());
-    let conditions = &config.get_conditions(&data_types);
-    let mut fc = FilterConditions::new(&config.filters, &config.cascades, &data_types);
+    let conditions = config.get_conditions(&data_types);
     let mut references = References::new(conditions.as_slice());
+    let mut fc = FilterConditions::new(conditions);
 
     println!("First pass...");
     process_file(input_file.as_path(), output_file.as_path(), &config.allow_data_on_tables, &mut fc, &mut references);
