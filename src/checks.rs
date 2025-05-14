@@ -6,14 +6,30 @@ use std::sync::Arc;
 
 pub trait AllowValue {
     fn get_column_name_from_definition(definition: &str) -> String;
-    fn from_definition(definition: &str, data_type: sqlparser::ast::DataType) -> Self;
+
+    fn pick_data_type(data_types: &HashMap<String, sqlparser::ast::DataType>, table: &str, column: &str) -> sqlparser::ast::DataType {
+        let key = table.to_owned() + "." + column;
+        match data_types.get(&key) {
+            None => panic!("{}", format!("cannot find data type for {key}")),
+            Some(data_type) => data_type.to_owned()
+        }
+    }
+
+    fn get_key(&self) -> String {
+        self.get_table_name().to_owned() + "." + self.get_column_name()
+    }
+
+    fn from_definition(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Self;
     fn get_column_name(&self) -> &str;
+    fn get_table_name(&self) -> &str;
     fn test(&self, value:&str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool;
     fn extend_allowed_values(&mut self);
+    fn as_value_test(self) -> ValueTest;
 }
 
 #[derive(Debug)]
 pub struct CelTest {
+    table: String,
     column: String,
     program: Program,
     data_type: sqlparser::ast::DataType,
@@ -67,15 +83,21 @@ impl AllowValue for CelTest {
         program.references().variables().iter().map(|f| f.to_string()).next().expect("cannot find variable")
     }
 
-    fn from_definition(definition: &str, data_type: sqlparser::ast::DataType) -> Self {
+    fn from_definition(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Self {
         let program = Program::compile(definition).unwrap();
         let variables: Vec<String> = program.references().variables().iter().map(|f| f.to_string()).collect();
         let column = &variables[0];
 
+        let data_type = match data_types.get(&(table.to_owned() + "." + &column)) {
+            None => panic!("{}", format!("cannot find data type for {table}.{column}")),
+            Some(data_type) => data_type.to_owned()
+        };
+
         CelTest {
+            table: table.to_owned(),
             column: column.to_string(),
             program,
-            data_type,
+            data_type: Self::pick_data_type(data_types, table, column),
         }
     }
 
@@ -83,7 +105,11 @@ impl AllowValue for CelTest {
         &self.column
     }
 
-    fn test(&self, value:&str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
+    fn get_table_name(&self) -> &str {
+        &self.table
+    }
+
+    fn test(&self, value:&str, _lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
         let context = self.build_context(value);
         match self.program.execute(&context).unwrap() {
             cel_interpreter::objects::Value::Bool(v) => {
@@ -97,10 +123,15 @@ impl AllowValue for CelTest {
     fn extend_allowed_values(&mut self) {
 
     }
+
+    fn as_value_test(self) -> ValueTest {
+        ValueTest::Cel(self)
+    }
 }
 
 #[derive(Debug)]
 pub struct LookupTest {
+    table: String,
     column: String,
     lookup_key: String,
     target_table: String,
@@ -130,27 +161,32 @@ impl AllowValue for LookupTest {
         variable.to_string()
     }
 
-    fn from_definition(definition: &str, data_type: sqlparser::ast::DataType) -> Self {
+    fn from_definition(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Self {
         let mut split = definition.split("->");
-        let (Some(_), Some(foreign_key), None) = (split.next(), split.next(), split.next()) else {
+        let (Some(source_column), Some(foreign_key), None) = (split.next(), split.next(), split.next()) else {
             panic!("cannot parse cascade");
         };
 
         let mut split = foreign_key.split('.');
-        let (Some(table), Some(column), None) = (split.next(), split.next(), split.next()) else {
+        let (Some(target_table), Some(target_column), None) = (split.next(), split.next(), split.next()) else {
             panic!("malformed foreign key {foreign_key}");
         };
 
         LookupTest {
-            column: LookupTest::get_column_name_from_definition(definition),
+            table: table.to_owned(),
+            column: source_column.to_owned(),
             lookup_key: foreign_key.to_string(),
-            target_table: table.to_string(),
-            target_column: column.to_string(),
+            target_table: target_table.to_string(),
+            target_column: target_column.to_string(),
         }
     }
 
     fn get_column_name(&self) -> &str {
         &self.column
+    }
+
+    fn get_table_name(&self) -> &str {
+        &self.table
     }
 
     fn test(&self, value:&str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
@@ -162,12 +198,24 @@ impl AllowValue for LookupTest {
     fn extend_allowed_values(&mut self) {
 
     }
+
+    fn as_value_test(self) -> ValueTest {
+        ValueTest::Cascade(self)
+    }
 }
 
 #[derive(Debug)]
 pub enum ValueTest {
     Cascade(LookupTest),
     Cel(CelTest),
+}
+
+impl ValueTest {
+    fn new<I: AllowValue>(table: &str, condition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Self {
+        let column = I::get_column_name_from_definition(condition);
+        let condition = I::from_definition(condition, table, data_types);
+        condition.as_value_test()
+    }
 }
 
 #[derive(Debug)]
@@ -179,9 +227,15 @@ pub struct ColumnTest {
 }
 
 impl ColumnTest {
-    // pub resolve_inner_test() -> ValueTest {
-    //
-    // }
+    pub fn from_definition<I: AllowValue>(table: &str, condition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> ValueTest {
+        let column = I::get_column_name_from_definition(condition);
+        let data_type = match data_types.get(&(table.to_owned() + "." + &column)) {
+            None => panic!("{}", format!("cannot find data type for {table}.{column}")),
+            Some(data_type) => data_type.to_owned()
+        };
+
+        ValueTest::Cel(CelTest::from_definition(condition, table, data_types))
+    }
 
     pub fn new_cel(table: &str, condition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Self {
         let column = CelTest::get_column_name_from_definition(condition);
@@ -190,11 +244,11 @@ impl ColumnTest {
             Some(data_type) => data_type.to_owned()
         };
 
-        let condition = CelTest::from_definition(condition, data_type);
+        let condition = CelTest::from_definition(condition, table, data_types);
         ColumnTest {
             table: table.to_owned(),
-            column,
-            test: ValueTest::Cel(condition),
+            column: condition.get_column_name().to_owned(),
+            test: condition.as_value_test(),
             position: None,
         }
     }
@@ -205,11 +259,11 @@ impl ColumnTest {
             None => panic!("{}", format!("cannot find data type for {table}.{column}")),
             Some(data_type) => data_type.to_owned()
         };
-        let condition = LookupTest::from_definition(condition, data_type);
+        let condition = LookupTest::from_definition(condition, table, data_types);
         ColumnTest {
             table: table.to_owned(),
-            column,
-            test: ValueTest::Cascade(condition),
+            column: condition.get_column_name().to_owned(),
+            test: condition.as_value_test(),
             position: None,
         }
     }
