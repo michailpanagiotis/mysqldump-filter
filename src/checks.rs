@@ -4,7 +4,8 @@ use chrono::NaiveDateTime;
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
-use std::rc::Weak;
+use std::cell::RefCell;
+use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use crate::sql::{get_column_positions, get_values};
@@ -240,9 +241,8 @@ impl TestValue for LookupTest {
 }
 
 #[derive(Debug)]
-#[derive(Default)]
 pub struct RowCheck {
-    checks: Vec<Box<dyn TestValue>>,
+    checks: Vec<Rc<RefCell<dyn TestValue>>>,
     dependencies: Vec<Weak<RowCheck>>,
 }
 
@@ -250,10 +250,10 @@ impl RowCheck {
     pub fn from_config(table: &str, conditions: &[String], data_types: &HashMap<String, sqlparser::ast::DataType>) -> RowCheck {
         RowCheck {
           checks: conditions.iter().map(|condition| {
-                let item: Box<dyn TestValue> = if condition.contains("->") {
-                    Box::new(LookupTest::from_definition(condition, table, data_types))
+                let item: Rc<RefCell<dyn TestValue>> = if condition.contains("->") {
+                    Rc::new(RefCell::new(LookupTest::from_definition(condition, table, data_types)))
                 } else {
-                    Box::new(CelTest::from_definition(condition, table, data_types))
+                    Rc::new(RefCell::new(CelTest::from_definition(condition, table, data_types)))
                 };
                 item
             }).collect(),
@@ -267,13 +267,13 @@ impl RowCheck {
 
     pub fn has_resolved_positions(&self) -> bool {
         self.checks.iter().all(|t| {
-            t.has_resolved_position()
+            t.borrow().has_resolved_position()
         })
     }
 
     pub fn set_positions(&mut self, positions: HashMap<String, usize>) {
         for condition in self.checks.iter_mut() {
-            condition.set_position_from_column_positions(&positions);
+            condition.borrow_mut().set_position_from_column_positions(&positions);
         }
         assert!(self.has_resolved_positions());
     }
@@ -281,7 +281,7 @@ impl RowCheck {
     pub fn get_dependencies(&self) -> HashSet<ColumnMeta> {
         let mut dependencies = HashSet::new();
         for condition in self.checks.iter() {
-            for dependency in condition.get_dependencies() {
+            for dependency in condition.borrow().get_dependencies() {
                 dependencies.insert(dependency);
             }
         }
@@ -291,7 +291,7 @@ impl RowCheck {
     pub fn get_table_dependencies(&self) -> HashSet<String> {
         let mut dependencies = HashSet::new();
         for condition in self.checks.iter() {
-            for dependency in condition.get_table_dependencies() {
+            for dependency in condition.borrow().get_table_dependencies() {
                 dependencies.insert(dependency);
             }
         }
@@ -303,21 +303,13 @@ impl RowCheck {
         if !self.has_resolved_positions() {
             self.set_positions(get_column_positions(insert_statement));
         }
-        self.checks.iter().all(|t| t.test_row(&values, lookup_table))
+        self.checks.iter().all(|t| t.borrow_mut().test_row(&values, lookup_table))
     }
 }
 
-impl Extend<Box<dyn TestValue>> for RowCheck {
-    fn extend<T: IntoIterator<Item=Box<dyn TestValue>>>(&mut self, iter: T) {
-        for elem in iter {
-            self.checks.push(elem);
-        }
-    }
-}
-
-pub fn from_config(conditions: &[(&String, &Vec<String>)], data_types: &HashMap<String, sqlparser::ast::DataType>) -> HashMap<String, RowCheck> {
+pub fn from_config<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(conditions: I, data_types: &HashMap<String, sqlparser::ast::DataType>) -> HashMap<String, RowCheck> {
     let c: HashMap<String, Vec<String>> = conditions
-        .iter().flat_map(|(table, conditions)| conditions.iter().map(|c| (table.to_string(), c.to_owned())))
+        .flat_map(|(table, conditions)| conditions.iter().map(|c| (table.to_string(), c.to_owned())))
         .into_group_map();
     c.iter().map(|(table, definitions)| (table.to_owned(), RowCheck::from_config(table, definitions, data_types))).collect()
 }

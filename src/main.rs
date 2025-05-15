@@ -1,5 +1,4 @@
 use clap::Parser;
-use itertools::Itertools;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -32,8 +31,7 @@ impl Config {
     }
 
     fn get_conditions(&self, data_types: &HashMap<String, sqlparser::ast::DataType>) -> HashMap<String, RowCheck> {
-        let c: Vec<(&String, &Vec<String>)> = self.filters.iter().chain(&self.cascades).collect();
-        from_config(c.as_slice(), data_types)
+        from_config(self.filters.iter().chain(&self.cascades), data_types)
     }
 }
 
