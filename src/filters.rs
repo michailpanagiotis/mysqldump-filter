@@ -38,15 +38,23 @@ impl FilterConditions {
         }
     }
 
+    fn has_table_conditions(&self, table: &str) -> bool {
+        self.inner.contains_key(table) && !self.inner[table].is_empty()
+    }
+
+    fn get_table_conditions(&self, table: &str) -> impl Iterator<Item=&Rc<RefCell<ValueTest>>> {
+        self.inner[table].values().flatten()
+    }
+
     fn has_resolved_positions(&self, table: &str) -> bool {
-        self.inner[table].values().flatten().all(|condition| {
+        self.get_table_conditions(table).all(|condition| {
             condition.borrow().has_resolved_position()
         })
     }
 
     fn resolve_positions(&mut self, table: &str, insert_statement: &str) {
         let positions: HashMap<String, usize> = get_column_positions(insert_statement);
-        for condition in self.inner.get(table).expect("unknown table").values().flatten() {
+        for condition in self.get_table_conditions(table) {
             condition.borrow_mut().set_position_from_column_positions(&positions);
         }
         assert!(self.has_resolved_positions(table));
@@ -54,11 +62,11 @@ impl FilterConditions {
 
     pub fn get_table_dependencies(&self, table: &str) -> HashSet<String> {
         let mut dependencies = HashSet::new();
-        if !self.inner.contains_key(table) || self.inner[table].is_empty() {
+        if !self.has_table_conditions(table) {
             return dependencies;
         }
 
-        for condition in self.inner[table].values().flatten() {
+        for condition in self.get_table_conditions(table) {
             for dependency in condition.borrow().get_table_dependencies() {
                 dependencies.insert(dependency);
             }
@@ -99,7 +107,7 @@ impl FilterConditions {
 
         self.track_filtered(table);
 
-        if !self.inner.contains_key(table) || self.inner[table].is_empty() {
+        if !self.has_table_conditions(table) {
             return true;
         }
 
@@ -110,7 +118,7 @@ impl FilterConditions {
             self.resolve_positions(table, sql_statement);
         }
 
-        if !self.inner[table].values().flatten().all(|condition| {
+        if !self.get_table_conditions(table).all(|condition| {
             condition.borrow().test_row(&values, lookup_table)
         }) {
             return false;

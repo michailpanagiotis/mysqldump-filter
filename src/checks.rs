@@ -1,9 +1,12 @@
 use cel_interpreter::{Context, Program};
 use cel_interpreter::extractors::This;
 use chrono::NaiveDateTime;
+use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
+use std::fmt::Debug;
 use std::sync::Arc;
 
+#[derive(Clone)]
 #[derive(Debug)]
 struct ColumnMeta {
     key: String,
@@ -35,6 +38,7 @@ impl ColumnMeta {
 }
 
 pub trait TestValue {
+    fn get_definition(&self) -> &str;
     fn get_column_meta(&self) -> &ColumnMeta;
     fn get_column_meta_mut(&mut self) -> &mut ColumnMeta;
     fn test(&self, value:&str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool;
@@ -49,6 +53,10 @@ pub trait TestValue {
 
     fn get_column_name(&self) -> &str {
         &self.get_column_meta().column
+    }
+
+    fn get_data_type(&self) -> &sqlparser::ast::DataType {
+        &self.get_column_meta().data_type
     }
 
     fn get_column_position(&self) -> &Option<usize> {
@@ -86,7 +94,16 @@ pub trait TestValue {
 #[derive(Debug)]
 pub struct CelTest {
     meta: ColumnMeta,
+    definition: String,
     program: Program,
+}
+
+impl Clone for CelTest
+{
+    fn clone(&self) -> Self {
+        let data_types = HashMap::from([(self.get_column_name().to_owned(), self.get_data_type().to_owned())]);
+        CelTest::from_definition(self.get_table_name(), self.get_definition(), &data_types)
+    }
 }
 
 fn parse_date(s: &str) -> i64 {
@@ -132,6 +149,10 @@ impl CelTest {
 }
 
 impl TestValue for CelTest {
+    fn get_definition(&self) -> &str {
+        &self.definition
+    }
+
     fn get_column_meta(&self) -> &ColumnMeta {
         &self.meta
     }
@@ -160,17 +181,16 @@ impl CelTest {
 
         CelTest {
             meta: ColumnMeta::new(table, column, data_types),
+            definition: definition.to_owned(),
             program,
         }
     }
 }
 
-
 #[derive(Debug)]
 pub struct LookupTest {
     meta: ColumnMeta,
-    table: String,
-    column: String,
+    definition: String,
     lookup_key: String,
     target_table: String,
     target_column: String,
@@ -190,8 +210,7 @@ impl LookupTest {
 
         LookupTest {
             meta: ColumnMeta::new(table, source_column, data_types),
-            table: table.to_owned(),
-            column: source_column.to_owned(),
+            definition: definition.to_owned(),
             lookup_key: foreign_key.to_string(),
             target_table: target_table.to_string(),
             target_column: target_column.to_string(),
@@ -208,6 +227,10 @@ impl LookupTest {
 }
 
 impl TestValue for LookupTest {
+    fn get_definition(&self) -> &str {
+        &self.definition
+    }
+
     fn get_column_meta(&self) -> &ColumnMeta {
         &self.meta
     }
@@ -244,6 +267,13 @@ impl ValueTest {
 }
 
 impl TestValue for ValueTest {
+    fn get_definition(&self) -> &str {
+        match &self {
+            ValueTest::Cel(cond) => cond.get_definition(),
+            ValueTest::Lookup(cond) => cond.get_definition(),
+        }
+    }
+
     fn test(&self, value: &str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
         match &self {
             ValueTest::Cel(cond) => cond.test(value, lookup_table),
@@ -266,12 +296,41 @@ impl TestValue for ValueTest {
     }
 }
 
+
+impl core::fmt::Debug for dyn TestValue {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.get_column_meta().fmt(f)
+    }
+}
+
+#[derive(Debug)]
+#[derive(Default)]
+pub struct RowTest {
+    tests: Vec<Box<dyn TestValue>>,
+}
+
+impl Extend<ValueTest> for RowTest {
+    fn extend<T: IntoIterator<Item=ValueTest>>(&mut self, iter: T) {
+        for elem in iter {
+            self.tests.push(Box::new(elem));
+        }
+    }
+}
+
 pub fn from_config(filters: &HashMap<String, Vec<String>>, cascades: &HashMap<String, Vec<String>>, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Vec<ValueTest> {
-    let mut collected: Vec<ValueTest> = filters.iter().chain(cascades)
+    let mut collected1: Vec<ValueTest> = filters.iter().chain(cascades)
         .flat_map(|(table, conditions)| conditions.iter().map(move |condition| {
             ValueTest::from_definition(table, condition, data_types)
         }))
         .collect();
-    collected.sort_by_key(|x| x.get_table_name().to_owned());
-    collected
+    let mut collected2: Vec<ValueTest> = filters.iter().chain(cascades)
+        .flat_map(|(table, conditions)| conditions.iter().map(move |condition| {
+            ValueTest::from_definition(table, condition, data_types)
+        }))
+        .collect();
+    collected1.sort_by_key(|x| x.get_table_name().to_owned());
+    collected2.sort_by_key(|x| x.get_table_name().to_owned());
+    // let per_table: HashMap<String, Vec<&ValueTest>> = collected.iter().into_group_map_by(|x| x.get_table_name().to_owned());
+    let per_table: HashMap<String, RowTest> = collected1.into_iter().into_grouping_map_by(|x| x.get_table_name().to_owned()).collect();
+    collected2
 }
