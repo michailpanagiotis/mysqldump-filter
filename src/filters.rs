@@ -1,16 +1,13 @@
-use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
-use std::rc::{Rc, Weak};
 use std::cell::RefCell;
 
-use crate::checks::{ValueTest, TestValue};
+use crate::checks::{ValueTest, RowTest, TestValue};
 use crate::sql::{get_column_positions, get_values};
 use crate::references::References;
 
 #[derive(Debug)]
 pub struct FilterConditions {
-    collected: Vec<Rc<RefCell<ValueTest>>>,
-    pub inner: HashMap<String, HashMap<String, Vec<Rc<RefCell<ValueTest>>>>>,
+    per_table: HashMap<String, RowTest>,
     all_filtered_tables: HashSet<String>,
     pub pending_tables: HashSet<String>,
     pub fully_filtered_tables: HashMap<String, usize>,
@@ -18,19 +15,9 @@ pub struct FilterConditions {
 }
 
 impl FilterConditions {
-    pub fn new(collected: Vec<ValueTest>) -> Self {
-        let collected: Vec<Rc<RefCell<ValueTest>>> = collected.into_iter().map(|x| Rc::new(RefCell::new(x))).collect();
-        let inner: HashMap<String, HashMap<String, Vec<Rc<RefCell<ValueTest>>>>> = collected.iter()
-                .chunk_by(|x| x.borrow().get_table_name().to_owned())
-                .into_iter()
-                .map(|(table, conds)| (table, conds.into_iter().map(|x| {
-                    let res: Rc<RefCell<ValueTest>> = Rc::clone(&x);
-                    res
-                }).into_group_map_by(|x| x.borrow().get_column_name().to_owned()))).collect();
-
+    pub fn new(per_table: HashMap<String, RowTest>) -> Self {
         FilterConditions {
-            collected,
-            inner,
+            per_table,
             all_filtered_tables: HashSet::new(),
             pending_tables: HashSet::new(),
             fully_filtered_tables: HashMap::new(),
@@ -39,39 +26,23 @@ impl FilterConditions {
     }
 
     fn has_table_conditions(&self, table: &str) -> bool {
-        self.inner.contains_key(table) && !self.inner[table].is_empty()
-    }
-
-    fn get_table_conditions(&self, table: &str) -> impl Iterator<Item=&Rc<RefCell<ValueTest>>> {
-        self.inner[table].values().flatten()
+        self.per_table.contains_key(table) && !self.per_table[table].is_empty()
     }
 
     fn has_resolved_positions(&self, table: &str) -> bool {
-        self.get_table_conditions(table).all(|condition| {
-            condition.borrow().has_resolved_position()
-        })
+        self.per_table[table].has_resolved_positions()
     }
 
     fn resolve_positions(&mut self, table: &str, insert_statement: &str) {
         let positions: HashMap<String, usize> = get_column_positions(insert_statement);
-        for condition in self.get_table_conditions(table) {
-            condition.borrow_mut().set_position_from_column_positions(&positions);
-        }
-        assert!(self.has_resolved_positions(table));
+        self.per_table.get_mut(table).expect("cannot find tests for table").set_positions(positions);
     }
 
     pub fn get_table_dependencies(&self, table: &str) -> HashSet<String> {
-        let mut dependencies = HashSet::new();
         if !self.has_table_conditions(table) {
-            return dependencies;
+            return HashSet::new();
         }
-
-        for condition in self.get_table_conditions(table) {
-            for dependency in condition.borrow().get_table_dependencies() {
-                dependencies.insert(dependency);
-            }
-        }
-        dependencies
+        self.per_table[table].get_table_dependencies()
     }
 
     pub fn track_filtered(&mut self, table: &str) {
@@ -118,13 +89,7 @@ impl FilterConditions {
             self.resolve_positions(table, sql_statement);
         }
 
-        if !self.get_table_conditions(table).all(|condition| {
-            condition.borrow().test_row(&values, lookup_table)
-        }) {
-            return false;
-        }
-
-        true
+        self.per_table.get_mut(table).expect("cannot find tests for table").test(&values, lookup_table)
     }
 
     pub fn filter<I: Iterator<Item=(Option<String>, String)>>(&mut self, statements: I, references: &mut References) -> impl Iterator<Item=(Option<String>, String)> {

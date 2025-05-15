@@ -1,7 +1,7 @@
 use cel_interpreter::{Context, Program};
 use cel_interpreter::extractors::This;
 use chrono::NaiveDateTime;
-use itertools::Itertools;
+use itertools::{Itertools, Positions};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -312,6 +312,39 @@ pub struct RowTest {
     tests: Vec<Box<dyn TestValue>>,
 }
 
+impl RowTest {
+    pub fn is_empty(&self) -> bool {
+        self.tests.is_empty()
+    }
+
+    pub fn has_resolved_positions(&self) -> bool {
+        self.tests.iter().all(|t| {
+            t.has_resolved_position()
+        })
+    }
+
+    pub fn set_positions(&mut self, positions: HashMap<String, usize>) {
+        for condition in self.tests.iter_mut() {
+            condition.set_position_from_column_positions(&positions);
+        }
+        assert!(self.has_resolved_positions());
+    }
+
+    pub fn get_table_dependencies(&self) -> HashSet<String> {
+        let mut dependencies = HashSet::new();
+        for condition in self.tests.iter() {
+            for dependency in condition.get_table_dependencies() {
+                dependencies.insert(dependency);
+            }
+        }
+        dependencies
+    }
+
+    pub fn test(&self, values: &[&str], lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
+        self.tests.iter().all(|t| t.test_row(values, lookup_table))
+    }
+}
+
 impl Extend<ValueTest> for RowTest {
     fn extend<T: IntoIterator<Item=ValueTest>>(&mut self, iter: T) {
         for elem in iter {
@@ -320,7 +353,7 @@ impl Extend<ValueTest> for RowTest {
     }
 }
 
-pub fn from_config(filters: &HashMap<String, Vec<String>>, cascades: &HashMap<String, Vec<String>>, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Vec<ValueTest> {
+pub fn from_config(filters: &HashMap<String, Vec<String>>, cascades: &HashMap<String, Vec<String>>, data_types: &HashMap<String, sqlparser::ast::DataType>) -> (Vec<ValueTest>, HashMap<String, RowTest>) {
     let mut collected1: Vec<ValueTest> = filters.iter().chain(cascades)
         .flat_map(|(table, conditions)| conditions.iter().map(move |condition| {
             ValueTest::from_definition(table, condition, data_types)
@@ -335,5 +368,5 @@ pub fn from_config(filters: &HashMap<String, Vec<String>>, cascades: &HashMap<St
     collected2.sort_by_key(|x| x.get_table_name().to_owned());
     // let per_table: HashMap<String, Vec<&ValueTest>> = collected.iter().into_group_map_by(|x| x.get_table_name().to_owned());
     let per_table: HashMap<String, RowTest> = collected1.into_iter().into_grouping_map_by(|x| x.get_table_name().to_owned()).collect();
-    collected2
+    (collected2, per_table)
 }

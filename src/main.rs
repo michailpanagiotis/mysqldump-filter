@@ -10,7 +10,7 @@ mod filters;
 mod references;
 mod sql;
 
-use checks::{from_config, ValueTest};
+use checks::{from_config, ValueTest, RowTest};
 use filters::FilterConditions;
 use sql::{get_data_types, read_sql_file, write_sql_file};
 use references::References;
@@ -30,7 +30,7 @@ impl Config {
         settings.try_deserialize::<Config>().expect("malformed config")
     }
 
-    fn get_conditions(&self, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Vec<ValueTest> {
+    fn get_conditions(&self, data_types: &HashMap<String, sqlparser::ast::DataType>) -> (Vec<ValueTest>, HashMap<String, RowTest>) {
         from_config(&self.filters, &self.cascades, data_types)
     }
 }
@@ -71,9 +71,9 @@ fn main() {
     println!("Read data types!");
 
     let config = Config::from_file(config_file.as_path());
-    let conditions = config.get_conditions(&data_types);
+    let (conditions, per_table) = config.get_conditions(&data_types);
     let mut references = References::new(conditions.as_slice());
-    let mut fc = FilterConditions::new(conditions);
+    let mut fc = FilterConditions::new(per_table);
 
     println!("First pass...");
     process_file(input_file.as_path(), output_file.as_path(), &config.allow_data_on_tables, &mut fc, &mut references);
