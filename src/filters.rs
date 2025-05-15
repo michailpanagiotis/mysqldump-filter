@@ -1,8 +1,6 @@
 use std::collections::{HashMap, HashSet};
-use std::cell::RefCell;
 
-use crate::checks::{ColumnMeta, RowCheck, TestValue, ValueTest};
-use crate::sql::{get_column_positions, get_values};
+use crate::checks::RowCheck;
 use crate::references::References;
 
 #[derive(Debug)]

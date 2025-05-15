@@ -10,6 +10,8 @@ use crate::sql::{get_column_positions, get_values};
 
 #[derive(Clone)]
 #[derive(Debug)]
+#[derive(Hash)]
+#[derive(Eq, PartialEq)]
 pub struct ColumnMeta {
     pub key: String,
     pub table: String,
@@ -65,6 +67,10 @@ pub trait TestValue {
         &self.get_column_meta().position
     }
 
+    fn get_dependencies(&self) -> HashSet<ColumnMeta> {
+        HashSet::new()
+    }
+
     fn get_table_dependencies(&self) -> HashSet<String> {
         HashSet::new()
     }
@@ -93,19 +99,17 @@ pub trait TestValue {
     }
 }
 
+impl core::fmt::Debug for dyn TestValue {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.get_column_meta().fmt(f)
+    }
+}
+
 #[derive(Debug)]
 pub struct CelTest {
     column_meta: ColumnMeta,
     definition: String,
     program: Program,
-}
-
-impl Clone for CelTest
-{
-    fn clone(&self) -> Self {
-        let data_types = HashMap::from([(self.get_column_name().to_owned(), self.get_data_type().to_owned())]);
-        CelTest::from_definition(self.get_table_name(), self.get_definition(), &data_types)
-    }
 }
 
 fn parse_date(s: &str) -> i64 {
@@ -254,61 +258,12 @@ impl TestValue for LookupTest {
         set.contains(value)
     }
 
+    fn get_dependencies(&self) -> HashSet<ColumnMeta> {
+        HashSet::from([self.get_target_column_meta().to_owned()])
+    }
+
     fn get_table_dependencies(&self) -> HashSet<String> {
         HashSet::from([self.get_target_table()])
-    }
-}
-
-#[derive(Debug)]
-pub enum ValueTest {
-    Lookup(LookupTest),
-    Cel(CelTest),
-}
-
-impl ValueTest {
-    fn from_definition(table: &str, condition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Self {
-        if condition.contains("->") {
-            ValueTest::Lookup(LookupTest::from_definition(condition, table, data_types))
-        } else {
-            ValueTest::Cel(CelTest::from_definition(condition, table, data_types))
-        }
-    }
-}
-
-impl TestValue for ValueTest {
-    fn get_definition(&self) -> &str {
-        match &self {
-            ValueTest::Cel(cond) => cond.get_definition(),
-            ValueTest::Lookup(cond) => cond.get_definition(),
-        }
-    }
-
-    fn test(&self, value: &str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
-        match &self {
-            ValueTest::Cel(cond) => cond.test(value, lookup_table),
-            ValueTest::Lookup(cond) => cond.test(value, lookup_table),
-        }
-    }
-
-    fn get_column_meta(&self) -> &ColumnMeta {
-        match &self {
-            ValueTest::Lookup(t) => t.get_column_meta(),
-            ValueTest::Cel(t) => t.get_column_meta()
-        }
-    }
-
-    fn get_column_meta_mut(&mut self) -> &mut ColumnMeta {
-        match self {
-            ValueTest::Lookup(t) => t.get_column_meta_mut(),
-            ValueTest::Cel(t) => t.get_column_meta_mut()
-        }
-    }
-}
-
-
-impl core::fmt::Debug for dyn TestValue {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        self.get_column_meta().fmt(f)
     }
 }
 
@@ -336,6 +291,16 @@ impl RowCheck {
         assert!(self.has_resolved_positions());
     }
 
+    pub fn get_dependencies(&self) -> HashSet<ColumnMeta> {
+        let mut dependencies = HashSet::new();
+        for condition in self.checks.iter() {
+            for dependency in condition.get_dependencies() {
+                dependencies.insert(dependency);
+            }
+        }
+        dependencies
+    }
+
     pub fn get_table_dependencies(&self) -> HashSet<String> {
         let mut dependencies = HashSet::new();
         for condition in self.checks.iter() {
@@ -344,6 +309,10 @@ impl RowCheck {
             }
         }
         dependencies
+    }
+
+    pub fn get_conditions(&self) -> impl Iterator<Item=&Box<dyn TestValue>> {
+        self.checks.iter()
     }
 
     pub fn test(&mut self, insert_statement: &str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
@@ -355,28 +324,26 @@ impl RowCheck {
     }
 }
 
-impl Extend<ValueTest> for RowCheck {
-    fn extend<T: IntoIterator<Item=ValueTest>>(&mut self, iter: T) {
+impl Extend<Box<dyn TestValue>> for RowCheck {
+    fn extend<T: IntoIterator<Item=Box<dyn TestValue>>>(&mut self, iter: T) {
         for elem in iter {
-            self.checks.push(Box::new(elem));
+            self.checks.push(elem);
         }
     }
 }
 
-pub fn from_config(filters: &HashMap<String, Vec<String>>, cascades: &HashMap<String, Vec<String>>, data_types: &HashMap<String, sqlparser::ast::DataType>) -> (Vec<ValueTest>, HashMap<String, RowCheck>) {
-    let mut collected1: Vec<ValueTest> = filters.iter().chain(cascades)
+pub fn from_config(filters: &HashMap<String, Vec<String>>, cascades: &HashMap<String, Vec<String>>, data_types: &HashMap<String, sqlparser::ast::DataType>) -> HashMap<String, RowCheck> {
+    let mut collected: Vec<Box<dyn TestValue>> = filters.iter().chain(cascades)
         .flat_map(|(table, conditions)| conditions.iter().map(move |condition| {
-            ValueTest::from_definition(table, condition, data_types)
+            let item: Box<dyn TestValue> = if condition.contains("->") {
+                Box::new(LookupTest::from_definition(condition, table, data_types))
+            } else {
+                Box::new(CelTest::from_definition(condition, table, data_types))
+            };
+            item
         }))
         .collect();
-    let mut collected2: Vec<ValueTest> = filters.iter().chain(cascades)
-        .flat_map(|(table, conditions)| conditions.iter().map(move |condition| {
-            ValueTest::from_definition(table, condition, data_types)
-        }))
-        .collect();
-    collected1.sort_by_key(|x| x.get_table_name().to_owned());
-    collected2.sort_by_key(|x| x.get_table_name().to_owned());
-    // let per_table: HashMap<String, Vec<&ValueTest>> = collected.iter().into_group_map_by(|x| x.get_table_name().to_owned());
-    let per_table: HashMap<String, RowCheck> = collected1.into_iter().into_grouping_map_by(|x| x.get_table_name().to_owned()).collect();
-    (collected2, per_table)
+    collected.sort_by_key(|x| x.get_table_name().to_owned());
+    let per_table: HashMap<String, RowCheck> = collected.into_iter().into_grouping_map_by(|x| x.get_table_name().to_owned()).collect();
+    per_table
 }

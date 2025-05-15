@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 
-use crate::checks::{LookupTest, ValueTest, TestValue};
+use crate::checks::ColumnMeta;
 use crate::sql::{get_column_positions, get_values};
 
 #[derive(Debug)]
@@ -12,20 +12,11 @@ pub struct References {
 }
 
 impl References {
-    pub fn new<'a>(conditions: &'a [ValueTest]) -> Self {
-        let lookup_tests: Vec<&'a LookupTest> = conditions
-            .iter()
-            .flat_map(|fc| match &fc {
-                ValueTest::Lookup(cond) => Some(cond),
-                _ => None,
-            })
-            .collect();
+    pub fn new<'a>(deps: &'a [ColumnMeta]) -> Self {
+        let values_per_field = HashMap::from_iter(deps.iter().map(|x| (x.key.to_owned(), HashSet::new())));
 
-        let values_per_field = HashMap::from_iter(lookup_tests.iter().map(|x| (x.get_target_column_meta().key.to_owned(), HashSet::new())));
-
-        let fields: HashMap<String, HashSet<(String, String, String)>> = lookup_tests.iter()
-            .map(|cond| {
-                let meta = cond.get_target_column_meta();
+        let fields: HashMap<String, HashSet<(String, String, String)>> = deps.iter()
+            .map(|meta| {
                 (meta.table.to_owned(), meta.column.to_owned(), meta.key.to_owned())
             })
             .into_grouping_map_by(|(table, _, _)| table.clone())
