@@ -1,4 +1,5 @@
 use clap::Parser;
+use itertools::Itertools;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -31,7 +32,10 @@ impl Config {
     }
 
     fn get_conditions(&self, data_types: &HashMap<String, sqlparser::ast::DataType>) -> HashMap<String, RowCheck> {
-        from_config(&self.filters, &self.cascades, data_types)
+        let c: HashMap<String, Vec<String>> = self.filters.iter().chain(&self.cascades).flat_map(|(table, conditions)| conditions.iter().map(|c| (table.to_owned(), c.to_owned()))).into_group_map();
+        dbg!(&c);
+
+        c.iter().map(|(table, definitions)| (table.to_owned(), from_config(table, definitions, data_types))).collect()
     }
 }
 
@@ -74,7 +78,7 @@ fn main() {
     let config = Config::from_file(config_file.as_path());
     let per_table = config.get_conditions(&data_types);
 
-    let deps: Vec<ColumnMeta> = per_table.values().flat_map(|f| f.get_conditions()).flat_map(|f| f.get_dependencies()).collect();
+    let deps: Vec<ColumnMeta> = per_table.values().flat_map(|f| f.get_dependencies()).collect();
 
     let mut references = References::new(deps.as_slice());
     let mut fc = FilterConditions::new(per_table);

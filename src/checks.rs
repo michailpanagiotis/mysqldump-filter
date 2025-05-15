@@ -1,7 +1,6 @@
 use cel_interpreter::{Context, Program};
 use cel_interpreter::extractors::This;
 use chrono::NaiveDateTime;
-use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -42,18 +41,9 @@ impl ColumnMeta {
 }
 
 pub trait TestValue {
-    fn get_definition(&self) -> &str;
     fn get_column_meta(&self) -> &ColumnMeta;
     fn get_column_meta_mut(&mut self) -> &mut ColumnMeta;
     fn test(&self, value:&str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool;
-
-    fn get_column_key(&self) -> &str {
-        &self.get_column_meta().key
-    }
-
-    fn get_table_name(&self) -> &str {
-        &self.get_column_meta().table
-    }
 
     fn get_column_name(&self) -> &str {
         &self.get_column_meta().column
@@ -150,7 +140,7 @@ impl CelTest {
             sqlparser::ast::DataType::Enum(_, _) => {
                 context.add_variable(column_name, other_value).unwrap();
             },
-            _ => panic!("{}", format!("cannot parse {} for {}", other_value, data_type))
+            _ => panic!("{}", format!("cannot parse {other_value} for {data_type}"))
         };
 
         context
@@ -158,10 +148,6 @@ impl CelTest {
 }
 
 impl TestValue for CelTest {
-    fn get_definition(&self) -> &str {
-        &self.definition
-    }
-
     fn get_column_meta(&self) -> &ColumnMeta {
         &self.column_meta
     }
@@ -222,28 +208,12 @@ impl LookupTest {
         }
     }
 
-    pub fn get_foreign_key(&self) -> (String, String) {
-        (self.target_column_meta.table.clone(), self.target_column_meta.column.clone())
-    }
-
-    pub fn get_target_column_key(&self) -> String {
-        self.target_column_meta.key.clone()
-    }
-
     pub fn get_target_column_meta(&self) -> &ColumnMeta {
         &self.target_column_meta
-    }
-
-    pub fn get_target_table(&self) -> String {
-        self.target_column_meta.table.clone()
     }
 }
 
 impl TestValue for LookupTest {
-    fn get_definition(&self) -> &str {
-        &self.definition
-    }
-
     fn get_column_meta(&self) -> &ColumnMeta {
         &self.column_meta
     }
@@ -254,7 +224,7 @@ impl TestValue for LookupTest {
 
     fn test(&self, value:&str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
         let Some(fvs) = lookup_table else { return true };
-        let Some(set) = fvs.get(self.get_target_column_key().as_str()) else { return false };
+        let Some(set) = fvs.get(&self.target_column_meta.key) else { return false };
         set.contains(value)
     }
 
@@ -263,7 +233,7 @@ impl TestValue for LookupTest {
     }
 
     fn get_table_dependencies(&self) -> HashSet<String> {
-        HashSet::from([self.get_target_table()])
+        HashSet::from([self.target_column_meta.table.to_owned()])
     }
 }
 
@@ -311,10 +281,6 @@ impl RowCheck {
         dependencies
     }
 
-    pub fn get_conditions(&self) -> impl Iterator<Item=&Box<dyn TestValue>> {
-        self.checks.iter()
-    }
-
     pub fn test(&mut self, insert_statement: &str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
         let values = get_values(insert_statement);
         if !self.has_resolved_positions() {
@@ -332,17 +298,15 @@ impl Extend<Box<dyn TestValue>> for RowCheck {
     }
 }
 
-pub fn from_config(filters: &HashMap<String, Vec<String>>, cascades: &HashMap<String, Vec<String>>, data_types: &HashMap<String, sqlparser::ast::DataType>) -> HashMap<String, RowCheck> {
-    filters.iter().chain(cascades)
-        .flat_map(|(table, conditions)| conditions.iter().map(move |condition| {
+pub fn from_config(table: &str, conditions: &[String], data_types: &HashMap<String, sqlparser::ast::DataType>) -> RowCheck {
+    RowCheck {
+      checks: conditions.iter().map(|condition| {
             let item: Box<dyn TestValue> = if condition.contains("->") {
                 Box::new(LookupTest::from_definition(condition, table, data_types))
             } else {
                 Box::new(CelTest::from_definition(condition, table, data_types))
             };
             item
-        }))
-        .sorted_by_key(|x| x.get_table_name().to_owned())
-        .into_grouping_map_by(|x| x.get_table_name().to_owned())
-        .collect()
+        }).collect()
+    }
 }
