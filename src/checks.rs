@@ -4,8 +4,7 @@ use chrono::NaiveDateTime;
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
-use std::cell::RefCell;
-use std::rc::{Rc, Weak};
+use std::rc::Weak;
 use std::sync::Arc;
 
 use crate::sql::{get_column_positions, get_values};
@@ -242,7 +241,7 @@ impl TestValue for LookupTest {
 
 #[derive(Debug)]
 pub struct RowCheck {
-    checks: Vec<Rc<RefCell<dyn TestValue>>>,
+    checks: Vec<Box<dyn TestValue>>,
     dependencies: Vec<Weak<RowCheck>>,
 }
 
@@ -250,10 +249,10 @@ impl RowCheck {
     pub fn from_config(table: &str, conditions: &[String], data_types: &HashMap<String, sqlparser::ast::DataType>) -> RowCheck {
         RowCheck {
           checks: conditions.iter().map(|condition| {
-                let item: Rc<RefCell<dyn TestValue>> = if condition.contains("->") {
-                    Rc::new(RefCell::new(LookupTest::from_definition(condition, table, data_types)))
+                let item: Box<dyn TestValue> = if condition.contains("->") {
+                    Box::new(LookupTest::from_definition(condition, table, data_types))
                 } else {
-                    Rc::new(RefCell::new(CelTest::from_definition(condition, table, data_types)))
+                    Box::new(CelTest::from_definition(condition, table, data_types))
                 };
                 item
             }).collect(),
@@ -267,13 +266,13 @@ impl RowCheck {
 
     pub fn has_resolved_positions(&self) -> bool {
         self.checks.iter().all(|t| {
-            t.borrow().has_resolved_position()
+            t.has_resolved_position()
         })
     }
 
     pub fn set_positions(&mut self, positions: HashMap<String, usize>) {
         for condition in self.checks.iter_mut() {
-            condition.borrow_mut().set_position_from_column_positions(&positions);
+            condition.set_position_from_column_positions(&positions);
         }
         assert!(self.has_resolved_positions());
     }
@@ -281,7 +280,7 @@ impl RowCheck {
     pub fn get_dependencies(&self) -> HashSet<ColumnMeta> {
         let mut dependencies = HashSet::new();
         for condition in self.checks.iter() {
-            for dependency in condition.borrow().get_dependencies() {
+            for dependency in condition.get_dependencies() {
                 dependencies.insert(dependency);
             }
         }
@@ -291,7 +290,7 @@ impl RowCheck {
     pub fn get_table_dependencies(&self) -> HashSet<String> {
         let mut dependencies = HashSet::new();
         for condition in self.checks.iter() {
-            for dependency in condition.borrow().get_table_dependencies() {
+            for dependency in condition.get_table_dependencies() {
                 dependencies.insert(dependency);
             }
         }
@@ -303,7 +302,7 @@ impl RowCheck {
         if !self.has_resolved_positions() {
             self.set_positions(get_column_positions(insert_statement));
         }
-        self.checks.iter().all(|t| t.borrow_mut().test_row(&values, lookup_table))
+        self.checks.iter().all(|t| t.test_row(&values, lookup_table))
     }
 }
 
