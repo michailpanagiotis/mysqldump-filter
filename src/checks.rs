@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 #[derive(Clone)]
 #[derive(Debug)]
-struct ColumnMeta {
+pub struct ColumnMeta {
     key: String,
     table: String,
     column: String,
@@ -93,7 +93,7 @@ pub trait TestValue {
 
 #[derive(Debug)]
 pub struct CelTest {
-    meta: ColumnMeta,
+    column_meta: ColumnMeta,
     definition: String,
     program: Program,
 }
@@ -126,22 +126,25 @@ impl CelTest {
         let mut context = Context::default();
         context.add_function("timestamp", timestamp);
 
+        let column_name = self.get_column_name();
+        let data_type = self.get_data_type();
+
         if other_value == "NULL" {
-            context.add_variable(self.meta.column.clone(), false).unwrap();
+            context.add_variable(column_name.to_owned(), false).unwrap();
             return context;
         }
 
-        match self.meta.data_type {
+        match data_type {
             sqlparser::ast::DataType::TinyInt(_) | sqlparser::ast::DataType::Int(_) => {
-                context.add_variable(&self.meta.column, parse_int(other_value)).unwrap();
+                context.add_variable(column_name, parse_int(other_value)).unwrap();
             },
             sqlparser::ast::DataType::Datetime(_) | sqlparser::ast::DataType::Date => {
-                context.add_variable(&self.meta.column, parse_date(other_value)).unwrap();
+                context.add_variable(column_name, parse_date(other_value)).unwrap();
             },
             sqlparser::ast::DataType::Enum(_, _) => {
-                context.add_variable(&self.meta.column, other_value).unwrap();
+                context.add_variable(column_name, other_value).unwrap();
             },
-            _ => panic!("{}", format!("cannot parse {} for {}", other_value, self.meta.data_type))
+            _ => panic!("{}", format!("cannot parse {} for {}", other_value, data_type))
         };
 
         context
@@ -154,11 +157,11 @@ impl TestValue for CelTest {
     }
 
     fn get_column_meta(&self) -> &ColumnMeta {
-        &self.meta
+        &self.column_meta
     }
 
     fn get_column_meta_mut(&mut self) -> &mut ColumnMeta {
-        &mut self.meta
+        &mut self.column_meta
     }
 
     fn test(&self, value:&str, _lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
@@ -180,7 +183,7 @@ impl CelTest {
         let column = &variables[0];
 
         CelTest {
-            meta: ColumnMeta::new(table, column, data_types),
+            column_meta: ColumnMeta::new(table, column, data_types),
             definition: definition.to_owned(),
             program,
         }
@@ -189,7 +192,7 @@ impl CelTest {
 
 #[derive(Debug)]
 pub struct LookupTest {
-    meta: ColumnMeta,
+    column_meta: ColumnMeta,
     definition: String,
     lookup_key: String,
     target_table: String,
@@ -209,7 +212,7 @@ impl LookupTest {
         };
 
         LookupTest {
-            meta: ColumnMeta::new(table, source_column, data_types),
+            column_meta: ColumnMeta::new(table, source_column, data_types),
             definition: definition.to_owned(),
             lookup_key: foreign_key.to_string(),
             target_table: target_table.to_string(),
@@ -232,11 +235,11 @@ impl TestValue for LookupTest {
     }
 
     fn get_column_meta(&self) -> &ColumnMeta {
-        &self.meta
+        &self.column_meta
     }
 
     fn get_column_meta_mut(&mut self) -> &mut ColumnMeta {
-        &mut self.meta
+        &mut self.column_meta
     }
 
     fn test(&self, value:&str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
@@ -283,15 +286,15 @@ impl TestValue for ValueTest {
 
     fn get_column_meta(&self) -> &ColumnMeta {
         match &self {
-            ValueTest::Lookup(t) => &t.meta,
-            ValueTest::Cel(t) => &t.meta
+            ValueTest::Lookup(t) => t.get_column_meta(),
+            ValueTest::Cel(t) => t.get_column_meta()
         }
     }
 
     fn get_column_meta_mut(&mut self) -> &mut ColumnMeta {
         match self {
-            ValueTest::Lookup(t) => &mut t.meta,
-            ValueTest::Cel(t) => &mut t.meta
+            ValueTest::Lookup(t) => t.get_column_meta_mut(),
+            ValueTest::Cel(t) => t.get_column_meta_mut()
         }
     }
 }
