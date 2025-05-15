@@ -4,16 +4,16 @@ use crate::checks::RowCheck;
 use crate::references::References;
 
 #[derive(Debug)]
-pub struct FilterConditions {
-    per_table: HashMap<String, RowCheck>,
+pub struct FilterConditions<'a> {
+    per_table: &'a mut HashMap<String, RowCheck>,
     all_filtered_tables: HashSet<String>,
     pub pending_tables: HashSet<String>,
     pub fully_filtered_tables: HashMap<String, usize>,
     pub current_pass: usize,
 }
 
-impl FilterConditions {
-    pub fn new(per_table: HashMap<String, RowCheck>) -> Self {
+impl<'a> FilterConditions<'a> {
+    pub fn new(per_table: &'a mut HashMap<String, RowCheck>) -> Self {
         FilterConditions {
             per_table,
             all_filtered_tables: HashSet::new(),

@@ -32,10 +32,8 @@ impl Config {
     }
 
     fn get_conditions(&self, data_types: &HashMap<String, sqlparser::ast::DataType>) -> HashMap<String, RowCheck> {
-        let c: HashMap<String, Vec<String>> = self.filters.iter().chain(&self.cascades).flat_map(|(table, conditions)| conditions.iter().map(|c| (table.to_owned(), c.to_owned()))).into_group_map();
-        dbg!(&c);
-
-        c.iter().map(|(table, definitions)| (table.to_owned(), from_config(table, definitions, data_types))).collect()
+        let c: Vec<(&String, &Vec<String>)> = self.filters.iter().chain(&self.cascades).collect();
+        from_config(c.as_slice(), data_types)
     }
 }
 
@@ -76,12 +74,14 @@ fn main() {
     println!("Read data types!");
 
     let config = Config::from_file(config_file.as_path());
-    let per_table = config.get_conditions(&data_types);
+    let mut per_table = config.get_conditions(&data_types);
+
+    dbg!(&per_table);
 
     let deps: Vec<ColumnMeta> = per_table.values().flat_map(|f| f.get_dependencies()).collect();
 
     let mut references = References::new(deps.as_slice());
-    let mut fc = FilterConditions::new(per_table);
+    let mut fc = FilterConditions::new(&mut per_table);
 
     println!("First pass...");
     process_file(input_file.as_path(), output_file.as_path(), &config.allow_data_on_tables, &mut fc, &mut references);

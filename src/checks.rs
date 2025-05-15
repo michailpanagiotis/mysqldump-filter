@@ -1,8 +1,10 @@
 use cel_interpreter::{Context, Program};
 use cel_interpreter::extractors::This;
 use chrono::NaiveDateTime;
+use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
+use std::rc::Weak;
 use std::sync::Arc;
 
 use crate::sql::{get_column_positions, get_values};
@@ -241,9 +243,24 @@ impl TestValue for LookupTest {
 #[derive(Default)]
 pub struct RowCheck {
     checks: Vec<Box<dyn TestValue>>,
+    dependencies: Vec<Weak<RowCheck>>,
 }
 
 impl RowCheck {
+    pub fn from_config(table: &str, conditions: &[String], data_types: &HashMap<String, sqlparser::ast::DataType>) -> RowCheck {
+        RowCheck {
+          checks: conditions.iter().map(|condition| {
+                let item: Box<dyn TestValue> = if condition.contains("->") {
+                    Box::new(LookupTest::from_definition(condition, table, data_types))
+                } else {
+                    Box::new(CelTest::from_definition(condition, table, data_types))
+                };
+                item
+            }).collect(),
+          dependencies: Vec::new(),
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.checks.is_empty()
     }
@@ -298,15 +315,9 @@ impl Extend<Box<dyn TestValue>> for RowCheck {
     }
 }
 
-pub fn from_config(table: &str, conditions: &[String], data_types: &HashMap<String, sqlparser::ast::DataType>) -> RowCheck {
-    RowCheck {
-      checks: conditions.iter().map(|condition| {
-            let item: Box<dyn TestValue> = if condition.contains("->") {
-                Box::new(LookupTest::from_definition(condition, table, data_types))
-            } else {
-                Box::new(CelTest::from_definition(condition, table, data_types))
-            };
-            item
-        }).collect()
-    }
+pub fn from_config(conditions: &[(&String, &Vec<String>)], data_types: &HashMap<String, sqlparser::ast::DataType>) -> HashMap<String, RowCheck> {
+    let c: HashMap<String, Vec<String>> = conditions
+        .iter().flat_map(|(table, conditions)| conditions.iter().map(|c| (table.to_string(), c.to_owned())))
+        .into_group_map();
+    c.iter().map(|(table, definitions)| (table.to_owned(), RowCheck::from_config(table, definitions, data_types))).collect()
 }
