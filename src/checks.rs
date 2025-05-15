@@ -333,7 +333,7 @@ impl Extend<Box<dyn TestValue>> for RowCheck {
 }
 
 pub fn from_config(filters: &HashMap<String, Vec<String>>, cascades: &HashMap<String, Vec<String>>, data_types: &HashMap<String, sqlparser::ast::DataType>) -> HashMap<String, RowCheck> {
-    let mut collected: Vec<Box<dyn TestValue>> = filters.iter().chain(cascades)
+    filters.iter().chain(cascades)
         .flat_map(|(table, conditions)| conditions.iter().map(move |condition| {
             let item: Box<dyn TestValue> = if condition.contains("->") {
                 Box::new(LookupTest::from_definition(condition, table, data_types))
@@ -342,8 +342,7 @@ pub fn from_config(filters: &HashMap<String, Vec<String>>, cascades: &HashMap<St
             };
             item
         }))
-        .collect();
-    collected.sort_by_key(|x| x.get_table_name().to_owned());
-    let per_table: HashMap<String, RowCheck> = collected.into_iter().into_grouping_map_by(|x| x.get_table_name().to_owned()).collect();
-    per_table
+        .sorted_by_key(|x| x.get_table_name().to_owned())
+        .into_grouping_map_by(|x| x.get_table_name().to_owned())
+        .collect()
 }
