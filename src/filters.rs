@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::cell::RefCell;
 
-use crate::checks::{ValueTest, RowCheck, TestValue};
+use crate::checks::{ColumnMeta, RowCheck, TestValue, ValueTest};
 use crate::sql::{get_column_positions, get_values};
 use crate::references::References;
 
@@ -29,25 +29,12 @@ impl FilterConditions {
         self.per_table.contains_key(table) && !self.per_table[table].is_empty()
     }
 
-    fn has_resolved_positions(&self, table: &str) -> bool {
-        self.per_table[table].has_resolved_positions()
-    }
-
-    fn resolve_positions(&mut self, table: &str, insert_statement: &str) {
-        let positions: HashMap<String, usize> = get_column_positions(insert_statement);
-        self.per_table.get_mut(table).expect("cannot find tests for table").set_positions(positions);
-    }
-
-    pub fn get_table_dependencies(&self, table: &str) -> HashSet<String> {
-        if !self.has_table_conditions(table) {
-            return HashSet::new();
-        }
-        self.per_table[table].get_table_dependencies()
-    }
-
     pub fn track_filtered(&mut self, table: &str) {
         if !self.fully_filtered_tables.contains_key(table) {
-            let dependencies = self.get_table_dependencies(table);
+            let dependencies = match self.per_table.get(table) {
+                Some(x) => x.get_table_dependencies(),
+                None => HashSet::new(),
+            };
             for dependency in &dependencies {
                 if !self.fully_filtered_tables.contains_key(dependency) {
                     self.pending_tables.insert(table.to_owned());
@@ -82,14 +69,7 @@ impl FilterConditions {
             return true;
         }
 
-
-        let values = get_values(sql_statement);
-
-        if !self.has_resolved_positions(table) {
-            self.resolve_positions(table, sql_statement);
-        }
-
-        self.per_table.get_mut(table).expect("cannot find tests for table").test(&values, lookup_table)
+        self.per_table.get_mut(table).expect("cannot find tests for table").test(sql_statement, lookup_table)
     }
 
     pub fn filter<I: Iterator<Item=(Option<String>, String)>>(&mut self, statements: I, references: &mut References) -> impl Iterator<Item=(Option<String>, String)> {

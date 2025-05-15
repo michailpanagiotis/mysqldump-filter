@@ -49,6 +49,7 @@ struct Cli {
 }
 
 fn process_file(input_file: &Path, output_file: &Path, allow_data_on_tables: &HashSet<String>, filters: &mut FilterConditions, references: &mut References) {
+    dbg!(&references);
     let filtered = filters.filter(read_sql_file(input_file, allow_data_on_tables), references);
     write_sql_file(output_file, filtered);
 }

@@ -6,12 +6,14 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::sync::Arc;
 
+use crate::sql::{get_column_positions, get_values};
+
 #[derive(Clone)]
 #[derive(Debug)]
 pub struct ColumnMeta {
-    key: String,
-    table: String,
-    column: String,
+    pub key: String,
+    pub table: String,
+    pub column: String,
     data_type: sqlparser::ast::DataType,
     position: Option<usize>,
 }
@@ -194,9 +196,7 @@ impl CelTest {
 pub struct LookupTest {
     column_meta: ColumnMeta,
     definition: String,
-    lookup_key: String,
-    target_table: String,
-    target_column: String,
+    target_column_meta: ColumnMeta,
 }
 
 impl LookupTest {
@@ -214,18 +214,24 @@ impl LookupTest {
         LookupTest {
             column_meta: ColumnMeta::new(table, source_column, data_types),
             definition: definition.to_owned(),
-            lookup_key: foreign_key.to_string(),
-            target_table: target_table.to_string(),
-            target_column: target_column.to_string(),
+            target_column_meta: ColumnMeta::new(target_table, target_column, data_types),
         }
     }
 
     pub fn get_foreign_key(&self) -> (String, String) {
-        (self.target_table.clone(), self.target_column.clone())
+        (self.target_column_meta.table.clone(), self.target_column_meta.column.clone())
+    }
+
+    pub fn get_target_column_key(&self) -> String {
+        self.target_column_meta.key.clone()
+    }
+
+    pub fn get_target_column_meta(&self) -> &ColumnMeta {
+        &self.target_column_meta
     }
 
     pub fn get_target_table(&self) -> String {
-        self.target_table.clone()
+        self.target_column_meta.table.clone()
     }
 }
 
@@ -244,7 +250,7 @@ impl TestValue for LookupTest {
 
     fn test(&self, value:&str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
         let Some(fvs) = lookup_table else { return true };
-        let Some(set) = fvs.get(self.lookup_key.as_str()) else { return false };
+        let Some(set) = fvs.get(self.get_target_column_key().as_str()) else { return false };
         set.contains(value)
     }
 
@@ -340,8 +346,12 @@ impl RowCheck {
         dependencies
     }
 
-    pub fn test(&self, values: &[&str], lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
-        self.checks.iter().all(|t| t.test_row(values, lookup_table))
+    pub fn test(&mut self, insert_statement: &str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
+        let values = get_values(insert_statement);
+        if !self.has_resolved_positions() {
+            self.set_positions(get_column_positions(insert_statement));
+        }
+        self.checks.iter().all(|t| t.test_row(&values, lookup_table))
     }
 }
 

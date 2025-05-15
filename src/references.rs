@@ -21,12 +21,12 @@ impl References {
             })
             .collect();
 
-        let values_per_field = HashMap::from_iter(lookup_tests.iter().map(|x| (x.get_column_key().to_owned(), HashSet::new())));
+        let values_per_field = HashMap::from_iter(lookup_tests.iter().map(|x| (x.get_target_column_meta().key.to_owned(), HashSet::new())));
 
         let fields: HashMap<String, HashSet<(String, String, String)>> = lookup_tests.iter()
             .map(|cond| {
-                let (table, column) = cond.get_foreign_key();
-                (table.to_owned(), column.to_owned(), cond.get_column_key().to_owned())
+                let meta = cond.get_target_column_meta();
+                (meta.table.to_owned(), meta.column.to_owned(), meta.key.to_owned())
             })
             .into_grouping_map_by(|(table, _, _)| table.clone())
             .collect();
@@ -76,7 +76,7 @@ impl References {
 
         for (_, field, key) in self.fields[table].iter() {
             let pos = self.position_per_field[table][field];
-            let values = self.values_per_field.get_mut(key).expect("cannot find values lookup");
+            let values = self.values_per_field.get_mut(key).expect(&format!("cannot find values lookup {}", key));
             values.insert(curr_values[pos].to_string());
         }
     }
