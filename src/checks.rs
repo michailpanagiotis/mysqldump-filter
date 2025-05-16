@@ -64,10 +64,6 @@ pub trait TestValue {
         HashSet::new()
     }
 
-    fn get_table_dependencies(&self) -> HashSet<String> {
-        HashSet::new()
-    }
-
     fn has_resolved_position(&self) -> bool {
         self.get_column_meta().position.is_some()
     }
@@ -86,10 +82,6 @@ pub trait TestValue {
     fn test_row(&self, values: &[&str], lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
         self.get_column_position().is_some_and(|p| self.test(values[p], lookup_table))
     }
-
-    fn extend_allowed_values(&mut self) {
-
-    }
 }
 
 impl core::fmt::Debug for dyn TestValue {
@@ -101,7 +93,6 @@ impl core::fmt::Debug for dyn TestValue {
 #[derive(Debug)]
 pub struct CelTest {
     column_meta: ColumnMeta,
-    definition: String,
     program: Program,
 }
 
@@ -179,7 +170,6 @@ impl CelTest {
 
         CelTest {
             column_meta: ColumnMeta::new(table, column, data_types),
-            definition: definition.to_owned(),
             program,
         }
     }
@@ -188,7 +178,6 @@ impl CelTest {
 #[derive(Debug)]
 pub struct LookupTest {
     column_meta: ColumnMeta,
-    definition: String,
     target_column_meta: ColumnMeta,
 }
 
@@ -206,7 +195,6 @@ impl LookupTest {
 
         LookupTest {
             column_meta: ColumnMeta::new(table, source_column, data_types),
-            definition: definition.to_owned(),
             target_column_meta: ColumnMeta::new(target_table, target_column, data_types),
         }
     }
@@ -234,15 +222,10 @@ impl TestValue for LookupTest {
     fn get_dependencies(&self) -> HashSet<ColumnMeta> {
         HashSet::from([self.get_target_column_meta().to_owned()])
     }
-
-    fn get_table_dependencies(&self) -> HashSet<String> {
-        HashSet::from([self.target_column_meta.table.to_owned()])
-    }
 }
 
 #[derive(Debug)]
 pub struct RowCheck {
-    table: String,
     checks: Vec<Box<dyn TestValue>>,
     tested_at_pass: Option<usize>,
     pending_dependencies: Vec<Weak<RefCell<RowCheck>>>,
@@ -251,7 +234,6 @@ pub struct RowCheck {
 impl RowCheck {
     pub fn from_config(table: &str, conditions: &[String], data_types: &HashMap<String, sqlparser::ast::DataType>) -> RowCheck {
         RowCheck {
-            table: table.to_owned(),
             checks: conditions.iter().map(|condition| {
                 let item: Box<dyn TestValue> = if condition.contains("->") {
                     Box::new(LookupTest::from_definition(condition, table, data_types))
@@ -292,18 +274,12 @@ impl RowCheck {
         dependencies
     }
 
-    pub fn get_table_dependencies(&self) -> HashSet<String> {
-        let mut dependencies = HashSet::new();
-        for condition in self.checks.iter() {
-            for dependency in condition.get_table_dependencies() {
-                dependencies.insert(dependency);
-            }
+    pub fn link_dependencies(&mut self, per_table: &HashMap<String, Rc<RefCell<RowCheck>>>) {
+        let deps = self.get_dependencies();
+        for dep in deps {
+            let target = &per_table[&dep.table];
+            self.pending_dependencies.push(Rc::<RefCell<RowCheck>>::downgrade(target))
         }
-        dependencies
-    }
-
-    pub fn link_dependency(&mut self, dependency: &Rc<RefCell<RowCheck>>) {
-        self.pending_dependencies.push(Rc::<RefCell<RowCheck>>::downgrade(dependency))
     }
 
     pub fn is_ready_to_be_tested(&self) -> bool {

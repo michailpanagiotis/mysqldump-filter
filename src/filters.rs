@@ -14,12 +14,7 @@ pub struct FilterConditions<'a> {
 impl<'a> FilterConditions<'a> {
     pub fn new(per_table: &'a mut HashMap<String, Rc<RefCell<RowCheck>>>) -> Self {
         for (_, row_check) in per_table.iter() {
-            let deps = row_check.borrow().get_dependencies();
-
-            for dep in deps {
-                let target = &per_table[&dep.table];
-                row_check.borrow_mut().link_dependency(target);
-            }
+            row_check.borrow_mut().link_dependencies(per_table);
         }
         FilterConditions {
             per_table,
