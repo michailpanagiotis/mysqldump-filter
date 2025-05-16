@@ -41,6 +41,10 @@ impl ColumnMeta {
     fn set_position(&mut self, pos: usize) {
         self.position = Some(pos);
     }
+
+    fn has_resolved_position(&self) -> bool {
+        self.position.is_some()
+    }
 }
 
 pub trait TestValue {
@@ -65,7 +69,7 @@ pub trait TestValue {
     }
 
     fn has_resolved_position(&self) -> bool {
-        self.get_column_meta().position.is_some()
+        self.get_column_meta().has_resolved_position()
     }
 
     fn set_position(&mut self, pos: usize) {
@@ -228,6 +232,7 @@ impl TestValue for LookupTest {
 pub struct RowCheck {
     checks: Vec<Box<dyn TestValue>>,
     referenced_columns: HashSet<ColumnMeta>,
+    references: HashMap<String, HashSet<String>>,
     tested_at_pass: Option<usize>,
     pending_dependencies: Vec<Weak<RefCell<RowCheck>>>,
 }
@@ -236,6 +241,7 @@ impl RowCheck {
     pub fn from_referenced_column(referenced_column: &ColumnMeta) -> RowCheck {
         RowCheck {
             referenced_columns: HashSet::from([referenced_column.to_owned()]),
+            references: HashMap::from([(referenced_column.key.to_owned(), HashSet::new())]),
             checks: Vec::new(),
             tested_at_pass: None,
             pending_dependencies: Vec::new(),
@@ -245,6 +251,7 @@ impl RowCheck {
     pub fn from_config(table: &str, conditions: &[String], data_types: &HashMap<String, sqlparser::ast::DataType>) -> RowCheck {
         RowCheck {
             referenced_columns: HashSet::new(),
+            references: HashMap::new(),
             checks: conditions.iter().map(|condition| {
                 let item: Box<dyn TestValue> = if condition.contains("->") {
                     Box::new(LookupTest::from_definition(condition, table, data_types))
@@ -258,6 +265,11 @@ impl RowCheck {
         }
     }
 
+    pub fn add_referenced_column(&mut self, dep: &ColumnMeta) {
+        self.referenced_columns.insert(dep.to_owned());
+        self.references.insert(dep.key.to_owned(), HashSet::new());
+    }
+
     pub fn is_empty(&self) -> bool {
         self.checks.is_empty()
     }
@@ -265,6 +277,8 @@ impl RowCheck {
     pub fn has_resolved_positions(&self) -> bool {
         self.checks.iter().all(|t| {
             t.has_resolved_position()
+        }) && self.referenced_columns.iter().all(|c| {
+            c.has_resolved_position()
         })
     }
 
@@ -272,6 +286,13 @@ impl RowCheck {
         for condition in self.checks.iter_mut() {
             condition.set_position_from_column_positions(&positions);
         }
+
+        self.referenced_columns = self.referenced_columns.iter().map(|x| {
+            let mut col = x.to_owned();
+            col.set_position(positions[&col.column]);
+            col
+        }).collect();
+
         assert!(self.has_resolved_positions());
     }
 
@@ -319,6 +340,12 @@ impl RowCheck {
         }
         let has_passed = self.checks.iter().all(|t| t.test_row(&values, lookup_table));
 
+        if has_passed {
+            for column in self.referenced_columns.iter() {
+                self.references.get_mut(&column.key).unwrap().insert(values[column.position.unwrap()].to_owned());
+            }
+        }
+
         has_passed
     }
 }
@@ -340,7 +367,7 @@ pub fn from_config<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
         if result.contains_key(&dep.table) {
             result.insert(dep.table.to_owned(), Rc::new(RefCell::new(RowCheck::from_referenced_column(dep))));
         } else {
-            result[&dep.table].borrow_mut().referenced_columns.insert(dep.to_owned());
+            result[&dep.table].borrow_mut().add_referenced_column(dep);
         }
     }
 
