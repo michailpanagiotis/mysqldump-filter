@@ -61,7 +61,6 @@ impl<'a> FilterConditions<'a> {
         dbg!(&ready_tables);
         let lookup = if references.is_empty() { None } else {
             let lookup = references.get_lookup_table();
-            references.clear();
             Some(lookup)
         };
         statements.filter(move |(table_option, statement)| {
