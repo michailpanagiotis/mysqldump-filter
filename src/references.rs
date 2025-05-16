@@ -12,7 +12,7 @@ pub struct References {
 }
 
 impl References {
-    pub fn new<'a>(deps: &'a [ColumnMeta]) -> Self {
+    pub fn new(deps: &[ColumnMeta]) -> Self {
         let values_per_field = HashMap::from_iter(deps.iter().map(|x| (x.key.to_owned(), HashSet::new())));
 
         let fields: HashMap<String, HashSet<(String, String, String)>> = deps.iter()
@@ -67,7 +67,7 @@ impl References {
 
         for (_, field, key) in self.fields[table].iter() {
             let pos = self.position_per_field[table][field];
-            let values = self.values_per_field.get_mut(key).expect(&format!("cannot find values lookup {}", key));
+            let values = self.values_per_field.get_mut(key).unwrap_or_else(|| panic!("cannot find values lookup {key}"));
             values.insert(curr_values[pos].to_string());
         }
     }
