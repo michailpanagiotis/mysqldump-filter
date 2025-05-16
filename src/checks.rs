@@ -230,6 +230,7 @@ impl TestValue for LookupTest {
 
 #[derive(Debug)]
 pub struct RowCheck {
+    table: String,
     checks: Vec<Box<dyn TestValue>>,
     referenced_columns: HashSet<ColumnMeta>,
     references: HashMap<String, HashSet<String>>,
@@ -238,8 +239,9 @@ pub struct RowCheck {
 }
 
 impl RowCheck {
-    pub fn from_referenced_column(referenced_column: &ColumnMeta) -> RowCheck {
+    pub fn from_referenced_column(table: &str, referenced_column: &ColumnMeta) -> RowCheck {
         RowCheck {
+            table: table.to_owned(),
             referenced_columns: HashSet::from([referenced_column.to_owned()]),
             references: HashMap::from([(referenced_column.key.to_owned(), HashSet::new())]),
             checks: Vec::new(),
@@ -250,6 +252,7 @@ impl RowCheck {
 
     pub fn from_config(table: &str, conditions: &[String], data_types: &HashMap<String, sqlparser::ast::DataType>) -> RowCheck {
         RowCheck {
+            table: table.to_owned(),
             referenced_columns: HashSet::new(),
             references: HashMap::new(),
             checks: conditions.iter().map(|condition| {
@@ -315,7 +318,7 @@ impl RowCheck {
     }
 
     pub fn is_ready_to_be_tested(&self) -> bool {
-        self.pending_dependencies.iter().all(|d| {
+        !self.has_been_tested() && self.pending_dependencies.iter().all(|d| {
             d.upgrade().unwrap().borrow().has_been_tested()
         })
     }
@@ -325,14 +328,9 @@ impl RowCheck {
     }
 
     pub fn test(&mut self, pass: &usize, insert_statement: &str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
-        if !self.is_ready_to_be_tested() {
-            return true
-        }
         if self.tested_at_pass.is_none() {
+            dbg!("MARKING", &self.table);
             self.tested_at_pass = Some(pass.to_owned());
-        }
-        if self.tested_at_pass.is_some_and(|x| &x < pass) {
-            return true
         }
         let values = get_values(insert_statement);
         if !self.has_resolved_positions() {
@@ -365,10 +363,14 @@ pub fn from_config<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
 
     for dep in deps.iter() {
         if result.contains_key(&dep.table) {
-            result.insert(dep.table.to_owned(), Rc::new(RefCell::new(RowCheck::from_referenced_column(dep))));
-        } else {
             result[&dep.table].borrow_mut().add_referenced_column(dep);
+        } else {
+            result.insert(dep.table.to_owned(), Rc::new(RefCell::new(RowCheck::from_referenced_column(&dep.table, dep))));
         }
+    }
+
+    for (_, row_check) in result.iter() {
+        row_check.borrow_mut().link_dependencies(&result);
     }
 
     result
