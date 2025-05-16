@@ -16,6 +16,8 @@ impl<'a> FilterConditions<'a> {
         for (_, row_check) in per_table.iter() {
             row_check.borrow_mut().link_dependencies(per_table);
         }
+        dbg!(&per_table);
+        panic!("stop");
         FilterConditions {
             per_table,
             current_pass: 0,

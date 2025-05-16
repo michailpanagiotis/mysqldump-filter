@@ -227,13 +227,24 @@ impl TestValue for LookupTest {
 #[derive(Debug)]
 pub struct RowCheck {
     checks: Vec<Box<dyn TestValue>>,
+    referenced_columns: HashSet<ColumnMeta>,
     tested_at_pass: Option<usize>,
     pending_dependencies: Vec<Weak<RefCell<RowCheck>>>,
 }
 
 impl RowCheck {
+    pub fn from_referenced_column(referenced_column: &ColumnMeta) -> RowCheck {
+        RowCheck {
+            referenced_columns: HashSet::from([referenced_column.to_owned()]),
+            checks: Vec::new(),
+            tested_at_pass: None,
+            pending_dependencies: Vec::new(),
+        }
+    }
+
     pub fn from_config(table: &str, conditions: &[String], data_types: &HashMap<String, sqlparser::ast::DataType>) -> RowCheck {
         RowCheck {
+            referenced_columns: HashSet::new(),
             checks: conditions.iter().map(|condition| {
                 let item: Box<dyn TestValue> = if condition.contains("->") {
                     Box::new(LookupTest::from_definition(condition, table, data_types))
@@ -306,7 +317,9 @@ impl RowCheck {
         if !self.has_resolved_positions() {
             self.set_positions(get_column_positions(insert_statement));
         }
-        self.checks.iter().all(|t| t.test_row(&values, lookup_table))
+        let has_passed = self.checks.iter().all(|t| t.test_row(&values, lookup_table));
+
+        has_passed
     }
 }
 
@@ -317,5 +330,19 @@ pub fn from_config<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
     let c: HashMap<String, Vec<String>> = conditions
         .flat_map(|(table, conditions)| conditions.iter().map(|c| (table.to_string(), c.to_owned())))
         .into_group_map();
-    c.iter().map(|(table, definitions)| (table.to_owned(), Rc::new(RefCell::new(RowCheck::from_config(table, definitions, data_types))))).collect()
+    let mut result: HashMap<String, Rc<RefCell<RowCheck>>> = c.iter()
+        .map(|(table, definitions)| (table.to_owned(), Rc::new(RefCell::new(RowCheck::from_config(table, definitions, data_types)))))
+        .collect();
+
+    let deps: HashSet<ColumnMeta> = result.values().flat_map(|x| x.borrow().get_dependencies()).collect();
+
+    for dep in deps.iter() {
+        if result.contains_key(&dep.table) {
+            result.insert(dep.table.to_owned(), Rc::new(RefCell::new(RowCheck::from_referenced_column(dep))));
+        } else {
+            result[&dep.table].borrow_mut().referenced_columns.insert(dep.to_owned());
+        }
+    }
+
+    result
 }
