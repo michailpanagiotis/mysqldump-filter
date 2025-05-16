@@ -10,7 +10,7 @@ mod filters;
 mod references;
 mod sql;
 
-use checks::{from_config, RowCheck, ColumnMeta};
+use checks::{from_config, ColumnMeta};
 use filters::FilterConditions;
 use sql::{get_data_types, read_sql_file, write_sql_file};
 use references::References;
@@ -29,10 +29,6 @@ impl Config {
         let settings = config::Config::builder().add_source(file).build().expect("cannot read config file");
         settings.try_deserialize::<Config>().expect("malformed config")
     }
-
-    fn get_conditions(&self, data_types: &HashMap<String, sqlparser::ast::DataType>) -> HashMap<String, RowCheck> {
-        from_config(self.filters.iter().chain(&self.cascades), data_types)
-    }
 }
 
 #[derive(Parser, Debug)]
@@ -49,7 +45,6 @@ struct Cli {
 }
 
 fn process_file(input_file: &Path, output_file: &Path, allow_data_on_tables: &HashSet<String>, filters: &mut FilterConditions, references: &mut References) {
-    dbg!(&references);
     let filtered = filters.filter(read_sql_file(input_file, allow_data_on_tables), references);
     write_sql_file(output_file, filtered);
 }
@@ -72,11 +67,9 @@ fn main() {
     println!("Read data types!");
 
     let config = Config::from_file(config_file.as_path());
-    let mut per_table = config.get_conditions(&data_types);
+    let mut per_table = from_config(config.filters.iter().chain(&config.cascades), &data_types);
 
-    dbg!(&per_table);
-
-    let deps: Vec<ColumnMeta> = per_table.values().flat_map(|f| f.get_dependencies()).collect();
+    let deps: Vec<ColumnMeta> = per_table.values().flat_map(|f| f.borrow().get_dependencies()).collect();
 
     let mut references = References::new(deps.as_slice());
     let mut fc = FilterConditions::new(&mut per_table);
@@ -87,9 +80,6 @@ fn main() {
     println!("Second pass...");
     fs::rename(output_file.as_path(), &working_file_path).expect("cannot rename");
     process_file(&working_file_path, output_file.as_path(), &config.allow_data_on_tables, &mut fc, &mut references);
-
-    dbg!(&fc.fully_filtered_tables);
-    dbg!(&fc.pending_tables);
 
     if let Some(dir) = temp_dir {
        let _ = dir.close();

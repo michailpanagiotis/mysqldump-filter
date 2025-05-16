@@ -2,9 +2,10 @@ use cel_interpreter::{Context, Program};
 use cel_interpreter::extractors::This;
 use chrono::NaiveDateTime;
 use itertools::Itertools;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
-use std::rc::Weak;
+use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use crate::sql::{get_column_positions, get_values};
@@ -241,22 +242,26 @@ impl TestValue for LookupTest {
 
 #[derive(Debug)]
 pub struct RowCheck {
+    table: String,
     checks: Vec<Box<dyn TestValue>>,
-    dependencies: Vec<Weak<RowCheck>>,
+    tested_at_pass: Option<usize>,
+    pending_dependencies: Vec<Weak<RefCell<RowCheck>>>,
 }
 
 impl RowCheck {
     pub fn from_config(table: &str, conditions: &[String], data_types: &HashMap<String, sqlparser::ast::DataType>) -> RowCheck {
         RowCheck {
-          checks: conditions.iter().map(|condition| {
+            table: table.to_owned(),
+            checks: conditions.iter().map(|condition| {
                 let item: Box<dyn TestValue> = if condition.contains("->") {
                     Box::new(LookupTest::from_definition(condition, table, data_types))
                 } else {
                     Box::new(CelTest::from_definition(condition, table, data_types))
                 };
                 item
-            }).collect(),
-          dependencies: Vec::new(),
+                }).collect(),
+            tested_at_pass: None,
+            pending_dependencies: Vec::new(),
         }
     }
 
@@ -297,7 +302,30 @@ impl RowCheck {
         dependencies
     }
 
-    pub fn test(&mut self, insert_statement: &str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
+    pub fn link_dependency(&mut self, dependency: &Rc<RefCell<RowCheck>>) {
+        self.pending_dependencies.push(Rc::<RefCell<RowCheck>>::downgrade(dependency))
+    }
+
+    pub fn is_ready_to_be_tested(&self) -> bool {
+        self.pending_dependencies.iter().all(|d| {
+            d.upgrade().unwrap().borrow().has_been_tested()
+        })
+    }
+
+    pub fn has_been_tested(&self) -> bool {
+        self.tested_at_pass.is_some()
+    }
+
+    pub fn test(&mut self, pass: &usize, insert_statement: &str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
+        if !self.is_ready_to_be_tested() {
+            return true
+        }
+        if self.tested_at_pass.is_none() {
+            self.tested_at_pass = Some(pass.to_owned());
+        }
+        if self.tested_at_pass.is_some_and(|x| &x < pass) {
+            return true
+        }
         let values = get_values(insert_statement);
         if !self.has_resolved_positions() {
             self.set_positions(get_column_positions(insert_statement));
@@ -306,9 +334,12 @@ impl RowCheck {
     }
 }
 
-pub fn from_config<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(conditions: I, data_types: &HashMap<String, sqlparser::ast::DataType>) -> HashMap<String, RowCheck> {
+pub fn from_config<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
+    conditions: I,
+    data_types: &HashMap<String, sqlparser::ast::DataType>,
+) -> HashMap<String, Rc<RefCell<RowCheck>>> {
     let c: HashMap<String, Vec<String>> = conditions
         .flat_map(|(table, conditions)| conditions.iter().map(|c| (table.to_string(), c.to_owned())))
         .into_group_map();
-    c.iter().map(|(table, definitions)| (table.to_owned(), RowCheck::from_config(table, definitions, data_types))).collect()
+    c.iter().map(|(table, definitions)| (table.to_owned(), Rc::new(RefCell::new(RowCheck::from_config(table, definitions, data_types))))).collect()
 }
