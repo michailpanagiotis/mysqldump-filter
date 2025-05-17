@@ -35,6 +35,8 @@ pub trait DBColumn {
 }
 
 pub trait TestValue: DBColumn {
+    fn new(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> impl TestValue + 'static where Self: Sized;
+
     fn test(&self, value:&str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool;
 
     fn get_dependencies(&self) -> HashSet<ColumnMeta> {

@@ -73,6 +73,17 @@ impl DBColumn for CelTest {
 }
 
 impl TestValue for CelTest {
+    fn new(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> impl TestValue + 'static where Self: Sized {
+        let program = Program::compile(definition).unwrap();
+        let variables: Vec<String> = program.references().variables().iter().map(|f| f.to_string()).collect();
+        let column = &variables[0];
+
+        CelTest {
+            column_meta: ColumnMeta::new(table, column, data_types),
+            program,
+        }
+    }
+
     fn test(&self, value:&str, _lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
         let context = self.build_context(value);
         match self.program.execute(&context).unwrap() {
@@ -85,19 +96,6 @@ impl TestValue for CelTest {
     }
 }
 
-impl CelTest {
-    fn from_definition(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Self {
-        let program = Program::compile(definition).unwrap();
-        let variables: Vec<String> = program.references().variables().iter().map(|f| f.to_string()).collect();
-        let column = &variables[0];
-
-        CelTest {
-            column_meta: ColumnMeta::new(table, column, data_types),
-            program,
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct LookupTest {
     column_meta: ColumnMeta,
@@ -105,22 +103,6 @@ pub struct LookupTest {
 }
 
 impl LookupTest {
-    fn from_definition(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Self {
-        let mut split = definition.split("->");
-        let (Some(source_column), Some(foreign_key), None) = (split.next(), split.next(), split.next()) else {
-            panic!("cannot parse cascade");
-        };
-
-        let mut split = foreign_key.split('.');
-        let (Some(target_table), Some(target_column), None) = (split.next(), split.next(), split.next()) else {
-            panic!("malformed foreign key {foreign_key}");
-        };
-
-        LookupTest {
-            column_meta: ColumnMeta::new(table, source_column, data_types),
-            target_column_meta: ColumnMeta::new(target_table, target_column, data_types),
-        }
-    }
 
     pub fn get_target_column_meta(&self) -> &ColumnMeta {
         &self.target_column_meta
@@ -138,6 +120,23 @@ impl DBColumn for LookupTest {
 }
 
 impl TestValue for LookupTest {
+    fn new(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> impl TestValue + 'static where Self: Sized {
+        let mut split = definition.split("->");
+        let (Some(source_column), Some(foreign_key), None) = (split.next(), split.next(), split.next()) else {
+            panic!("cannot parse cascade");
+        };
+
+        let mut split = foreign_key.split('.');
+        let (Some(target_table), Some(target_column), None) = (split.next(), split.next(), split.next()) else {
+            panic!("malformed foreign key {foreign_key}");
+        };
+
+        LookupTest {
+            column_meta: ColumnMeta::new(table, source_column, data_types),
+            target_column_meta: ColumnMeta::new(target_table, target_column, data_types),
+        }
+    }
+
     fn test(&self, value:&str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
         let Some(fvs) = lookup_table else { return true };
         let Some(set) = fvs.get(&self.target_column_meta.key) else { return false };
@@ -171,19 +170,21 @@ impl RowCheck {
         }
     }
 
-    pub fn from_config(table: &str, conditions: &[String], data_types: &HashMap<String, sqlparser::ast::DataType>) -> RowCheck {
+    pub fn from_config<'a>(table: &'a str, conditions: &'a [String], data_types: &'a HashMap<String, sqlparser::ast::DataType>) -> RowCheck {
+        let checks: Vec<Box<dyn TestValue>> = conditions.iter().map(|condition| {
+            let item: Box<dyn TestValue> = if condition.contains("->") {
+                Box::new(LookupTest::new(condition, table, data_types))
+            } else {
+                Box::new(CelTest::new(condition, table, data_types))
+            };
+            item
+        }).collect();
+
         RowCheck {
             table: table.to_owned(),
             referenced_columns: HashSet::new(),
             references: HashMap::new(),
-            checks: conditions.iter().map(|condition| {
-                let item: Box<dyn TestValue> = if condition.contains("->") {
-                    Box::new(LookupTest::from_definition(condition, table, data_types))
-                } else {
-                    Box::new(CelTest::from_definition(condition, table, data_types))
-                };
-                item
-                }).collect(),
+            checks,
             tested_at_pass: None,
             pending_dependencies: Vec::new(),
         }
