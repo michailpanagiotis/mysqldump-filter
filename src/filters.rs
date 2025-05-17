@@ -3,7 +3,6 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::checks::RowCheck;
-use crate::references::References;
 
 #[derive(Debug)]
 pub struct FilterConditions<'a> {
@@ -39,7 +38,7 @@ impl<'a> FilterConditions<'a> {
         &mut self,
         sql_statement: &str,
         table: &str,
-        lookup_table: &Option<HashMap<String, HashSet<String>>>,
+        lookup_table: &HashMap<String, HashSet<String>>,
     ) -> bool {
         if !sql_statement.starts_with("INSERT") {
             return true;
@@ -52,26 +51,23 @@ impl<'a> FilterConditions<'a> {
         self.per_table.get_mut(table).expect("cannot find tests for table").borrow_mut().test(&self.current_pass, sql_statement, lookup_table)
     }
 
-    pub fn filter<I: Iterator<Item=(Option<String>, String)>>(&mut self, statements: I, references: &mut References) -> impl Iterator<Item=(Option<String>, String)> {
+    pub fn filter<I: Iterator<Item=(Option<String>, String)>>(&mut self, statements: I) -> impl Iterator<Item=(Option<String>, String)> {
         self.current_pass += 1;
+
+        let lookup: HashMap<String, HashSet<String>> = self.per_table.values().flat_map(|x| x.borrow().get_references()).map(|(k, v)| (k.to_owned(), v.to_owned())).collect();
+
+        dbg!(&lookup);
+
         dbg!(&self.per_table);
         dbg!(self.get_done_tables());
         dbg!(self.get_pending_tables());
         let ready_tables = self.get_ready_tables();
         dbg!(&ready_tables);
-        let lookup = if references.is_empty() { None } else {
-            let lookup = references.get_lookup_table();
-            Some(lookup)
-        };
+
         statements.filter(move |(table_option, statement)| {
             let Some(table) = table_option else { return true };
             if !ready_tables.contains(table) { return true };
-
-            let should_keep = self.test_sql_statement(statement, table, &lookup);
-            if should_keep {
-                references.capture(table, statement);
-            }
-            should_keep
+            self.test_sql_statement(statement, table, &lookup)
         })
     }
 }

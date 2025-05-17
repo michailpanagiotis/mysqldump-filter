@@ -8,7 +8,7 @@ use std::fmt::Debug;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
-use crate::traits::{ColumnMeta, DBColumn, TestValue};
+use crate::traits::{ColumnMeta, DBColumn, ColumnTest};
 use crate::sql::{get_column_positions, get_values};
 
 #[derive(Debug)]
@@ -72,8 +72,8 @@ impl DBColumn for CelTest {
     }
 }
 
-impl TestValue for CelTest {
-    fn new(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> impl TestValue + 'static where Self: Sized {
+impl ColumnTest for CelTest {
+    fn new(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> impl ColumnTest + 'static where Self: Sized {
         let program = Program::compile(definition).unwrap();
         let variables: Vec<String> = program.references().variables().iter().map(|f| f.to_string()).collect();
         let column = &variables[0];
@@ -84,7 +84,7 @@ impl TestValue for CelTest {
         }
     }
 
-    fn test(&self, value:&str, _lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
+    fn test(&self, value:&str, _lookup_table: &HashMap<String, HashSet<String>>) -> bool {
         let context = self.build_context(value);
         match self.program.execute(&context).unwrap() {
             cel_interpreter::objects::Value::Bool(v) => {
@@ -102,13 +102,6 @@ pub struct LookupTest {
     target_column_meta: ColumnMeta,
 }
 
-impl LookupTest {
-
-    pub fn get_target_column_meta(&self) -> &ColumnMeta {
-        &self.target_column_meta
-    }
-}
-
 impl DBColumn for LookupTest {
     fn get_column_meta(&self) -> &ColumnMeta {
         &self.column_meta
@@ -119,8 +112,8 @@ impl DBColumn for LookupTest {
     }
 }
 
-impl TestValue for LookupTest {
-    fn new(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> impl TestValue + 'static where Self: Sized {
+impl ColumnTest for LookupTest {
+    fn new(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> impl ColumnTest + 'static where Self: Sized {
         let mut split = definition.split("->");
         let (Some(source_column), Some(foreign_key), None) = (split.next(), split.next(), split.next()) else {
             panic!("cannot parse cascade");
@@ -137,23 +130,22 @@ impl TestValue for LookupTest {
         }
     }
 
-    fn test(&self, value:&str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
-        let Some(fvs) = lookup_table else { return true };
-        let Some(set) = fvs.get(&self.target_column_meta.key) else { return false };
+    fn test(&self, value:&str, lookup_table: &HashMap<String, HashSet<String>>) -> bool {
+        let Some(set) = lookup_table.get(&self.target_column_meta.key) else { return true };
         set.contains(value)
     }
 
     fn get_dependencies(&self) -> HashSet<ColumnMeta> {
-        HashSet::from([self.get_target_column_meta().to_owned()])
+        HashSet::from([self.target_column_meta.to_owned()])
     }
 }
 
 #[derive(Debug)]
 pub struct RowCheck {
     table: String,
-    checks: Vec<Box<dyn TestValue>>,
+    checks: Vec<Box<dyn ColumnTest>>,
     referenced_columns: HashSet<ColumnMeta>,
-    references: HashMap<String, HashSet<String>>,
+    pub references: HashMap<String, HashSet<String>>,
     tested_at_pass: Option<usize>,
     pending_dependencies: Vec<Weak<RefCell<RowCheck>>>,
 }
@@ -171,8 +163,8 @@ impl RowCheck {
     }
 
     pub fn from_config<'a>(table: &'a str, conditions: &'a [String], data_types: &'a HashMap<String, sqlparser::ast::DataType>) -> RowCheck {
-        let checks: Vec<Box<dyn TestValue>> = conditions.iter().map(|condition| {
-            let item: Box<dyn TestValue> = if condition.contains("->") {
+        let checks: Vec<Box<dyn ColumnTest>> = conditions.iter().map(|condition| {
+            let item: Box<dyn ColumnTest> = if condition.contains("->") {
                 Box::new(LookupTest::new(condition, table, data_types))
             } else {
                 Box::new(CelTest::new(condition, table, data_types))
@@ -231,6 +223,13 @@ impl RowCheck {
         dependencies
     }
 
+    pub fn get_references(&self) -> Vec<(String, HashSet<String>)> {
+        if !self.has_been_tested() {
+            return Vec::new();
+        }
+        self.references.iter().map(|(k, v)| (k.to_owned(), v.to_owned())).collect()
+    }
+
     pub fn link_dependencies(&mut self, per_table: &HashMap<String, Rc<RefCell<RowCheck>>>) {
         let deps = self.get_dependencies();
         for dep in deps {
@@ -249,7 +248,7 @@ impl RowCheck {
         self.tested_at_pass.is_some()
     }
 
-    pub fn test(&mut self, pass: &usize, insert_statement: &str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
+    pub fn test(&mut self, pass: &usize, insert_statement: &str, lookup_table: &HashMap<String, HashSet<String>>) -> bool {
         if self.tested_at_pass.is_none() {
             self.tested_at_pass = Some(pass.to_owned());
         }

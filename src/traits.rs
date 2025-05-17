@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 
-
 pub trait DBColumn {
     fn get_column_meta(&self) -> &ColumnMeta;
     fn get_column_meta_mut(&mut self) -> &mut ColumnMeta;
@@ -34,16 +33,16 @@ pub trait DBColumn {
     }
 }
 
-pub trait TestValue: DBColumn {
-    fn new(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> impl TestValue + 'static where Self: Sized;
+pub trait ColumnTest: DBColumn {
+    fn new(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> impl ColumnTest + 'static where Self: Sized;
 
-    fn test(&self, value:&str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool;
+    fn test(&self, value:&str, lookup_table: &HashMap<String, HashSet<String>>) -> bool;
 
     fn get_dependencies(&self) -> HashSet<ColumnMeta> {
         HashSet::new()
     }
 
-    fn test_row(&self, values: &[&str], lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
+    fn test_row(&self, values: &[&str], lookup_table: &HashMap<String, HashSet<String>>) -> bool {
         self.get_column_position().is_some_and(|p| self.test(values[p], lookup_table))
     }
 }
@@ -70,7 +69,6 @@ impl DBColumn for ColumnMeta {
     }
 }
 
-
 impl ColumnMeta {
     pub fn new(table: &str, column: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Self {
         let key = table.to_owned() + "." + column;
@@ -96,7 +94,7 @@ impl ColumnMeta {
     }
 }
 
-impl core::fmt::Debug for dyn TestValue {
+impl core::fmt::Debug for dyn ColumnTest {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.get_column_meta().fmt(f)
     }
