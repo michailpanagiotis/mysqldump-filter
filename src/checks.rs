@@ -7,8 +7,8 @@ use std::fmt::Debug;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
-use crate::traits::{ColumnMeta, DBColumn, ColumnTest};
-use crate::sql::{get_column_positions, get_values};
+use crate::traits::{ColumnMeta, ColumnPositions, DBColumn, ColumnTest};
+use crate::sql::get_values;
 
 #[derive(Debug)]
 pub struct CelTest {
@@ -144,9 +144,19 @@ pub struct RowCheck {
     column_positions: Option<HashMap<String, usize>>,
     checks: Vec<Box<dyn ColumnTest>>,
     referenced_columns: HashSet<ColumnMeta>,
-    pub references: HashMap<String, HashSet<String>>,
+    references: HashMap<String, HashSet<String>>,
     tested_at_pass: Option<usize>,
     pending_dependencies: Vec<Weak<RefCell<RowCheck>>>,
+}
+
+impl ColumnPositions for RowCheck {
+    fn get_column_positions(&self) -> &Option<HashMap<String, usize>> {
+        &self.column_positions
+    }
+
+    fn set_column_positions(&mut self, positions: HashMap<String, usize>) {
+        self.column_positions = Some(positions.to_owned());
+    }
 }
 
 impl RowCheck {
@@ -192,20 +202,6 @@ impl RowCheck {
         self.checks.is_empty()
     }
 
-    pub fn has_resolved_positions(&self) -> bool {
-        self.column_positions.is_some()
-    }
-
-    pub fn get_column_position(&self, column_name: &str) -> Option<usize> {
-        let positions = self.column_positions.as_ref()?;
-        Some(positions[column_name])
-    }
-
-    pub fn set_positions(&mut self, positions: HashMap<String, usize>) {
-        self.column_positions = Some(positions.to_owned());
-        assert!(self.has_resolved_positions());
-    }
-
     pub fn get_dependencies(&self) -> HashSet<ColumnMeta> {
         let mut dependencies = HashSet::new();
         for condition in self.checks.iter() {
@@ -245,9 +241,8 @@ impl RowCheck {
         if self.tested_at_pass.is_none() {
             self.tested_at_pass = Some(pass.to_owned());
         }
-        if !self.has_resolved_positions() {
-            self.set_positions(get_column_positions(insert_statement));
-        }
+
+        self.resolve_column_positions(insert_statement);
 
         let values = get_values(insert_statement);
 

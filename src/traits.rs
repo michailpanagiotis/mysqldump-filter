@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 
+use crate::sql::get_column_positions;
+
 pub trait DBColumn {
     fn get_column_meta(&self) -> &ColumnMeta;
     fn get_column_meta_mut(&mut self) -> &mut ColumnMeta;
@@ -33,6 +35,28 @@ pub trait DBColumn {
     }
 }
 
+pub trait ColumnPositions {
+    fn get_column_positions(&self) -> &Option<HashMap<String, usize>>;
+
+    fn set_column_positions(&mut self, positions: HashMap<String, usize>);
+
+    fn resolve_column_positions(&mut self, insert_statement: &str) {
+        if !self.has_resolved_positions() {
+            self.set_column_positions(get_column_positions(insert_statement));
+            assert!(self.has_resolved_positions());
+        }
+    }
+
+    fn get_column_position(&self, column_name: &str) -> Option<usize> {
+        let positions = self.get_column_positions().as_ref()?;
+        Some(positions[column_name])
+    }
+
+    fn has_resolved_positions(&self) -> bool {
+        self.get_column_positions().is_some()
+    }
+}
+
 pub trait ColumnTest: DBColumn {
     fn new(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> impl ColumnTest + 'static where Self: Sized;
 
@@ -40,10 +64,6 @@ pub trait ColumnTest: DBColumn {
 
     fn get_dependencies(&self) -> HashSet<ColumnMeta> {
         HashSet::new()
-    }
-
-    fn test_row(&self, values: &[&str], lookup_table: &HashMap<String, HashSet<String>>) -> bool {
-        self.get_column_position().is_some_and(|p| self.test(values[p], lookup_table))
     }
 }
 
