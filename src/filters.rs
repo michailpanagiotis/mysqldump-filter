@@ -18,10 +18,6 @@ impl<'a> FilterConditions<'a> {
         }
     }
 
-    fn has_table_conditions(&self, table: &str) -> bool {
-        self.per_table.contains_key(table) && !self.per_table[table].borrow().is_empty()
-    }
-
     fn get_done_tables(&self) -> HashSet<String> {
         self.per_table.iter().filter(|(_, row_check)| row_check.borrow().has_been_tested()).map(|(table, _)| table.to_owned()).collect()
     }
@@ -44,7 +40,7 @@ impl<'a> FilterConditions<'a> {
             return true;
         }
 
-        if !self.has_table_conditions(table) {
+        if !self.per_table.contains_key(table) {
             return true;
         }
 

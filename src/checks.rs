@@ -7,7 +7,7 @@ use std::fmt::Debug;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
-use crate::traits::{ColumnMeta, ColumnPositions, DBColumn, ColumnTest};
+use crate::traits::{ColumnMeta, ColumnPositions, DBColumn, ColumnTest, ReferenceTracker};
 use crate::sql::get_values;
 
 #[derive(Debug)]
@@ -71,9 +71,10 @@ impl ColumnTest for CelTest {
         let program = Program::compile(definition).unwrap();
         let variables: Vec<String> = program.references().variables().iter().map(|f| f.to_string()).collect();
         let column = &variables[0];
+        let column_meta = ColumnMeta::new(table, column, data_types);
 
         CelTest {
-            column_meta: ColumnMeta::new(table, column, data_types),
+            column_meta,
             program,
         }
     }
@@ -109,13 +110,15 @@ impl ColumnTest for LookupTest {
             panic!("cannot parse cascade");
         };
 
+        let column_meta = ColumnMeta::new(table, source_column, data_types);
+
         let mut split = foreign_key.split('.');
         let (Some(target_table), Some(target_column), None) = (split.next(), split.next(), split.next()) else {
             panic!("malformed foreign key {foreign_key}");
         };
 
         LookupTest {
-            column_meta: ColumnMeta::new(table, source_column, data_types),
+            column_meta,
             target_column_meta: ColumnMeta::new(target_table, target_column, data_types),
         }
     }
@@ -133,6 +136,7 @@ impl ColumnTest for LookupTest {
 #[derive(Debug)]
 pub struct RowCheck {
     table: String,
+    // trait ColumnPositions
     column_positions: Option<HashMap<String, usize>>,
     checks: Vec<Box<dyn ColumnTest>>,
     referenced_columns: HashSet<ColumnMeta>,
@@ -151,19 +155,21 @@ impl ColumnPositions for RowCheck {
     }
 }
 
-impl RowCheck {
-    pub fn from_referenced_column(table: &str, referenced_column: &ColumnMeta) -> RowCheck {
-        RowCheck {
-            table: table.to_owned(),
-            column_positions: None,
-            referenced_columns: HashSet::from([referenced_column.to_owned()]),
-            references: HashMap::from([(referenced_column.key.to_owned(), HashSet::new())]),
-            checks: Vec::new(),
-            tested_at_pass: None,
-            pending_dependencies: Vec::new(),
-        }
+impl ReferenceTracker for RowCheck {
+    fn get_referenced_columns(&self) -> &HashSet<ColumnMeta> {
+        &self.referenced_columns
     }
 
+    fn get_referenced_columns_mut(&mut self) -> &mut HashSet<ColumnMeta> {
+        &mut self.referenced_columns
+    }
+
+    fn get_references_mut(&mut self) -> &mut HashMap<String, HashSet<String>> {
+        &mut self.references
+    }
+}
+
+impl RowCheck {
     pub fn from_config<'a>(table: &'a str, conditions: &'a [String], data_types: &'a HashMap<String, sqlparser::ast::DataType>) -> RowCheck {
         let checks: Vec<Box<dyn ColumnTest>> = conditions.iter().map(|condition| {
             let item: Box<dyn ColumnTest> = if condition.contains("->") {
@@ -185,13 +191,11 @@ impl RowCheck {
         }
     }
 
-    pub fn add_referenced_column(&mut self, dep: &ColumnMeta) {
-        self.referenced_columns.insert(dep.to_owned());
-        self.references.insert(dep.key.to_owned(), HashSet::new());
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.checks.is_empty()
+    pub fn get_references(&self) -> Vec<(String, HashSet<String>)> {
+        if !self.has_been_tested() {
+            return Vec::new();
+        }
+        self.references.iter().map(|(k, v)| (k.to_owned(), v.to_owned())).collect()
     }
 
     pub fn get_dependencies(&self) -> HashSet<ColumnMeta> {
@@ -202,13 +206,6 @@ impl RowCheck {
             }
         }
         dependencies
-    }
-
-    pub fn get_references(&self) -> Vec<(String, HashSet<String>)> {
-        if !self.has_been_tested() {
-            return Vec::new();
-        }
-        self.references.iter().map(|(k, v)| (k.to_owned(), v.to_owned())).collect()
     }
 
     pub fn link_dependencies(&mut self, per_table: &HashMap<String, Rc<RefCell<RowCheck>>>) {
@@ -244,10 +241,7 @@ impl RowCheck {
         });
 
         if all_checks_passed {
-            for column in self.referenced_columns.iter() {
-                let value = values[self.get_column_position(column.get_column_name()).unwrap()].to_owned();
-                self.references.get_mut(&column.key).unwrap().insert(value);
-            }
+            self.capture_references(&values);
         }
 
         all_checks_passed
@@ -271,7 +265,9 @@ pub fn from_config<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
         if result.contains_key(&dep.table) {
             result[&dep.table].borrow_mut().add_referenced_column(dep);
         } else {
-            result.insert(dep.table.to_owned(), Rc::new(RefCell::new(RowCheck::from_referenced_column(&dep.table, dep))));
+            let mut row_check = RowCheck::from_config(&dep.table, &[], &HashMap::new());
+            row_check.add_referenced_column(dep);
+            result.insert(dep.table.to_owned(), Rc::new(RefCell::new(row_check)));
         }
     }
 

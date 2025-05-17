@@ -35,6 +35,37 @@ pub trait ColumnPositions {
     fn has_resolved_positions(&self) -> bool {
         self.get_column_positions().is_some()
     }
+
+    fn pick_values<'a>(&self, columns: &HashSet<ColumnMeta>, values: &'a [&'a str]) -> HashMap<String, &'a str> {
+        let Some(positions) = self.get_column_positions() else { return HashMap::new() };
+        columns.iter().map(|c| (c.key.to_owned(), values[positions[&c.column]])).collect()
+    }
+}
+
+pub trait ReferenceTracker: ColumnPositions {
+    fn get_referenced_columns(&self) -> &HashSet<ColumnMeta>;
+    fn get_referenced_columns_mut(&mut self) -> &mut HashSet<ColumnMeta>;
+    fn get_references_mut(&mut self) -> &mut HashMap<String, HashSet<String>>;
+
+    fn add_referenced_column(&mut self, dep: &ColumnMeta) {
+        self.get_referenced_columns_mut().insert(dep.to_owned());
+        self.get_references_mut().insert(dep.key.to_owned(), HashSet::new());
+    }
+
+    fn merge(&mut self, values: HashMap<String, String>) {
+        let references = self.get_references_mut();
+        for (key, value) in values.into_iter() {
+            references.get_mut(&key).unwrap().insert(value);
+        }
+    }
+
+    fn capture_references(&mut self, values: &[&str]) {
+        let to_insert = self.pick_values(self.get_referenced_columns(), values);
+        let references = self.get_references_mut();
+        for (key, value) in to_insert.into_iter() {
+            references.get_mut(&key).unwrap().insert(value.to_owned());
+        }
+    }
 }
 
 pub trait ColumnTest: DBColumn {
