@@ -5,7 +5,6 @@ use crate::sql::get_column_positions;
 
 pub trait DBColumn {
     fn get_column_meta(&self) -> &ColumnMeta;
-    fn get_column_meta_mut(&mut self) -> &mut ColumnMeta;
 
     fn get_column_name(&self) -> &str {
         &self.get_column_meta().column
@@ -13,25 +12,6 @@ pub trait DBColumn {
 
     fn get_data_type(&self) -> &sqlparser::ast::DataType {
         &self.get_column_meta().data_type
-    }
-
-    fn get_column_position(&self) -> &Option<usize> {
-        &self.get_column_meta().position
-    }
-
-    fn has_resolved_position(&self) -> bool {
-        self.get_column_meta().has_resolved_position()
-    }
-
-    fn set_position(&mut self, pos: usize) {
-        self.get_column_meta_mut().set_position(pos);
-    }
-
-    fn set_position_from_column_positions(&mut self, positions: &HashMap<String, usize>) {
-        match positions.get(self.get_column_name()) {
-            Some(pos) => self.set_position(*pos),
-            None => panic!("{}", format!("unknown column {}", self.get_column_name())),
-        }
     }
 }
 
@@ -76,15 +56,10 @@ pub struct ColumnMeta {
     pub table: String,
     pub column: String,
     data_type: sqlparser::ast::DataType,
-    position: Option<usize>,
 }
 
 impl DBColumn for ColumnMeta {
     fn get_column_meta(&self) -> &ColumnMeta {
-        self
-    }
-
-    fn get_column_meta_mut(&mut self) -> &mut ColumnMeta {
         self
     }
 }
@@ -101,16 +76,7 @@ impl ColumnMeta {
             table: table.to_owned(),
             column: column.to_string(),
             data_type,
-            position: None,
         }
-    }
-
-    fn set_position(&mut self, pos: usize) {
-        self.position = Some(pos);
-    }
-
-    fn has_resolved_position(&self) -> bool {
-        self.position.is_some()
     }
 }
 
