@@ -8,91 +8,8 @@ use std::fmt::Debug;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
+use crate::traits::{ColumnMeta, DBColumn, TestValue};
 use crate::sql::{get_column_positions, get_values};
-
-#[derive(Clone)]
-#[derive(Debug)]
-#[derive(Hash)]
-#[derive(Eq, PartialEq)]
-pub struct ColumnMeta {
-    pub key: String,
-    pub table: String,
-    pub column: String,
-    data_type: sqlparser::ast::DataType,
-    position: Option<usize>,
-}
-
-impl ColumnMeta {
-    fn new(table: &str, column: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Self {
-        let key = table.to_owned() + "." + column;
-        let data_type = match data_types.get(&key) {
-            None => panic!("{}", format!("cannot find data type for {key}")),
-            Some(data_type) => data_type.to_owned()
-        };
-        Self {
-            key,
-            table: table.to_owned(),
-            column: column.to_string(),
-            data_type,
-            position: None,
-        }
-    }
-
-    fn set_position(&mut self, pos: usize) {
-        self.position = Some(pos);
-    }
-
-    fn has_resolved_position(&self) -> bool {
-        self.position.is_some()
-    }
-}
-
-pub trait TestValue {
-    fn get_column_meta(&self) -> &ColumnMeta;
-    fn get_column_meta_mut(&mut self) -> &mut ColumnMeta;
-    fn test(&self, value:&str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool;
-
-    fn get_column_name(&self) -> &str {
-        &self.get_column_meta().column
-    }
-
-    fn get_data_type(&self) -> &sqlparser::ast::DataType {
-        &self.get_column_meta().data_type
-    }
-
-    fn get_column_position(&self) -> &Option<usize> {
-        &self.get_column_meta().position
-    }
-
-    fn get_dependencies(&self) -> HashSet<ColumnMeta> {
-        HashSet::new()
-    }
-
-    fn has_resolved_position(&self) -> bool {
-        self.get_column_meta().has_resolved_position()
-    }
-
-    fn set_position(&mut self, pos: usize) {
-        self.get_column_meta_mut().set_position(pos);
-    }
-
-    fn set_position_from_column_positions(&mut self, positions: &HashMap<String, usize>) {
-        match positions.get(self.get_column_name()) {
-            Some(pos) => self.set_position(*pos),
-            None => panic!("{}", format!("unknown column {}", self.get_column_name())),
-        }
-    }
-
-    fn test_row(&self, values: &[&str], lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
-        self.get_column_position().is_some_and(|p| self.test(values[p], lookup_table))
-    }
-}
-
-impl core::fmt::Debug for dyn TestValue {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        self.get_column_meta().fmt(f)
-    }
-}
 
 #[derive(Debug)]
 pub struct CelTest {
@@ -145,7 +62,7 @@ impl CelTest {
     }
 }
 
-impl TestValue for CelTest {
+impl DBColumn for CelTest {
     fn get_column_meta(&self) -> &ColumnMeta {
         &self.column_meta
     }
@@ -153,7 +70,9 @@ impl TestValue for CelTest {
     fn get_column_meta_mut(&mut self) -> &mut ColumnMeta {
         &mut self.column_meta
     }
+}
 
+impl TestValue for CelTest {
     fn test(&self, value:&str, _lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
         let context = self.build_context(value);
         match self.program.execute(&context).unwrap() {
@@ -208,7 +127,7 @@ impl LookupTest {
     }
 }
 
-impl TestValue for LookupTest {
+impl DBColumn for LookupTest {
     fn get_column_meta(&self) -> &ColumnMeta {
         &self.column_meta
     }
@@ -216,7 +135,9 @@ impl TestValue for LookupTest {
     fn get_column_meta_mut(&mut self) -> &mut ColumnMeta {
         &mut self.column_meta
     }
+}
 
+impl TestValue for LookupTest {
     fn test(&self, value:&str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
         let Some(fvs) = lookup_table else { return true };
         let Some(set) = fvs.get(&self.target_column_meta.key) else { return false };
@@ -329,7 +250,6 @@ impl RowCheck {
 
     pub fn test(&mut self, pass: &usize, insert_statement: &str, lookup_table: &Option<HashMap<String, HashSet<String>>>) -> bool {
         if self.tested_at_pass.is_none() {
-            dbg!("MARKING", &self.table);
             self.tested_at_pass = Some(pass.to_owned());
         }
         let values = get_values(insert_statement);
@@ -340,7 +260,7 @@ impl RowCheck {
 
         if has_passed {
             for column in self.referenced_columns.iter() {
-                self.references.get_mut(&column.key).unwrap().insert(values[column.position.unwrap()].to_owned());
+                self.references.get_mut(&column.key).unwrap().insert(values[column.get_column_position().unwrap()].to_owned());
             }
         }
 

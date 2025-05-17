@@ -9,8 +9,10 @@ mod checks;
 mod filters;
 mod references;
 mod sql;
+mod traits;
 
-use checks::{from_config, ColumnMeta};
+use traits::ColumnMeta;
+use checks::from_config;
 use filters::FilterConditions;
 use sql::{get_data_types, read_sql_file, write_sql_file};
 use references::References;

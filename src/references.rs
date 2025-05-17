@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 
-use crate::checks::ColumnMeta;
+use crate::traits::ColumnMeta;
 use crate::sql::{get_column_positions, get_values};
 
 #[derive(Debug)]
