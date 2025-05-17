@@ -1,5 +1,4 @@
 use cel_interpreter::{Context, Program};
-use cel_interpreter::extractors::This;
 use chrono::NaiveDateTime;
 use itertools::Itertools;
 use std::cell::RefCell;
@@ -17,25 +16,24 @@ pub struct CelTest {
     program: Program,
 }
 
-fn parse_date(s: &str) -> i64 {
-    let to_parse = if s.len() == 10 { s.to_owned() + " 00:00:00" } else { s.to_owned() };
-    let val = NaiveDateTime::parse_from_str(&to_parse, "%Y-%m-%d %H:%M:%S").unwrap_or_else(|_| panic!("cannot parse timestamp {s}"));
-    let timestamp: i64 = val.and_utc().timestamp();
-    timestamp
-}
-
-fn parse_int(s: &str) -> i64 {
-    s.parse().unwrap_or_else(|_| panic!("cannot parse int {s}"))
-}
-
-fn timestamp(This(s): This<Arc<String>>) -> i64 {
-    parse_date(&s)
-}
-
 impl CelTest {
+    fn parse_int(s: &str) -> i64 {
+        s.parse().unwrap_or_else(|_| panic!("cannot parse int {s}"))
+    }
+
+    fn parse_date(s: &str) -> i64 {
+        let to_parse = if s.len() == 10 { s.to_owned() + " 00:00:00" } else { s.to_owned() };
+        NaiveDateTime::parse_from_str(&to_parse, "%Y-%m-%d %H:%M:%S")
+            .unwrap_or_else(|_| panic!("cannot parse timestamp {s}"))
+            .and_utc()
+            .timestamp()
+    }
+
     fn build_context(&self, other_value: &str) -> Context {
         let mut context = Context::default();
-        context.add_function("timestamp", timestamp);
+        context.add_function("timestamp", |d: Arc<String>| {
+            CelTest::parse_date(&d)
+        });
 
         let column_name = self.get_column_name();
         let data_type = self.get_data_type();
@@ -45,15 +43,15 @@ impl CelTest {
             return context;
         }
 
-        match data_type {
+        let _ = match data_type {
             sqlparser::ast::DataType::TinyInt(_) | sqlparser::ast::DataType::Int(_) => {
-                context.add_variable(column_name, parse_int(other_value)).unwrap();
+                context.add_variable(column_name, CelTest::parse_int(other_value))
             },
             sqlparser::ast::DataType::Datetime(_) | sqlparser::ast::DataType::Date => {
-                context.add_variable(column_name, parse_date(other_value)).unwrap();
+                context.add_variable(column_name, CelTest::parse_date(other_value))
             },
             sqlparser::ast::DataType::Enum(_, _) => {
-                context.add_variable(column_name, other_value).unwrap();
+                context.add_variable(column_name, other_value)
             },
             _ => panic!("{}", format!("cannot parse {other_value} for {data_type}"))
         };
@@ -143,6 +141,7 @@ impl ColumnTest for LookupTest {
 #[derive(Debug)]
 pub struct RowCheck {
     table: String,
+    column_positions: Option<HashMap<String, usize>>,
     checks: Vec<Box<dyn ColumnTest>>,
     referenced_columns: HashSet<ColumnMeta>,
     pub references: HashMap<String, HashSet<String>>,
@@ -154,6 +153,7 @@ impl RowCheck {
     pub fn from_referenced_column(table: &str, referenced_column: &ColumnMeta) -> RowCheck {
         RowCheck {
             table: table.to_owned(),
+            column_positions: None,
             referenced_columns: HashSet::from([referenced_column.to_owned()]),
             references: HashMap::from([(referenced_column.key.to_owned(), HashSet::new())]),
             checks: Vec::new(),
@@ -174,6 +174,7 @@ impl RowCheck {
 
         RowCheck {
             table: table.to_owned(),
+            column_positions: None,
             referenced_columns: HashSet::new(),
             references: HashMap::new(),
             checks,
@@ -192,24 +193,16 @@ impl RowCheck {
     }
 
     pub fn has_resolved_positions(&self) -> bool {
-        self.checks.iter().all(|t| {
-            t.has_resolved_position()
-        }) && self.referenced_columns.iter().all(|c| {
-            c.has_resolved_position()
-        })
+        self.column_positions.is_some()
+    }
+
+    pub fn get_column_position(&self, column_name: &str) -> Option<usize> {
+        let positions = self.column_positions.as_ref()?;
+        Some(positions[column_name])
     }
 
     pub fn set_positions(&mut self, positions: HashMap<String, usize>) {
-        for condition in self.checks.iter_mut() {
-            condition.set_position_from_column_positions(&positions);
-        }
-
-        self.referenced_columns = self.referenced_columns.iter().map(|x| {
-            let mut col = x.to_owned();
-            col.set_position(positions[&col.column]);
-            col
-        }).collect();
-
+        self.column_positions = Some(positions.to_owned());
         assert!(self.has_resolved_positions());
     }
 
@@ -252,19 +245,25 @@ impl RowCheck {
         if self.tested_at_pass.is_none() {
             self.tested_at_pass = Some(pass.to_owned());
         }
-        let values = get_values(insert_statement);
         if !self.has_resolved_positions() {
             self.set_positions(get_column_positions(insert_statement));
         }
-        let has_passed = self.checks.iter().all(|t| t.test_row(&values, lookup_table));
 
-        if has_passed {
+        let values = get_values(insert_statement);
+
+        let all_checks_passed = self.checks.iter().all(|t| {
+            let value = values[self.get_column_position(t.get_column_name()).unwrap()];
+            t.test(value, lookup_table)
+        });
+
+        if all_checks_passed {
             for column in self.referenced_columns.iter() {
-                self.references.get_mut(&column.key).unwrap().insert(values[column.get_column_position().unwrap()].to_owned());
+                let value = values[self.get_column_position(column.get_column_name()).unwrap()].to_owned();
+                self.references.get_mut(&column.key).unwrap().insert(value);
             }
         }
 
-        has_passed
+        all_checks_passed
     }
 }
 
