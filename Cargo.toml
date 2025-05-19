@@ -21,10 +21,12 @@ codegen-units = 16
 rpath = false
 
 [dependencies]
+anyhow = "1.0.98"
 cel-interpreter = "0.9.0"
 chrono = "0.4.41"
 clap = { version = "4.5.32", features = ["derive"] }
 config = "0.15.11"
+derive_more = { version = "2.0.1", features = ["full"] }
 itertools = "0.14.0"
 lazy_static = "1.5.0"
 nom = "8.0.0"

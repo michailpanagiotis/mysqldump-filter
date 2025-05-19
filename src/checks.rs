@@ -7,7 +7,7 @@ use std::fmt::Debug;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
-use crate::traits::{ColumnMeta, ColumnPositions, DBColumn, ColumnTest, ReferenceTracker};
+use crate::traits::{ColumnMeta, ColumnPositions, DBColumn, ColumnTest, ReferenceTracker, NoDataTypeError};
 use crate::sql::get_values;
 
 #[derive(Debug)]
@@ -67,16 +67,16 @@ impl DBColumn for CelTest {
 }
 
 impl ColumnTest for CelTest {
-    fn new(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> impl ColumnTest + 'static where Self: Sized {
+    fn new(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<impl ColumnTest + 'static, NoDataTypeError> where Self: Sized {
         let program = Program::compile(definition).unwrap();
         let variables: Vec<String> = program.references().variables().iter().map(|f| f.to_string()).collect();
         let column = &variables[0];
-        let column_meta = ColumnMeta::new(table, column, data_types);
+        let column_meta = ColumnMeta::new(table, column, data_types)?;
 
-        CelTest {
+        Ok(CelTest {
             column_meta,
             program,
-        }
+        })
     }
 
     fn test(&self, value:&str, _lookup_table: &HashMap<String, HashSet<String>>) -> bool {
@@ -104,23 +104,23 @@ impl DBColumn for LookupTest {
 }
 
 impl ColumnTest for LookupTest {
-    fn new(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> impl ColumnTest + 'static where Self: Sized {
+    fn new(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<impl ColumnTest + 'static, NoDataTypeError> where Self: Sized {
         let mut split = definition.split("->");
         let (Some(source_column), Some(foreign_key), None) = (split.next(), split.next(), split.next()) else {
             panic!("cannot parse cascade");
         };
 
-        let column_meta = ColumnMeta::new(table, source_column, data_types);
+        let column_meta = ColumnMeta::new(table, source_column, data_types)?;
 
         let mut split = foreign_key.split('.');
         let (Some(target_table), Some(target_column), None) = (split.next(), split.next(), split.next()) else {
             panic!("malformed foreign key {foreign_key}");
         };
 
-        LookupTest {
+        Ok(LookupTest {
             column_meta,
-            target_column_meta: ColumnMeta::new(target_table, target_column, data_types),
-        }
+            target_column_meta: ColumnMeta::new(target_table, target_column, data_types)?,
+        })
     }
 
     fn test(&self, value:&str, lookup_table: &HashMap<String, HashSet<String>>) -> bool {
@@ -170,17 +170,18 @@ impl ReferenceTracker for RowCheck {
 }
 
 impl RowCheck {
-    pub fn from_config<'a>(table: &'a str, conditions: &'a [String], data_types: &'a HashMap<String, sqlparser::ast::DataType>) -> RowCheck {
-        let checks: Vec<Box<dyn ColumnTest>> = conditions.iter().map(|condition| {
+    pub fn from_config<'a>(table: &'a str, conditions: &'a [String], data_types: &'a HashMap<String, sqlparser::ast::DataType>) -> Result<RowCheck, NoDataTypeError> {
+        let mut checks: Vec<Box<dyn ColumnTest>> = Vec::new();
+        for condition in conditions.iter() {
             let item: Box<dyn ColumnTest> = if condition.contains("->") {
-                Box::new(LookupTest::new(condition, table, data_types))
+                Box::new(LookupTest::new(condition, table, data_types)?)
             } else {
-                Box::new(CelTest::new(condition, table, data_types))
+                Box::new(CelTest::new(condition, table, data_types)?)
             };
-            item
-        }).collect();
+            checks.push(item);
+        }
 
-        RowCheck {
+        Ok(RowCheck {
             table: table.to_owned(),
             column_positions: None,
             referenced_columns: HashSet::new(),
@@ -188,7 +189,7 @@ impl RowCheck {
             checks,
             tested_at_pass: None,
             pending_dependencies: Vec::new(),
-        }
+        })
     }
 
     pub fn get_references(&self) -> Vec<(String, HashSet<String>)> {
@@ -251,13 +252,14 @@ impl RowCheck {
 pub fn from_config<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
     conditions: I,
     data_types: &HashMap<String, sqlparser::ast::DataType>,
-) -> HashMap<String, Rc<RefCell<RowCheck>>> {
+) -> Result<HashMap<String, Rc<RefCell<RowCheck>>>, NoDataTypeError> {
     let c: HashMap<String, Vec<String>> = conditions
         .flat_map(|(table, conditions)| conditions.iter().map(|c| (table.to_string(), c.to_owned())))
         .into_group_map();
-    let mut result: HashMap<String, Rc<RefCell<RowCheck>>> = c.iter()
-        .map(|(table, definitions)| (table.to_owned(), Rc::new(RefCell::new(RowCheck::from_config(table, definitions, data_types)))))
-        .collect();
+    let mut result: HashMap<String, Rc<RefCell<RowCheck>>> = HashMap::new();
+    for (table, definitions) in c.iter() {
+        result.insert(table.to_owned(), Rc::new(RefCell::new(RowCheck::from_config(table, definitions, data_types)?)));
+    }
 
     let deps: HashSet<ColumnMeta> = result.values().flat_map(|x| x.borrow().get_dependencies()).collect();
 
@@ -265,7 +267,7 @@ pub fn from_config<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
         if result.contains_key(&dep.table) {
             result[&dep.table].borrow_mut().add_referenced_column(dep);
         } else {
-            let mut row_check = RowCheck::from_config(&dep.table, &[], &HashMap::new());
+            let mut row_check = RowCheck::from_config(&dep.table, &[], &HashMap::new())?;
             row_check.add_referenced_column(dep);
             result.insert(dep.table.to_owned(), Rc::new(RefCell::new(row_check)));
         }
@@ -275,5 +277,5 @@ pub fn from_config<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
         row_check.borrow_mut().link_dependencies(&result);
     }
 
-    result
+    Ok(result)
 }

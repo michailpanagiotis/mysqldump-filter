@@ -69,7 +69,7 @@ pub trait ReferenceTracker: ColumnPositions {
 }
 
 pub trait ColumnTest: DBColumn {
-    fn new(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> impl ColumnTest + 'static where Self: Sized;
+    fn new(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<impl ColumnTest + 'static, NoDataTypeError> where Self: Sized;
 
     fn test(&self, value:&str, lookup_table: &HashMap<String, HashSet<String>>) -> bool;
 
@@ -77,6 +77,9 @@ pub trait ColumnTest: DBColumn {
         HashSet::new()
     }
 }
+
+#[derive(Debug)]
+pub struct NoDataTypeError;
 
 #[derive(Clone)]
 #[derive(Debug)]
@@ -96,18 +99,15 @@ impl DBColumn for ColumnMeta {
 }
 
 impl ColumnMeta {
-    pub fn new(table: &str, column: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Self {
+    pub fn new(table: &str, column: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<Self, NoDataTypeError> {
         let key = table.to_owned() + "." + column;
-        let data_type = match data_types.get(&key) {
-            None => panic!("{}", format!("cannot find data type for {key}")),
-            Some(data_type) => data_type.to_owned()
-        };
-        Self {
+        let Some(data_type) = data_types.get(&key) else { return Err(NoDataTypeError) };
+        Ok(Self {
             key,
             table: table.to_owned(),
             column: column.to_string(),
-            data_type,
-        }
+            data_type: data_type.to_owned(),
+        })
     }
 }
 
