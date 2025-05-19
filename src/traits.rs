@@ -74,7 +74,7 @@ pub trait ColumnTest: DBColumn {
 
     fn test(&self, value:&str, lookup_table: &HashMap<String, HashSet<String>>) -> bool;
 
-    fn get_dependencies(&self) -> HashSet<ColumnMeta> {
+    fn get_column_dependencies(&self) -> HashSet<ColumnMeta> {
         HashSet::new()
     }
 }

@@ -69,7 +69,7 @@ fn main() -> Result<(), NoDataTypeError> {
     let config = Config::from_file(config_file.as_path());
     let mut per_table = from_config(config.filters.iter().chain(&config.cascades), &data_types)?;
 
-    let deps: Vec<ColumnMeta> = per_table.values().flat_map(|f| f.borrow().get_dependencies()).collect();
+    let deps: Vec<ColumnMeta> = per_table.values().flat_map(|f| f.borrow().get_column_dependencies()).collect();
 
     let mut fc = FilterConditions::new(&mut per_table);
 

@@ -128,7 +128,7 @@ impl ColumnTest for LookupTest {
         set.contains(value)
     }
 
-    fn get_dependencies(&self) -> HashSet<ColumnMeta> {
+    fn get_column_dependencies(&self) -> HashSet<ColumnMeta> {
         HashSet::from([self.target_column_meta.to_owned()])
     }
 }
@@ -199,10 +199,10 @@ impl RowCheck {
     }
 
 
-    pub fn get_dependencies(&self) -> HashSet<ColumnMeta> {
+    pub fn get_column_dependencies(&self) -> HashSet<ColumnMeta> {
         let mut dependencies = HashSet::new();
         for condition in self.checks.iter() {
-            for dependency in condition.get_dependencies() {
+            for dependency in condition.get_column_dependencies() {
                 dependencies.insert(dependency);
             }
         }
@@ -210,7 +210,7 @@ impl RowCheck {
     }
 
     pub fn link_dependencies(&mut self, per_table: &HashMap<String, Rc<RefCell<RowCheck>>>) {
-        let deps = self.get_dependencies();
+        let deps = self.get_column_dependencies();
         for dep in deps {
             let target = &per_table[&dep.table];
             self.pending_dependencies.push(Rc::<RefCell<RowCheck>>::downgrade(target))
@@ -223,14 +223,19 @@ impl RowCheck {
         })
     }
 
+    pub fn set_fulfilled(&mut self, depth: &usize) {
+        self.tested_at_pass = Some(depth.to_owned());
+    }
+
     pub fn has_been_fulfilled(&self) -> bool {
         self.tested_at_pass.is_some()
     }
 
     pub fn fulfill_dependency(&mut self, depth: &usize) {
-        if self.tested_at_pass.is_none() {
-            self.tested_at_pass = Some(depth.to_owned());
+        if !self.has_been_fulfilled() {
+            self.set_fulfilled(depth);
         }
+        assert!(self.has_been_fulfilled());
     }
 
     pub fn test(&mut self, pass: &usize, insert_statement: &str, lookup_table: &HashMap<String, HashSet<String>>) -> bool {
@@ -265,7 +270,7 @@ pub fn from_config<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
         result.insert(table.to_owned(), Rc::new(RefCell::new(RowCheck::from_config(table, definitions, data_types)?)));
     }
 
-    let deps: HashSet<ColumnMeta> = result.values().flat_map(|x| x.borrow().get_dependencies()).collect();
+    let deps: HashSet<ColumnMeta> = result.values().flat_map(|x| x.borrow().get_column_dependencies()).collect();
 
     for dep in deps.iter() {
         if result.contains_key(&dep.table) {
