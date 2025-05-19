@@ -45,6 +45,7 @@ pub trait ColumnPositions {
 pub trait ReferenceTracker: ColumnPositions {
     fn get_referenced_columns(&self) -> &HashSet<ColumnMeta>;
     fn get_referenced_columns_mut(&mut self) -> &mut HashSet<ColumnMeta>;
+    fn get_references(&self) -> &HashMap<String, HashSet<String>>;
     fn get_references_mut(&mut self) -> &mut HashMap<String, HashSet<String>>;
 
     fn add_referenced_column(&mut self, dep: &ColumnMeta) {

@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::checks::RowCheck;
+use crate::traits::ReferenceTracker;
 
 #[derive(Debug)]
 pub struct FilterConditions<'a> {
@@ -19,11 +20,11 @@ impl<'a> FilterConditions<'a> {
     }
 
     fn get_done_tables(&self) -> HashSet<String> {
-        self.per_table.iter().filter(|(_, row_check)| row_check.borrow().has_been_tested()).map(|(table, _)| table.to_owned()).collect()
+        self.per_table.iter().filter(|(_, row_check)| row_check.borrow().has_been_fulfilled()).map(|(table, _)| table.to_owned()).collect()
     }
 
     fn get_pending_tables(&self) -> HashSet<String> {
-        self.per_table.iter().filter(|(_, row_check)| !row_check.borrow().has_been_tested()).map(|(table, _)| table.to_owned()).collect()
+        self.per_table.iter().filter(|(_, row_check)| !row_check.borrow().has_been_fulfilled()).map(|(table, _)| table.to_owned()).collect()
     }
 
     fn get_ready_tables(&self) -> HashSet<String> {
@@ -49,9 +50,11 @@ impl<'a> FilterConditions<'a> {
 
     pub fn filter<I: Iterator<Item=(Option<String>, String)>>(&mut self, statements: I) -> impl Iterator<Item=(Option<String>, String)> {
         self.current_pass += 1;
+        let mut lookup: HashMap<String, HashSet<String>> = HashMap::new();
 
-        let lookup: HashMap<String, HashSet<String>> = self.per_table.values().flat_map(|x| x.borrow().get_references()).map(|(k, v)| (k.to_owned(), v.to_owned())).collect();
-
+        for (_, row_check) in self.per_table.iter() {
+            lookup.extend(row_check.borrow().get_references().iter().map(|(k, v)| (k.to_owned(), v.to_owned())));
+        }
         dbg!(&lookup);
 
         dbg!(&self.per_table);

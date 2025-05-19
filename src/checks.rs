@@ -138,11 +138,13 @@ pub struct RowCheck {
     table: String,
     // trait ColumnPositions
     column_positions: Option<HashMap<String, usize>>,
-    checks: Vec<Box<dyn ColumnTest>>,
+    // trait ReferenceTracker
     referenced_columns: HashSet<ColumnMeta>,
     references: HashMap<String, HashSet<String>>,
+    // trait DependencyTree
     tested_at_pass: Option<usize>,
     pending_dependencies: Vec<Weak<RefCell<RowCheck>>>,
+    checks: Vec<Box<dyn ColumnTest>>,
 }
 
 impl ColumnPositions for RowCheck {
@@ -162,6 +164,10 @@ impl ReferenceTracker for RowCheck {
 
     fn get_referenced_columns_mut(&mut self) -> &mut HashSet<ColumnMeta> {
         &mut self.referenced_columns
+    }
+
+    fn get_references(&self) -> &HashMap<String, HashSet<String>> {
+        &self.references
     }
 
     fn get_references_mut(&mut self) -> &mut HashMap<String, HashSet<String>> {
@@ -192,12 +198,6 @@ impl RowCheck {
         })
     }
 
-    pub fn get_references(&self) -> Vec<(String, HashSet<String>)> {
-        if !self.has_been_tested() {
-            return Vec::new();
-        }
-        self.references.iter().map(|(k, v)| (k.to_owned(), v.to_owned())).collect()
-    }
 
     pub fn get_dependencies(&self) -> HashSet<ColumnMeta> {
         let mut dependencies = HashSet::new();
@@ -218,19 +218,23 @@ impl RowCheck {
     }
 
     pub fn is_ready_to_be_tested(&self) -> bool {
-        !self.has_been_tested() && self.pending_dependencies.iter().all(|d| {
-            d.upgrade().unwrap().borrow().has_been_tested()
+        !self.has_been_fulfilled() && self.pending_dependencies.iter().all(|d| {
+            d.upgrade().unwrap().borrow().has_been_fulfilled()
         })
     }
 
-    pub fn has_been_tested(&self) -> bool {
+    pub fn has_been_fulfilled(&self) -> bool {
         self.tested_at_pass.is_some()
     }
 
-    pub fn test(&mut self, pass: &usize, insert_statement: &str, lookup_table: &HashMap<String, HashSet<String>>) -> bool {
+    pub fn fulfill_dependency(&mut self, depth: &usize) {
         if self.tested_at_pass.is_none() {
-            self.tested_at_pass = Some(pass.to_owned());
+            self.tested_at_pass = Some(depth.to_owned());
         }
+    }
+
+    pub fn test(&mut self, pass: &usize, insert_statement: &str, lookup_table: &HashMap<String, HashSet<String>>) -> bool {
+        self.fulfill_dependency(pass);
 
         self.resolve_column_positions(insert_statement);
 
