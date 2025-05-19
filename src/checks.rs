@@ -211,16 +211,7 @@ impl RowCheck {
 
     pub fn link_dependencies(&mut self, per_table: &HashMap<String, Rc<RefCell<RowCheck>>>) {
         let deps = self.get_column_dependencies();
-        for dep in deps {
-            let target = &per_table[&dep.table];
-            self.pending_dependencies.push(Rc::<RefCell<RowCheck>>::downgrade(target))
-        }
-    }
-
-    pub fn is_ready_to_be_tested(&self) -> bool {
-        !self.has_been_fulfilled() && self.pending_dependencies.iter().all(|d| {
-            d.upgrade().unwrap().borrow().has_been_fulfilled()
-        })
+        self.set_dependencies(deps, per_table);
     }
 
     pub fn set_fulfilled(&mut self, depth: &usize) {
@@ -229,6 +220,23 @@ impl RowCheck {
 
     pub fn has_been_fulfilled(&self) -> bool {
         self.tested_at_pass.is_some()
+    }
+
+    pub fn set_dependencies(&mut self, column_dependencies: HashSet<ColumnMeta>, per_table: &HashMap<String, Rc<RefCell<RowCheck>>>) {
+        for dep in column_dependencies {
+            let target = &per_table[&dep.table];
+            self.pending_dependencies.push(Rc::<RefCell<RowCheck>>::downgrade(target))
+        }
+    }
+
+    pub fn get_dependencies(&self) -> &Vec<Weak<RefCell<RowCheck>>> {
+        &self.pending_dependencies
+    }
+
+    pub fn is_ready_to_be_tested(&self) -> bool {
+        !self.has_been_fulfilled() && self.get_dependencies().iter().all(|d| {
+            d.upgrade().unwrap().borrow().has_been_fulfilled()
+        })
     }
 
     pub fn fulfill_dependency(&mut self, depth: &usize) {
