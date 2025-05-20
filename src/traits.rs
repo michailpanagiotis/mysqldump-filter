@@ -12,6 +12,10 @@ pub trait DBColumn {
         &self.get_column_meta().column
     }
 
+    fn get_column_key(&self) -> &str {
+        &self.get_column_meta().key
+    }
+
     fn get_data_type(&self) -> &sqlparser::ast::DataType {
         &self.get_column_meta().data_type
     }
@@ -69,6 +73,10 @@ pub trait Dependency {
     fn has_been_fulfilled(&self) -> bool;
     fn get_dependencies(&self) -> &Vec<Weak<RefCell<dyn Dependency>>>;
     fn get_dependencies_mut(&mut self) -> &mut Vec<Weak<RefCell<dyn Dependency>>>;
+
+    fn add_dependency(&mut self, target: Weak<RefCell<dyn Dependency>>) {
+        self.get_dependencies_mut().push(target);
+    }
 
     fn is_ready_to_be_tested(&self) -> bool {
         !self.has_been_fulfilled() && self.get_dependencies().iter().all(|d| {

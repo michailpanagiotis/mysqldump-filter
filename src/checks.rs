@@ -141,9 +141,10 @@ pub struct RowCheck {
     // trait ReferenceTracker
     referenced_columns: HashSet<ColumnMeta>,
     references: HashMap<String, HashSet<String>>,
-    // trait DependencyTree
+    // trait Dependency
     tested_at_pass: Option<usize>,
     pending_dependencies: Vec<Weak<RefCell<dyn Dependency>>>,
+    tracked_columns: HashSet<ColumnMeta>,
     checks: Vec<Box<dyn ColumnTest>>,
 }
 
@@ -205,11 +206,14 @@ impl RowCheck {
             checks.push(item);
         }
 
+        let tracked_columns: HashSet<ColumnMeta> = checks.iter().map(|c| c.get_column_meta().to_owned()).collect();
+
         Ok(RowCheck {
             table: table.to_owned(),
             column_positions: None,
             referenced_columns: HashSet::new(),
             references: HashMap::new(),
+            tracked_columns,
             checks,
             tested_at_pass: None,
             pending_dependencies: Vec::new(),
@@ -229,8 +233,7 @@ impl RowCheck {
 
     pub fn link_dependencies(&mut self, per_table: &HashMap<String, Rc<RefCell<RowCheck>>>) {
         for dep in self.get_column_dependencies() {
-            let target: Weak<RefCell<dyn Dependency>> = Rc::<RefCell<RowCheck>>::downgrade(&per_table[&dep.table]);
-            self.get_dependencies_mut().push(target);
+            self.add_dependency(Rc::<RefCell<RowCheck>>::downgrade(&per_table[&dep.table]));
         }
     }
 
@@ -240,10 +243,10 @@ impl RowCheck {
         self.resolve_column_positions(insert_statement);
 
         let values = get_values(insert_statement);
+        let value_per_field = self.pick_values(&self.tracked_columns, &values);
 
         let all_checks_passed = self.checks.iter().all(|t| {
-            let value = values[self.get_column_position(t.get_column_name()).unwrap()];
-            t.test(value, lookup_table)
+            t.test(value_per_field[t.get_column_key()], lookup_table)
         });
 
         if all_checks_passed {
