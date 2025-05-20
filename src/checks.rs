@@ -210,8 +210,9 @@ impl RowCheck {
     }
 
     pub fn link_dependencies(&mut self, per_table: &HashMap<String, Rc<RefCell<RowCheck>>>) {
-        let deps = self.get_column_dependencies();
-        self.set_dependencies(deps, per_table);
+        for dep in self.get_column_dependencies() {
+            self.add_dependency(&per_table[&dep.table]);
+        }
     }
 
     pub fn set_fulfilled(&mut self, depth: &usize) {
@@ -222,15 +223,16 @@ impl RowCheck {
         self.tested_at_pass.is_some()
     }
 
-    pub fn set_dependencies(&mut self, column_dependencies: HashSet<ColumnMeta>, per_table: &HashMap<String, Rc<RefCell<RowCheck>>>) {
-        for dep in column_dependencies {
-            let target = &per_table[&dep.table];
-            self.pending_dependencies.push(Rc::<RefCell<RowCheck>>::downgrade(target))
-        }
+    pub fn get_dependencies(&self) -> &Vec<Weak<RefCell<Self>>> {
+        &self.pending_dependencies
     }
 
-    pub fn get_dependencies(&self) -> &Vec<Weak<RefCell<RowCheck>>> {
-        &self.pending_dependencies
+    pub fn get_dependencies_mut(&mut self) -> &mut Vec<Weak<RefCell<Self>>> {
+        &mut self.pending_dependencies
+    }
+
+    pub fn add_dependency(&mut self, target: &Rc<RefCell<RowCheck>>) {
+        self.get_dependencies_mut().push(Rc::<RefCell<RowCheck>>::downgrade(target))
     }
 
     pub fn is_ready_to_be_tested(&self) -> bool {

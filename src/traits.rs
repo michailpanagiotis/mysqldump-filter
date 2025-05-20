@@ -2,6 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 
 use crate::sql::get_column_positions;
+use std::cell::RefCell;
+use std::rc::{Rc, Weak};
 
 pub trait DBColumn {
     fn get_column_meta(&self) -> &ColumnMeta;
@@ -67,6 +69,11 @@ pub trait ReferenceTracker: ColumnPositions {
             references.get_mut(&key).unwrap().insert(value.to_owned());
         }
     }
+}
+
+pub trait Dependency {
+    fn get_dependencies(&self) -> &Vec<Weak<RefCell<dyn Dependency>>>;
+    fn get_dependencies_mut(&mut self) -> &mut Vec<Weak<RefCell<dyn Dependency>>>;
 }
 
 pub trait ColumnTest: DBColumn {
