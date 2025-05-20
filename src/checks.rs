@@ -7,7 +7,7 @@ use std::fmt::Debug;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
-use crate::traits::{ColumnMeta, ColumnPositions, DBColumn, ColumnTest, ReferenceTracker, NoDataTypeError};
+use crate::traits::{ColumnMeta, ColumnPositions, DBColumn, ColumnTest, ReferenceTracker, NoDataTypeError, Dependency};
 use crate::sql::get_values;
 
 #[derive(Debug)]
@@ -143,7 +143,7 @@ pub struct RowCheck {
     references: HashMap<String, HashSet<String>>,
     // trait DependencyTree
     tested_at_pass: Option<usize>,
-    pending_dependencies: Vec<Weak<RefCell<RowCheck>>>,
+    pending_dependencies: Vec<Weak<RefCell<dyn Dependency>>>,
     checks: Vec<Box<dyn ColumnTest>>,
 }
 
@@ -172,6 +172,24 @@ impl ReferenceTracker for RowCheck {
 
     fn get_references_mut(&mut self) -> &mut HashMap<String, HashSet<String>> {
         &mut self.references
+    }
+}
+
+impl Dependency for RowCheck {
+    fn set_fulfilled_at_depth(&mut self, depth: &usize) {
+        self.tested_at_pass = Some(depth.to_owned());
+    }
+
+    fn has_been_fulfilled(&self) -> bool {
+        self.tested_at_pass.is_some()
+    }
+
+    fn get_dependencies(&self) -> &Vec<Weak<RefCell<dyn Dependency>>> {
+        &self.pending_dependencies
+    }
+
+    fn get_dependencies_mut(&mut self) -> &mut Vec<Weak<RefCell<dyn Dependency>>> {
+        &mut self.pending_dependencies
     }
 }
 
@@ -211,41 +229,9 @@ impl RowCheck {
 
     pub fn link_dependencies(&mut self, per_table: &HashMap<String, Rc<RefCell<RowCheck>>>) {
         for dep in self.get_column_dependencies() {
-            self.add_dependency(&per_table[&dep.table]);
+            let target: Weak<RefCell<dyn Dependency>> = Rc::<RefCell<RowCheck>>::downgrade(&per_table[&dep.table]);
+            self.get_dependencies_mut().push(target);
         }
-    }
-
-    pub fn set_fulfilled(&mut self, depth: &usize) {
-        self.tested_at_pass = Some(depth.to_owned());
-    }
-
-    pub fn has_been_fulfilled(&self) -> bool {
-        self.tested_at_pass.is_some()
-    }
-
-    pub fn get_dependencies(&self) -> &Vec<Weak<RefCell<Self>>> {
-        &self.pending_dependencies
-    }
-
-    pub fn get_dependencies_mut(&mut self) -> &mut Vec<Weak<RefCell<Self>>> {
-        &mut self.pending_dependencies
-    }
-
-    pub fn add_dependency(&mut self, target: &Rc<RefCell<RowCheck>>) {
-        self.get_dependencies_mut().push(Rc::<RefCell<RowCheck>>::downgrade(target))
-    }
-
-    pub fn is_ready_to_be_tested(&self) -> bool {
-        !self.has_been_fulfilled() && self.get_dependencies().iter().all(|d| {
-            d.upgrade().unwrap().borrow().has_been_fulfilled()
-        })
-    }
-
-    pub fn fulfill_dependency(&mut self, depth: &usize) {
-        if !self.has_been_fulfilled() {
-            self.set_fulfilled(depth);
-        }
-        assert!(self.has_been_fulfilled());
     }
 
     pub fn test(&mut self, pass: &usize, insert_statement: &str, lookup_table: &HashMap<String, HashSet<String>>) -> bool {

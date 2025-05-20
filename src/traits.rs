@@ -55,13 +55,6 @@ pub trait ReferenceTracker: ColumnPositions {
         self.get_references_mut().insert(dep.key.to_owned(), HashSet::new());
     }
 
-    fn merge(&mut self, values: HashMap<String, String>) {
-        let references = self.get_references_mut();
-        for (key, value) in values.into_iter() {
-            references.get_mut(&key).unwrap().insert(value);
-        }
-    }
-
     fn capture_references(&mut self, values: &[&str]) {
         let to_insert = self.pick_values(self.get_referenced_columns(), values);
         let references = self.get_references_mut();
@@ -72,8 +65,23 @@ pub trait ReferenceTracker: ColumnPositions {
 }
 
 pub trait Dependency {
+    fn set_fulfilled_at_depth(&mut self, depth: &usize);
+    fn has_been_fulfilled(&self) -> bool;
     fn get_dependencies(&self) -> &Vec<Weak<RefCell<dyn Dependency>>>;
     fn get_dependencies_mut(&mut self) -> &mut Vec<Weak<RefCell<dyn Dependency>>>;
+
+    fn is_ready_to_be_tested(&self) -> bool {
+        !self.has_been_fulfilled() && self.get_dependencies().iter().all(|d| {
+            d.upgrade().unwrap().borrow().has_been_fulfilled()
+        })
+    }
+
+    fn fulfill_dependency(&mut self, depth: &usize) {
+        if !self.has_been_fulfilled() {
+            self.set_fulfilled_at_depth(depth);
+        }
+        assert!(self.has_been_fulfilled());
+    }
 }
 
 pub trait ColumnTest: DBColumn {

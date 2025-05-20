@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::checks::RowCheck;
-use crate::traits::ReferenceTracker;
+use crate::traits::{Dependency, ReferenceTracker};
 
 #[derive(Debug)]
 pub struct FilterConditions<'a> {
