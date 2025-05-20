@@ -1,7 +1,7 @@
 use cel_interpreter::{Context, Program};
 use chrono::NaiveDateTime;
 use itertools::Itertools;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::rc::{Rc, Weak};
@@ -245,6 +245,15 @@ impl<'a> RowCheck<'a> {
     }
 }
 
+fn new_col_test(table: &str, definition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<Rc<RefCell<dyn ColumnTest>>, anyhow::Error> {
+    let item: Rc<RefCell<dyn ColumnTest>> = if definition.contains("->") {
+        Rc::new(RefCell::new(LookupTest::new(definition, table, data_types)?))
+    } else {
+        Rc::new(RefCell::new(CelTest::new(definition, table, data_types)?))
+    };
+    Ok(item)
+}
+
 fn new_test(table: &str, definition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<Box<dyn ColumnTest>, anyhow::Error> {
     let item: Box<dyn ColumnTest> = if definition.contains("->") {
         Box::new(LookupTest::new(definition, table, data_types)?)
@@ -265,6 +274,7 @@ fn parse_checks<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
     Ok(all_checks.into_iter().into_group_map_by(|x| x.get_table_name().to_owned()))
 }
 
+
 fn determine_columns<'a>(
     grouped_cols: &'a HashMap<String, HashSet<ColumnMeta>>,
     grouped_referenced_cols: &'a HashMap<String, HashSet<ColumnMeta>>,
@@ -278,11 +288,46 @@ fn determine_columns<'a>(
     Ok(res)
 }
 
+
+type Check = Rc<RefCell<dyn ColumnTest>>;
+type Column = Rc<RefCell<ColumnMeta>>;
+
+#[derive(Debug)]
+pub struct CheckCollection {
+    checks: Vec<Check>,
+    tracked_columns: HashMap<String, Vec<Column>>,
+}
+
+impl CheckCollection {
+    fn new<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
+        conditions: I,
+        data_types: &HashMap<String, sqlparser::ast::DataType>,
+    ) -> Result<Self, anyhow::Error> {
+        let mut checks: Vec<Rc<RefCell<dyn ColumnTest>>> = Vec::new();
+        for check in conditions.flat_map(|(table, conditions)| conditions.iter().map(|c| new_col_test(table, c, data_types))) {
+            checks.push(check?);
+        }
+
+        let mut tracked_columns: HashMap<String, Vec<Column>> = checks.iter().flat_map(|c| {
+            c.borrow().get_tracked_columns().iter().map(|c| Rc::new(RefCell::new(c.to_owned()))).collect::<Vec<Rc<RefCell<ColumnMeta>>>>()
+        }).into_group_map_by(|x| x.borrow().get_table_name().to_owned());
+
+        Ok(CheckCollection {
+            checks,
+            tracked_columns,
+        })
+    }
+}
+
 pub fn from_config<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
     conditions: I,
     data_types: &HashMap<String, sqlparser::ast::DataType>,
 ) -> Result<HashMap<String, Rc<RefCell<RowCheck>>>, anyhow::Error> {
+    let collection = CheckCollection::new(conditions, &data_types);
 
+    dbg!(&collection);
+
+    panic!("stop");
     let grouped_checks = parse_checks(conditions, data_types)?;
 
     let mut tracked_columns: Vec<ColumnMeta> = grouped_checks.values().flat_map(|c| {
@@ -308,7 +353,6 @@ pub fn from_config<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
 
     dbg!(&grouped_referenced_cols);
 
-    panic!("stop");
 
     Ok(result)
 }
