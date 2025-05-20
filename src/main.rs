@@ -10,7 +10,7 @@ mod filters;
 mod sql;
 mod traits;
 
-use traits::{ColumnMeta, NoDataTypeError};
+use traits::ColumnMeta;
 use checks::from_config;
 use filters::FilterConditions;
 use sql::{get_data_types, read_sql_file, write_sql_file};
@@ -49,7 +49,7 @@ fn process_file(input_file: &Path, output_file: &Path, allow_data_on_tables: &Ha
     write_sql_file(output_file, filtered);
 }
 
-fn main() -> Result<(), NoDataTypeError> {
+fn main() -> Result<(), anyhow::Error> {
     let cli = Cli::parse();
     let input_file = std::env::current_dir().unwrap().to_path_buf().join(cli.input);
     let output_file = std::env::current_dir().unwrap().to_path_buf().join(cli.output);

@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
+use thiserror::Error;
 
 use crate::sql::get_column_positions;
 use std::cell::RefCell;
@@ -7,6 +8,10 @@ use std::rc::{Rc, Weak};
 
 pub trait DBColumn {
     fn get_column_meta(&self) -> &ColumnMeta;
+
+    fn get_table_name(&self) -> &str {
+        &self.get_column_meta().table
+    }
 
     fn get_column_name(&self) -> &str {
         &self.get_column_meta().column
@@ -93,17 +98,32 @@ pub trait Dependency {
 }
 
 pub trait ColumnTest: DBColumn {
-    fn new(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<impl ColumnTest + 'static, NoDataTypeError> where Self: Sized;
+    fn new(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<impl ColumnTest + 'static, anyhow::Error> where Self: Sized;
 
     fn test(&self, value:&str, lookup_table: &HashMap<String, HashSet<String>>) -> bool;
 
     fn get_column_dependencies(&self) -> HashSet<ColumnMeta> {
         HashSet::new()
     }
+
+    fn get_tracked_columns(&self) -> HashSet<ColumnMeta> {
+        let mut res: HashSet<ColumnMeta> = HashSet::from([self.get_column_meta().to_owned()]);
+        for dep in self.get_column_dependencies() {
+            res.insert(dep.to_owned());
+        }
+        res
+    }
 }
 
 #[derive(Debug)]
+#[derive(Error)]
 pub struct NoDataTypeError;
+
+impl std::fmt::Display for NoDataTypeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "no data type")
+    }
+}
 
 #[derive(Clone)]
 #[derive(Debug)]
@@ -123,9 +143,9 @@ impl DBColumn for ColumnMeta {
 }
 
 impl ColumnMeta {
-    pub fn new(table: &str, column: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<Self, NoDataTypeError> {
+    pub fn new(table: &str, column: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<Self, anyhow::Error> {
         let key = table.to_owned() + "." + column;
-        let Some(data_type) = data_types.get(&key) else { return Err(NoDataTypeError) };
+        let Some(data_type) = data_types.get(&key) else { return Err(anyhow::anyhow!("No data type: {}", key)) };
         Ok(Self {
             key,
             table: table.to_owned(),

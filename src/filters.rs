@@ -7,12 +7,12 @@ use crate::traits::{Dependency, ReferenceTracker};
 
 #[derive(Debug)]
 pub struct FilterConditions<'a> {
-    per_table: &'a mut HashMap<String, Rc<RefCell<RowCheck>>>,
+    per_table: &'a mut HashMap<String, Rc<RefCell<RowCheck<'a>>>>,
     pub current_pass: usize,
 }
 
 impl<'a> FilterConditions<'a> {
-    pub fn new(per_table: &'a mut HashMap<String, Rc<RefCell<RowCheck>>>) -> Self {
+    pub fn new(per_table: &'a mut HashMap<String, Rc<RefCell<RowCheck<'a>>>>) -> Self {
         FilterConditions {
             per_table,
             current_pass: 0,
