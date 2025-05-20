@@ -294,23 +294,41 @@ type Column = Rc<RefCell<ColumnMeta>>;
 
 #[derive(Debug)]
 pub struct CheckCollection {
-    checks: Vec<Check>,
+    checks: HashMap<String, Vec<Check>>,
     tracked_columns: HashMap<String, Vec<Column>>,
 }
 
 impl CheckCollection {
+    fn determine_checks<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
+        conditions: I,
+        data_types: &HashMap<String, sqlparser::ast::DataType>,
+    ) -> Result<HashMap<String, Vec<Check>>, anyhow::Error> {
+        let mut checks: HashMap<String, Vec<Check>> = HashMap::new();
+        for check_option in conditions.flat_map(|(table, conditions)| conditions.iter().map(|c| new_col_test(table, c, data_types))) {
+            let check = check_option?;
+            let table_name = check.as_ref().borrow().get_table_name().to_owned();
+            if !checks.contains_key(&table_name) {
+                checks.insert(table_name.to_owned(), Vec::new());
+            }
+
+            checks.get_mut(&table_name).ok_or(anyhow::anyhow!("Grouped checks don't have table: {}", table_name))?.push(check);
+        }
+        Ok(checks)
+    }
+
+    fn determine_tracked_columns(checks: &HashMap<String, Vec<Check>>) -> HashMap<String, Vec<Column>> {
+        let tracked_columns: HashMap<String, Vec<Column>> = checks.values().flatten().flat_map(|c| {
+            c.borrow().get_tracked_columns().iter().map(|c| Rc::new(RefCell::new(c.to_owned()))).collect::<Vec<Rc<RefCell<ColumnMeta>>>>()
+        }).into_group_map_by(|x| x.borrow().get_table_name().to_owned());
+        tracked_columns
+    }
+
     fn new<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
         conditions: I,
         data_types: &HashMap<String, sqlparser::ast::DataType>,
     ) -> Result<Self, anyhow::Error> {
-        let mut checks: Vec<Rc<RefCell<dyn ColumnTest>>> = Vec::new();
-        for check in conditions.flat_map(|(table, conditions)| conditions.iter().map(|c| new_col_test(table, c, data_types))) {
-            checks.push(check?);
-        }
-
-        let mut tracked_columns: HashMap<String, Vec<Column>> = checks.iter().flat_map(|c| {
-            c.borrow().get_tracked_columns().iter().map(|c| Rc::new(RefCell::new(c.to_owned()))).collect::<Vec<Rc<RefCell<ColumnMeta>>>>()
-        }).into_group_map_by(|x| x.borrow().get_table_name().to_owned());
+        let checks = CheckCollection::determine_checks(conditions, data_types)?;
+        let tracked_columns = CheckCollection::determine_tracked_columns(&checks);
 
         Ok(CheckCollection {
             checks,
