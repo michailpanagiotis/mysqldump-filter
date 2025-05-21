@@ -4,7 +4,7 @@ use thiserror::Error;
 
 use crate::sql::get_column_positions;
 use std::cell::RefCell;
-use std::rc::{Rc, Weak};
+use std::rc::Weak;
 
 pub trait DBColumn {
     fn get_column_meta(&self) -> &ColumnMeta;
@@ -47,9 +47,9 @@ pub trait ColumnPositions {
         self.get_column_positions().is_some()
     }
 
-    fn pick_values<'a>(&self, columns: &HashSet<ColumnMeta>, values: &'a [&'a str]) -> HashMap<String, &'a str> {
+    fn pick_values<'a, 'b, I: Iterator<Item=&'b ColumnMeta>>(&self, columns: I, values: &'a [&'a str]) -> HashMap<String, &'a str> {
         let Some(positions) = self.get_column_positions() else { return HashMap::new() };
-        columns.iter().map(|c| (c.key.to_owned(), values[positions[&c.column]])).collect()
+        columns.map(|c| (c.key.to_owned(), values[positions[&c.column]])).collect()
     }
 }
 
@@ -65,7 +65,7 @@ pub trait ReferenceTracker: ColumnPositions {
     }
 
     fn capture_references(&mut self, values: &[&str]) {
-        let to_insert = self.pick_values(self.get_referenced_columns(), values);
+        let to_insert = self.pick_values(self.get_referenced_columns().iter(), values);
         let references = self.get_references_mut();
         for (key, value) in to_insert.into_iter() {
             references.get_mut(&key).unwrap().insert(value.to_owned());

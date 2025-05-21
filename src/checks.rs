@@ -31,8 +31,6 @@ impl<'a> From<RowCheck<'a>> for RowType<'a> {
     }
 }
 
-
-
 #[derive(Debug)]
 pub struct CelTest {
     column_meta: ColumnMeta,
@@ -167,7 +165,7 @@ pub struct RowCheck<'a> {
     // trait Dependency
     tested_at_pass: Option<usize>,
     pending_dependencies: Vec<DependencyType>,
-    tracked_columns: &'a HashSet<ColumnMeta>,
+    tracked_columns: &'a HashMap<String, ColumnMeta>,
     checks: &'a Vec<Box<dyn ColumnTest>>,
 }
 
@@ -218,7 +216,7 @@ impl Dependency for RowCheck<'_> {
 }
 
 impl<'a> RowCheck<'a> {
-    pub fn from_config(table: &str, tracked_columns: &'a HashSet<ColumnMeta>, checks: &'a Vec<Box<dyn ColumnTest>>) -> Result<RowCheck<'a>, anyhow::Error> {
+    pub fn from_config(table: &str, tracked_columns: &'a HashMap<String, ColumnMeta>, checks: &'a Vec<Box<dyn ColumnTest>>) -> Result<RowCheck<'a>, anyhow::Error> {
         Ok(RowCheck {
             table: table.to_owned(),
             column_positions: None,
@@ -248,7 +246,7 @@ impl<'a> RowCheck<'a> {
         self.resolve_column_positions(insert_statement);
 
         let values = get_values(insert_statement);
-        let value_per_field = self.pick_values(&self.tracked_columns, &values);
+        let value_per_field = self.pick_values(self.tracked_columns.values().into_iter(), &values);
 
         let all_checks_passed = self.checks.iter().all(|t| {
             t.test(value_per_field[t.get_column_key()], lookup_table)
@@ -294,14 +292,14 @@ fn parse_checks<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
 
 
 fn determine_columns<'a>(
-    grouped_cols: &'a HashMap<String, HashSet<ColumnMeta>>,
+    grouped_cols: &'a HashMap<String, HashMap<String, ColumnMeta>>,
     grouped_referenced_cols: &'a HashMap<String, HashSet<ColumnMeta>>,
     grouped_checks: &'a HashMap<String, Vec<Box<dyn ColumnTest>>>,
 ) -> Result<HashMap<String, RowType<'a>>, anyhow::Error> {
     let mut res: HashMap<String, RowType<'a>> = HashMap::new();
     for (table, tracked_columns) in grouped_cols {
         let checks = grouped_checks.get(table).ok_or(anyhow::anyhow!("Grouped checks don't have table: {}", table))?;
-        res.insert(table.to_owned(), RowType::from(RowCheck::from_config(&table, &tracked_columns, checks)?));
+        res.insert(table.to_owned(), RowType::from(RowCheck::from_config(&table, tracked_columns, checks)?));
     }
     Ok(res)
 }
@@ -385,9 +383,9 @@ pub fn from_config<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
     }).collect();
 
     tracked_columns.dedup_by_key(|c| c.get_column_key().to_owned());
-    let grouped_cols: HashMap<String, HashSet<ColumnMeta>> = tracked_columns.into_iter().into_group_map_by(|x| x.get_table_name().to_owned())
+    let grouped_cols: HashMap<String, HashMap<String, ColumnMeta>> = tracked_columns.into_iter().into_group_map_by(|x| x.get_table_name().to_owned())
       .iter()
-      .map(|(t, v)| (t.to_owned(), v.into_iter().map(|x| x.to_owned()).collect::<HashSet<ColumnMeta>>())).collect();
+      .map(|(t, v)| (t.to_owned(), v.into_iter().map(|x| (x.get_column_key().to_owned(), x.to_owned())).collect::<HashMap<String, ColumnMeta>>())).collect();
 
     let mut referenced_columns: Vec<ColumnMeta> = grouped_checks.values().flat_map(|c| {
         c.iter().flat_map(|x| x.get_column_dependencies().into_iter())
