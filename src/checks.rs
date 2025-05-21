@@ -1,7 +1,7 @@
 use cel_interpreter::{Context, Program};
 use chrono::NaiveDateTime;
 use itertools::Itertools;
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::rc::{Rc, Weak};
@@ -9,6 +9,29 @@ use std::sync::Arc;
 
 use crate::traits::{ColumnMeta, ColumnPositions, DBColumn, ColumnTest, ReferenceTracker, Dependency};
 use crate::sql::get_values;
+
+type CheckType = Rc<RefCell<dyn ColumnTest>>;
+type ColumnType = Rc<RefCell<ColumnMeta>>;
+type RowType<'a> = Rc<RefCell<RowCheck<'a>>>;
+type DependencyType = Weak<RefCell<dyn Dependency>>;
+
+fn new_check<C: ColumnTest + 'static>(test: C) -> CheckType {
+    Rc::new(RefCell::new(test))
+}
+
+impl From<&ColumnMeta> for ColumnType {
+    fn from(c: &ColumnMeta) -> Self {
+        Rc::new(RefCell::new(c.to_owned()))
+    }
+}
+
+impl<'a> From<RowCheck<'a>> for RowType<'a> {
+    fn from(c: RowCheck<'a>) -> Self {
+        Rc::new(RefCell::new(c))
+    }
+}
+
+
 
 #[derive(Debug)]
 pub struct CelTest {
@@ -143,7 +166,7 @@ pub struct RowCheck<'a> {
     references: HashMap<String, HashSet<String>>,
     // trait Dependency
     tested_at_pass: Option<usize>,
-    pending_dependencies: Vec<Weak<RefCell<dyn Dependency>>>,
+    pending_dependencies: Vec<DependencyType>,
     tracked_columns: &'a HashSet<ColumnMeta>,
     checks: &'a Vec<Box<dyn ColumnTest>>,
 }
@@ -185,11 +208,11 @@ impl Dependency for RowCheck<'_> {
         self.tested_at_pass.is_some()
     }
 
-    fn get_dependencies(&self) -> &Vec<Weak<RefCell<dyn Dependency>>> {
+    fn get_dependencies(&self) -> &Vec<DependencyType> {
         &self.pending_dependencies
     }
 
-    fn get_dependencies_mut(&mut self) -> &mut Vec<Weak<RefCell<dyn Dependency>>> {
+    fn get_dependencies_mut(&mut self) -> &mut Vec<DependencyType> {
         &mut self.pending_dependencies
     }
 }
@@ -219,12 +242,6 @@ impl<'a> RowCheck<'a> {
         dependencies
     }
 
-    // pub fn link_dependencies(&mut self, per_table: &HashMap<String, Rc<RefCell<RowCheck>>>) {
-    //     for dep in self.get_column_dependencies() {
-    //         self.add_dependency(Rc::<RefCell<RowCheck>>::downgrade(&per_table[&dep.table]));
-    //     }
-    // }
-
     pub fn test(&mut self, pass: &usize, insert_statement: &str, lookup_table: &HashMap<String, HashSet<String>>) -> bool {
         self.fulfill_dependency(pass);
 
@@ -245,11 +262,12 @@ impl<'a> RowCheck<'a> {
     }
 }
 
-fn new_col_test(table: &str, definition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<Rc<RefCell<dyn ColumnTest>>, anyhow::Error> {
-    let item: Rc<RefCell<dyn ColumnTest>> = if definition.contains("->") {
-        Rc::new(RefCell::new(LookupTest::new(definition, table, data_types)?))
+
+fn new_col_test(table: &str, definition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<CheckType, anyhow::Error> {
+    let item: CheckType = if definition.contains("->") {
+        new_check(LookupTest::new(definition, table, data_types)?)
     } else {
-        Rc::new(RefCell::new(CelTest::new(definition, table, data_types)?))
+        new_check(CelTest::new(definition, table, data_types)?)
     };
     Ok(item)
 }
@@ -279,38 +297,28 @@ fn determine_columns<'a>(
     grouped_cols: &'a HashMap<String, HashSet<ColumnMeta>>,
     grouped_referenced_cols: &'a HashMap<String, HashSet<ColumnMeta>>,
     grouped_checks: &'a HashMap<String, Vec<Box<dyn ColumnTest>>>,
-) -> Result<HashMap<String, Rc<RefCell<RowCheck<'a>>>>, anyhow::Error> {
-    let mut res: HashMap<String, Rc<RefCell<RowCheck<'a>>>> = HashMap::new();
+) -> Result<HashMap<String, RowType<'a>>, anyhow::Error> {
+    let mut res: HashMap<String, RowType<'a>> = HashMap::new();
     for (table, tracked_columns) in grouped_cols {
         let checks = grouped_checks.get(table).ok_or(anyhow::anyhow!("Grouped checks don't have table: {}", table))?;
-        res.insert(table.to_owned(), Rc::new(RefCell::new(RowCheck::from_config(&table, &tracked_columns, checks)?)));
+        res.insert(table.to_owned(), RowType::from(RowCheck::from_config(&table, &tracked_columns, checks)?));
     }
     Ok(res)
 }
 
-
-type Check = Rc<RefCell<dyn ColumnTest>>;
-type Column = Rc<RefCell<ColumnMeta>>;
-
-impl From<&ColumnMeta> for Column {
-    fn from(foo: &ColumnMeta) -> Self {
-        Rc::new(RefCell::new(foo.to_owned()))
-    }
-}
-
 #[derive(Debug)]
 pub struct CheckCollection {
-    checks: HashMap<String, Vec<Check>>,
-    tracked_columns: HashMap<String, Vec<Column>>,
-    referenced_columns: HashMap<String, Vec<Column>>
+    checks: HashMap<String, Vec<CheckType>>,
+    tracked_columns: HashMap<String, Vec<ColumnType>>,
+    referenced_columns: HashMap<String, Vec<ColumnType>>
 }
 
 impl CheckCollection {
     fn determine_checks<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
         conditions: I,
         data_types: &HashMap<String, sqlparser::ast::DataType>,
-    ) -> Result<HashMap<String, Vec<Check>>, anyhow::Error> {
-        let mut checks: HashMap<String, Vec<Check>> = HashMap::new();
+    ) -> Result<HashMap<String, Vec<CheckType>>, anyhow::Error> {
+        let mut checks: HashMap<String, Vec<CheckType>> = HashMap::new();
         for check_option in conditions.flat_map(|(table, conditions)| conditions.iter().map(|c| new_col_test(table, c, data_types))) {
             let check = check_option?;
             let table_name = check.as_ref().borrow().get_table_name().to_owned();
@@ -323,15 +331,15 @@ impl CheckCollection {
         Ok(checks)
     }
 
-    fn determine_tracked_columns(checks: &HashMap<String, Vec<Check>>) -> HashMap<String, Vec<Column>> {
+    fn determine_tracked_columns(checks: &HashMap<String, Vec<CheckType>>) -> HashMap<String, Vec<ColumnType>> {
         checks.values().flatten().flat_map(|c| {
-            c.borrow().get_tracked_columns().iter().map(|c| Column::from(c)).collect::<Vec<Column>>()
+            c.borrow().get_tracked_columns().iter().map(|c| ColumnType::from(c)).collect::<Vec<ColumnType>>()
         }).into_group_map_by(|x| x.borrow().get_table_name().to_owned())
     }
 
-    fn determine_referenced_columns(checks: &HashMap<String, Vec<Check>>) -> HashMap<String, Vec<Column>> {
-        let referenced_columns: HashMap<String, Vec<Column>> = checks.values().flatten().flat_map(|c| {
-            c.borrow().get_column_dependencies().iter().map(|c| Rc::new(RefCell::new(c.to_owned()))).collect::<Vec<Column>>()
+    fn determine_referenced_columns(checks: &HashMap<String, Vec<CheckType>>) -> HashMap<String, Vec<ColumnType>> {
+        let referenced_columns: HashMap<String, Vec<ColumnType>> = checks.values().flatten().flat_map(|c| {
+            c.borrow().get_column_dependencies().iter().map(|c| ColumnType::from(c)).collect::<Vec<ColumnType>>()
         }).into_group_map_by(|x| x.borrow().get_table_name().to_owned());
         referenced_columns
     }
@@ -364,7 +372,7 @@ impl CheckCollection {
 pub fn from_config<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
     conditions: I,
     data_types: &HashMap<String, sqlparser::ast::DataType>,
-) -> Result<HashMap<String, Rc<RefCell<RowCheck>>>, anyhow::Error> {
+) -> Result<HashMap<String, RowType<'a>>, anyhow::Error> {
     let collection = CheckCollection::new(conditions, &data_types);
 
     dbg!(&collection);
