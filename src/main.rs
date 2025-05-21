@@ -11,7 +11,7 @@ mod sql;
 mod traits;
 
 use traits::ColumnMeta;
-use checks::from_config;
+use checks::{from_config, CheckCollection};
 use filters::FilterConditions;
 use sql::{get_data_types, read_sql_file, write_sql_file};
 
@@ -67,7 +67,13 @@ fn main() -> Result<(), anyhow::Error> {
     println!("Read data types!");
 
     let config = Config::from_file(config_file.as_path());
-    let mut per_table = from_config(config.filters.iter().chain(&config.cascades), &data_types)?;
+
+    let collection = CheckCollection::new(config.filters.iter().chain(&config.cascades), &data_types)?;
+
+    let mut per_table = from_config(&collection)?;
+
+    dbg!(&per_table);
+    panic!("stop");
 
     let deps: Vec<ColumnMeta> = per_table.values().flat_map(|f| f.borrow().get_column_dependencies()).collect();
 

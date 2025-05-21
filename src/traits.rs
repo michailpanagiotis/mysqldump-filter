@@ -55,14 +55,8 @@ pub trait ColumnPositions {
 
 pub trait ReferenceTracker: ColumnPositions {
     fn get_referenced_columns(&self) -> &Vec<ColumnMeta>;
-    fn get_referenced_columns_mut(&mut self) -> &mut Vec<ColumnMeta>;
     fn get_references(&self) -> &HashMap<String, HashSet<String>>;
     fn get_references_mut(&mut self) -> &mut HashMap<String, HashSet<String>>;
-
-    fn add_referenced_column(&mut self, dep: &ColumnMeta) {
-        self.get_referenced_columns_mut().push(dep.to_owned());
-        self.get_references_mut().insert(dep.key.to_owned(), HashSet::new());
-    }
 
     fn capture_references(&mut self, values: &[&str]) {
         let to_insert = self.pick_values(self.get_referenced_columns().iter(), values);
