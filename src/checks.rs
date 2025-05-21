@@ -292,10 +292,17 @@ fn determine_columns<'a>(
 type Check = Rc<RefCell<dyn ColumnTest>>;
 type Column = Rc<RefCell<ColumnMeta>>;
 
+impl From<&ColumnMeta> for Column {
+    fn from(foo: &ColumnMeta) -> Self {
+        Rc::new(RefCell::new(foo.to_owned()))
+    }
+}
+
 #[derive(Debug)]
 pub struct CheckCollection {
     checks: HashMap<String, Vec<Check>>,
     tracked_columns: HashMap<String, Vec<Column>>,
+    referenced_columns: HashMap<String, Vec<Column>>
 }
 
 impl CheckCollection {
@@ -317,22 +324,39 @@ impl CheckCollection {
     }
 
     fn determine_tracked_columns(checks: &HashMap<String, Vec<Check>>) -> HashMap<String, Vec<Column>> {
-        let tracked_columns: HashMap<String, Vec<Column>> = checks.values().flatten().flat_map(|c| {
-            c.borrow().get_tracked_columns().iter().map(|c| Rc::new(RefCell::new(c.to_owned()))).collect::<Vec<Rc<RefCell<ColumnMeta>>>>()
+        checks.values().flatten().flat_map(|c| {
+            c.borrow().get_tracked_columns().iter().map(|c| Column::from(c)).collect::<Vec<Column>>()
+        }).into_group_map_by(|x| x.borrow().get_table_name().to_owned())
+    }
+
+    fn determine_referenced_columns(checks: &HashMap<String, Vec<Check>>) -> HashMap<String, Vec<Column>> {
+        let referenced_columns: HashMap<String, Vec<Column>> = checks.values().flatten().flat_map(|c| {
+            c.borrow().get_column_dependencies().iter().map(|c| Rc::new(RefCell::new(c.to_owned()))).collect::<Vec<Column>>()
         }).into_group_map_by(|x| x.borrow().get_table_name().to_owned());
-        tracked_columns
+        referenced_columns
     }
 
     fn new<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
         conditions: I,
         data_types: &HashMap<String, sqlparser::ast::DataType>,
     ) -> Result<Self, anyhow::Error> {
-        let checks = CheckCollection::determine_checks(conditions, data_types)?;
+        let mut checks = CheckCollection::determine_checks(conditions, data_types)?;
         let tracked_columns = CheckCollection::determine_tracked_columns(&checks);
+        let mut referenced_columns = CheckCollection::determine_referenced_columns(&checks);
+
+        for (table, columns) in tracked_columns.iter() {
+            if !referenced_columns.contains_key(table) {
+                referenced_columns.insert(table.to_owned(), Vec::new());
+            }
+            if !checks.contains_key(table) {
+                checks.insert(table.to_owned(), Vec::new());
+            }
+        }
 
         Ok(CheckCollection {
             checks,
             tracked_columns,
+            referenced_columns,
         })
     }
 }
