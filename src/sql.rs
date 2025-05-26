@@ -179,10 +179,11 @@ pub fn get_writer(filepath: &Path) -> Result<BufWriter<File>, anyhow::Error> {
         .open(filepath)?;
     Ok(BufWriter::new(file))
 }
-pub fn explode_to_files(working_dir_path: &Path, sqldump_filepath: &Path, allowed_tables: &HashSet<String>) -> Result<(PathBuf, HashSet<String>), anyhow::Error> {
+
+pub fn explode_to_files(working_dir_path: &Path, sqldump_filepath: &Path, allowed_tables: &HashSet<String>) -> Result<(PathBuf, HashMap<String, PathBuf>), anyhow::Error> {
     let working_file_path = working_dir_path.join("INTERIM").with_extension("sql");
     let mut writers: HashMap<String, BufWriter<File>> = HashMap::new();
-    let mut table_files: HashSet<String> = HashSet::new();
+    let mut table_files: HashMap<String, PathBuf> = HashMap::new();
     let mut working_file_writer = get_writer(&working_file_path)?;
 
     let statements = SqlStatements::from_file(sqldump_filepath, allowed_tables);
@@ -193,8 +194,8 @@ pub fn explode_to_files(working_dir_path: &Path, sqldump_filepath: &Path, allowe
             Some(table) => {
                 let writer = match writers.get_mut(&table) {
                     None => {
-                        table_files.insert(table.to_owned());
                         let table_file = working_dir_path.join(&table).with_extension("sql");
+                        table_files.insert(table.to_owned(), table_file.to_owned());
                         working_file_writer.write_all(format!("--- INLINE {}\n", table_file.display()).as_bytes())?;
                         writers.insert(table.to_owned(), get_writer(&table_file)?);
                         writers.get_mut(&table).unwrap()
