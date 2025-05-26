@@ -69,13 +69,13 @@ fn main() -> Result<(), anyhow::Error> {
     println!("Read data types!");
 
     let config = Config::from_file(config_file.as_path());
-    let collection = CheckCollection::new(config.filters.iter().chain(&config.cascades), &data_types)?;
-    let mut per_table = from_config(&collection)?;
 
     let (working_file_path, table_files) = explode_to_files(working_dir_path.as_path(), input_file.as_path(), &config.allow_data_on_tables).unwrap_or_else(|e| {
         panic!("Problem exploding to files: {e:?}");
     });
 
+    let collection = CheckCollection::new(&table_files, config.filters.iter().chain(&config.cascades), &data_types)?;
+    let mut per_table = from_config(&collection)?;
     let mut fc = FilterConditions::new(&mut per_table);
     for (table, file) in table_files {
         process_table(&table, &file, &mut fc);

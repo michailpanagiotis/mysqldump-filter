@@ -4,11 +4,13 @@ use itertools::Itertools;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use crate::traits::{ColumnMeta, ColumnPositions, DBColumn, ColumnTest, ReferenceTracker, Dependency};
-use crate::sql::get_values;
+use crate::sql::{get_values, read_table_data_file, write_sql_file};
 
 type CheckType = Box<dyn ColumnTest>;
 type ColumnType = ColumnMeta;
@@ -157,6 +159,7 @@ impl ColumnTest for LookupTest {
 #[derive(Debug)]
 pub struct RowCheck<'a> {
     table: String,
+    file: PathBuf,
     // trait ColumnPositions
     column_positions: Option<HashMap<String, usize>>,
     // trait ReferenceTracker
@@ -209,9 +212,10 @@ impl Dependency for RowCheck<'_> {
 }
 
 impl<'a> RowCheck<'a> {
-    pub fn from_config(table: &str, tracked_columns: &'a Vec<ColumnMeta>, checks: &'a Vec<Box<dyn ColumnTest>>, referenced_columns: &'a Vec<ColumnMeta>) -> Result<RowCheck<'a>, anyhow::Error> {
+    pub fn from_config(table: &str, file: &Path, tracked_columns: &'a Vec<ColumnMeta>, checks: &'a Vec<Box<dyn ColumnTest>>, referenced_columns: &'a Vec<ColumnMeta>) -> Result<RowCheck<'a>, anyhow::Error> {
         Ok(RowCheck {
             table: table.to_owned(),
+            file: file.to_owned(),
             column_positions: None,
             referenced_columns,
             references: HashMap::from_iter(referenced_columns.iter().map(|c| (c.get_column_key().to_owned(), HashSet::new()))),
@@ -244,6 +248,26 @@ impl<'a> RowCheck<'a> {
 
         Ok(all_checks_passed)
     }
+
+    pub fn process_data_file(&mut self, current_pass: &usize, lookup_table: &HashMap<String, HashSet<String>>) {
+        println!("Processing table {}", self.table);
+        let table_file = self.file.clone();
+        let table = self.table.to_owned();
+        let input_file = &table_file.with_extension("proc");
+        fs::rename(&table_file, input_file).expect("cannot rename");
+        let statements = read_table_data_file(&table, input_file);
+        let filtered = statements.filter(|(table_option, sql_statement)| {
+            if table_option.as_ref().is_none_or(|t| t != &table) {
+                panic!("wrong table");
+            }
+            let passed = self.test(current_pass, sql_statement, lookup_table);
+            if passed.is_err() {
+                panic!("{}", &passed.unwrap_err());
+            }
+            !(passed.is_ok_and(|p| !p))
+        });
+        write_sql_file(&table_file, filtered);
+    }
 }
 
 
@@ -258,9 +282,10 @@ fn new_col_test(table: &str, definition: &str, data_types: &HashMap<String, sqlp
 
 #[derive(Debug)]
 pub struct CheckCollection {
+    files: HashMap<String, PathBuf>,
     checks: HashMap<String, Vec<CheckType>>,
     tracked_columns: HashMap<String, Vec<ColumnType>>,
-    referenced_columns: HashMap<String, Vec<ColumnType>>
+    referenced_columns: HashMap<String, Vec<ColumnType>>,
 }
 
 impl CheckCollection {
@@ -309,6 +334,7 @@ impl CheckCollection {
     }
 
     pub fn new<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
+        files: &HashMap<String, PathBuf>,
         conditions: I,
         data_types: &HashMap<String, sqlparser::ast::DataType>,
     ) -> Result<Self, anyhow::Error> {
@@ -326,6 +352,7 @@ impl CheckCollection {
         }
 
         Ok(CheckCollection {
+            files: files.clone(),
             checks,
             tracked_columns,
             referenced_columns,
@@ -336,8 +363,9 @@ impl CheckCollection {
         let mut res: HashMap<String, RowType<'_>> = HashMap::new();
         for (table, tracked_columns) in self.tracked_columns.iter() {
             let checks = &self.checks[table];
+            let file = &self.files[table];
             let referenced_columns = &self.referenced_columns[table];
-            res.insert(table.to_owned(), RowType::from(RowCheck::from_config(table, tracked_columns, checks, referenced_columns)?));
+            res.insert(table.to_owned(), RowType::from(RowCheck::from_config(table, file, tracked_columns, checks, referenced_columns)?));
         }
         Ok(res)
     }
