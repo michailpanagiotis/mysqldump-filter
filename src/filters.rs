@@ -34,18 +34,20 @@ impl<'a> FilterConditions<'a> {
     pub fn test_sql_statement(
         &mut self,
         sql_statement: &str,
-        table: &str,
+        table_option: &Option<String>,
         lookup_table: &HashMap<String, HashSet<String>>,
-    ) -> bool {
+    ) -> Result<bool, anyhow::Error> {
+        let Some(table) = table_option else { return Ok(true) };
+
         if !sql_statement.starts_with("INSERT") {
-            return true;
+            return Ok(true);
         }
 
         if !self.per_table.contains_key(table) {
-            return true;
+            return Ok(true);
         }
 
-        self.per_table.get_mut(table).expect("cannot find tests for table").borrow_mut().test(&self.current_pass, sql_statement, lookup_table)
+        Ok(self.per_table.get_mut(table).expect("cannot find tests for table").borrow_mut().test(&self.current_pass, sql_statement, lookup_table)?)
     }
 
     pub fn filter<I: Iterator<Item=(Option<String>, String)>>(&mut self, statements: I) -> impl Iterator<Item=(Option<String>, String)> {
@@ -60,13 +62,13 @@ impl<'a> FilterConditions<'a> {
         dbg!(&self.per_table);
         dbg!(self.get_done_tables());
         dbg!(self.get_pending_tables());
-        let ready_tables = self.get_ready_tables();
-        dbg!(&ready_tables);
 
         statements.filter(move |(table_option, statement)| {
-            let Some(table) = table_option else { return true };
-            if !ready_tables.contains(table) { return true };
-            self.test_sql_statement(statement, table, &lookup)
+            let passed = self.test_sql_statement(statement, table_option, &lookup);
+            if passed.is_err() {
+                panic!("{}", &passed.unwrap_err());
+            }
+            !(passed.is_ok_and(|p| !p))
         })
     }
 }

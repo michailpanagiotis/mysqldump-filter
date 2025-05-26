@@ -72,8 +72,8 @@ fn main() -> Result<(), anyhow::Error> {
 
     let mut per_table = from_config(&collection)?;
 
-    dbg!(&per_table);
-    panic!("stop");
+    // dbg!(&per_table);
+    // panic!("stop");
 
     let deps: Vec<ColumnMeta> = per_table.values().flat_map(|f| f.borrow().get_column_dependencies()).collect();
 

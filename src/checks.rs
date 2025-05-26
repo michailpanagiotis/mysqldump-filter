@@ -181,7 +181,7 @@ impl ColumnPositions for RowCheck<'_> {
 
 impl ReferenceTracker for RowCheck<'_> {
     fn get_referenced_columns(&self) -> &Vec<ColumnMeta> {
-        &self.referenced_columns
+        self.referenced_columns
     }
 
     fn get_references(&self) -> &HashMap<String, HashSet<String>> {
@@ -217,7 +217,7 @@ impl<'a> RowCheck<'a> {
             table: table.to_owned(),
             column_positions: None,
             referenced_columns,
-            references: HashMap::new(),
+            references: HashMap::from_iter(referenced_columns.iter().map(|c| (c.get_column_key().to_owned(), HashSet::new()))),
             tracked_columns,
             checks,
             tested_at_pass: None,
@@ -235,23 +235,27 @@ impl<'a> RowCheck<'a> {
         dependencies
     }
 
-    pub fn test(&mut self, pass: &usize, insert_statement: &str, lookup_table: &HashMap<String, HashSet<String>>) -> bool {
+    pub fn test(&mut self, pass: &usize, insert_statement: &str, lookup_table: &HashMap<String, HashSet<String>>) -> Result<bool, anyhow::Error> {
+        if !self.is_ready_to_be_tested() {
+            return Ok(true);
+        }
+
         self.fulfill_dependency(pass);
 
         self.resolve_column_positions(insert_statement);
 
         let values = get_values(insert_statement);
-        let value_per_field = self.pick_values(self.tracked_columns.into_iter(), &values);
+        let value_per_field = self.pick_values(self.tracked_columns.iter(), &values);
 
         let all_checks_passed = self.checks.iter().all(|t| {
             t.test(value_per_field[t.get_column_key()], lookup_table)
         });
 
         if all_checks_passed {
-            self.capture_references(&values);
+            self.capture_references(&values)?;
         }
 
-        all_checks_passed
+        Ok(all_checks_passed)
     }
 }
 
@@ -263,41 +267,6 @@ fn new_col_test(table: &str, definition: &str, data_types: &HashMap<String, sqlp
         new_check(CelTest::new(definition, table, data_types)?)
     };
     Ok(item)
-}
-
-fn new_test(table: &str, definition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<Box<dyn ColumnTest>, anyhow::Error> {
-    let item: Box<dyn ColumnTest> = if definition.contains("->") {
-        Box::new(LookupTest::new(definition, table, data_types)?)
-    } else {
-        Box::new(CelTest::new(definition, table, data_types)?)
-    };
-    Ok(item)
-}
-
-fn parse_checks<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
-    conditions: I,
-    data_types: &HashMap<String, sqlparser::ast::DataType>,
-) -> Result<HashMap<String, Vec<Box<dyn ColumnTest>>>, anyhow::Error> {
-    let mut all_checks: Vec<Box<dyn ColumnTest>> = Vec::new();
-    for check in conditions.flat_map(|(table, conditions)| conditions.iter().map(|c| new_test(table, c, data_types))) {
-        all_checks.push(check?);
-    }
-    Ok(all_checks.into_iter().into_group_map_by(|x| x.get_table_name().to_owned()))
-}
-
-
-fn determine_columns<'a>(
-    grouped_cols: &'a HashMap<String, Vec<ColumnMeta>>,
-    grouped_referenced_cols: &'a HashMap<String, Vec<ColumnMeta>>,
-    grouped_checks: &'a HashMap<String, Vec<Box<dyn ColumnTest>>>,
-) -> Result<HashMap<String, RowType<'a>>, anyhow::Error> {
-    let mut res: HashMap<String, RowType<'a>> = HashMap::new();
-    for (table, tracked_columns) in grouped_cols {
-        let checks = grouped_checks.get(table).ok_or(anyhow::anyhow!("Grouped checks don't have table: {}", table))?;
-        let refs = grouped_referenced_cols.get(table).ok_or(anyhow::anyhow!("Grouped checks don't have table: {}", table))?;
-        res.insert(table.to_owned(), RowType::from(RowCheck::from_config(&table, tracked_columns, checks, refs)?));
-    }
-    Ok(res)
 }
 
 #[derive(Debug)]
@@ -313,7 +282,10 @@ impl CheckCollection {
         data_types: &HashMap<String, sqlparser::ast::DataType>,
     ) -> Result<HashMap<String, Vec<CheckType>>, anyhow::Error> {
         let mut checks: HashMap<String, Vec<CheckType>> = HashMap::new();
-        for check_option in conditions.flat_map(|(table, conditions)| conditions.iter().map(|c| new_col_test(table, c, data_types))) {
+        let parsed: Vec<_> = conditions
+            .flat_map(|(table, conditions)| conditions.iter().map(|c| new_col_test(table, c, data_types)))
+            .collect();
+        for check_option in parsed.into_iter() {
             let check = check_option?;
             let table_name = check.as_ref().get_table_name().to_owned();
             if !checks.contains_key(&table_name) {
@@ -349,7 +321,7 @@ impl CheckCollection {
         let tracked_columns = CheckCollection::determine_tracked_columns(&checks);
         let mut referenced_columns = CheckCollection::determine_referenced_columns(&checks);
 
-        for (table, columns) in tracked_columns.iter() {
+        for (table, _) in tracked_columns.iter() {
             if !referenced_columns.contains_key(table) {
                 referenced_columns.insert(table.to_owned(), Vec::new());
             }
