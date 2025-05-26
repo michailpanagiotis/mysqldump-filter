@@ -10,8 +10,8 @@ mod filters;
 mod sql;
 mod traits;
 
-use traits::{ColumnMeta, NoDataTypeError};
-use checks::from_config;
+use traits::ColumnMeta;
+use checks::{from_config, CheckCollection};
 use filters::FilterConditions;
 use sql::{get_data_types, read_sql_file, write_sql_file};
 
@@ -49,7 +49,7 @@ fn process_file(input_file: &Path, output_file: &Path, allow_data_on_tables: &Ha
     write_sql_file(output_file, filtered);
 }
 
-fn main() -> Result<(), NoDataTypeError> {
+fn main() -> Result<(), anyhow::Error> {
     let cli = Cli::parse();
     let input_file = std::env::current_dir().unwrap().to_path_buf().join(cli.input);
     let output_file = std::env::current_dir().unwrap().to_path_buf().join(cli.output);
@@ -67,7 +67,13 @@ fn main() -> Result<(), NoDataTypeError> {
     println!("Read data types!");
 
     let config = Config::from_file(config_file.as_path());
-    let mut per_table = from_config(config.filters.iter().chain(&config.cascades), &data_types)?;
+
+    let collection = CheckCollection::new(config.filters.iter().chain(&config.cascades), &data_types)?;
+
+    let mut per_table = from_config(&collection)?;
+
+    // dbg!(&per_table);
+    // panic!("stop");
 
     let deps: Vec<ColumnMeta> = per_table.values().flat_map(|f| f.borrow().get_column_dependencies()).collect();
 

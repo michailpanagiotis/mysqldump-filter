@@ -670,6 +670,7 @@ dependencies = [
  "serde",
  "sqlparser",
  "tempdir",
+ "thiserror 2.0.12",
 ]
 
 [[package]]
