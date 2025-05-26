@@ -206,9 +206,6 @@ impl Dependency for RowCheck<'_> {
         &self.pending_dependencies
     }
 
-    fn get_dependencies_mut(&mut self) -> &mut Vec<DependencyType> {
-        &mut self.pending_dependencies
-    }
 }
 
 impl<'a> RowCheck<'a> {
@@ -292,6 +289,14 @@ impl CheckCollection {
             c.get_tracked_columns().iter().map(ColumnType::from).collect::<Vec<ColumnType>>()
         }).into_group_map_by(|x| x.get_table_name().to_owned());
         tracked_columns.values_mut().for_each(|v| v.dedup());
+
+        for check in checks.values().flatten().filter(|c| c.get_column_dependencies().len() > 0) {
+            for dep in check.get_column_dependencies() {
+                let found = tracked_columns.values().flatten().find(|x| x.get_column_meta() == &dep);
+                dbg!(found);
+            }
+        }
+
         tracked_columns
     }
 

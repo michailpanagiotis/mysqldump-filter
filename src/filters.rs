@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::checks::RowCheck;
-use crate::traits::{Dependency, ReferenceTracker};
+use crate::traits::ReferenceTracker;
 
 #[derive(Debug)]
 pub struct FilterConditions<'a> {
@@ -19,16 +19,14 @@ impl<'a> FilterConditions<'a> {
         }
     }
 
-    fn get_done_tables(&self) -> HashSet<String> {
-        self.per_table.iter().filter(|(_, row_check)| row_check.borrow().has_been_fulfilled()).map(|(table, _)| table.to_owned()).collect()
-    }
+    fn get_current_loookup(&self) -> HashMap<String, HashSet<String>> {
+        let mut lookup: HashMap<String, HashSet<String>> = HashMap::new();
 
-    fn get_pending_tables(&self) -> HashSet<String> {
-        self.per_table.iter().filter(|(_, row_check)| !row_check.borrow().has_been_fulfilled()).map(|(table, _)| table.to_owned()).collect()
-    }
+        for (_, row_check) in self.per_table.iter() {
+            lookup.extend(row_check.borrow().get_references().iter().map(|(k, v)| (k.to_owned(), v.to_owned())));
+        }
 
-    fn get_ready_tables(&self) -> HashSet<String> {
-        self.per_table.iter().filter(|(_, row_check)| row_check.borrow().is_ready_to_be_tested()).map(|(table, _)| table.to_owned()).collect()
+        lookup
     }
 
     pub fn test_sql_statement(
@@ -47,21 +45,12 @@ impl<'a> FilterConditions<'a> {
             return Ok(true);
         }
 
-        Ok(self.per_table.get_mut(table).expect("cannot find tests for table").borrow_mut().test(&self.current_pass, sql_statement, lookup_table)?)
+        self.per_table.get_mut(table).expect("cannot find tests for table").borrow_mut().test(&self.current_pass, sql_statement, lookup_table)
     }
 
     pub fn filter<I: Iterator<Item=(Option<String>, String)>>(&mut self, statements: I) -> impl Iterator<Item=(Option<String>, String)> {
         self.current_pass += 1;
-        let mut lookup: HashMap<String, HashSet<String>> = HashMap::new();
-
-        for (_, row_check) in self.per_table.iter() {
-            lookup.extend(row_check.borrow().get_references().iter().map(|(k, v)| (k.to_owned(), v.to_owned())));
-        }
-        dbg!(&lookup);
-
-        dbg!(&self.per_table);
-        dbg!(self.get_done_tables());
-        dbg!(self.get_pending_tables());
+        let lookup = self.get_current_loookup();
 
         statements.filter(move |(table_option, statement)| {
             let passed = self.test_sql_statement(statement, table_option, &lookup);

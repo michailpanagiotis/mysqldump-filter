@@ -38,11 +38,6 @@ pub trait ColumnPositions {
         }
     }
 
-    fn get_column_position(&self, column_name: &str) -> Option<usize> {
-        let positions = self.get_column_positions().as_ref()?;
-        Some(positions[column_name])
-    }
-
     fn has_resolved_positions(&self) -> bool {
         self.get_column_positions().is_some()
     }
@@ -73,11 +68,6 @@ pub trait Dependency {
     fn set_fulfilled_at_depth(&mut self, depth: &usize);
     fn has_been_fulfilled(&self) -> bool;
     fn get_dependencies(&self) -> &Vec<Weak<RefCell<dyn Dependency>>>;
-    fn get_dependencies_mut(&mut self) -> &mut Vec<Weak<RefCell<dyn Dependency>>>;
-
-    fn add_dependency(&mut self, target: Weak<RefCell<dyn Dependency>>) {
-        self.get_dependencies_mut().push(target);
-    }
 
     fn is_ready_to_be_tested(&self) -> bool {
         !self.has_been_fulfilled() && self.get_dependencies().iter().all(|d| {
