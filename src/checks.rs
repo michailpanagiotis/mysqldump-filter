@@ -225,16 +225,6 @@ impl<'a> RowCheck<'a> {
         })
     }
 
-    pub fn get_column_dependencies(&self) -> HashSet<ColumnMeta> {
-        let mut dependencies = HashSet::new();
-        for condition in self.checks.iter() {
-            for dependency in condition.get_column_dependencies() {
-                dependencies.insert(dependency);
-            }
-        }
-        dependencies
-    }
-
     pub fn test(&mut self, pass: &usize, insert_statement: &str, lookup_table: &HashMap<String, HashSet<String>>) -> Result<bool, anyhow::Error> {
         if !self.is_ready_to_be_tested() {
             return Ok(true);
@@ -351,6 +341,5 @@ impl CheckCollection {
 pub fn from_config<'a>(
     collection: &'a CheckCollection,
 ) -> Result<HashMap<String, RowType<'a>>, anyhow::Error> {
-    let row_checks = collection.determine_row_checks()?;
-    Ok(row_checks)
+    collection.determine_row_checks()
 }

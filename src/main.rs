@@ -75,8 +75,6 @@ fn main() -> Result<(), anyhow::Error> {
     // dbg!(&per_table);
     // panic!("stop");
 
-    let deps: Vec<ColumnMeta> = per_table.values().flat_map(|f| f.borrow().get_column_dependencies()).collect();
-
     let mut fc = FilterConditions::new(&mut per_table);
 
     println!("First pass...");
