@@ -12,7 +12,7 @@ mod traits;
 
 use checks::{from_config, CheckCollection};
 use filters::FilterConditions;
-use sql::{explode_to_files, get_data_types, read_sql_file, write_sql_file};
+use sql::{get_data_types, read_sql_file, write_sql_file};
 
 #[derive(Deserialize)]
 #[serde(rename = "name")]
@@ -67,9 +67,21 @@ fn main() -> Result<(), anyhow::Error> {
 
     let config = Config::from_file(config_file.as_path());
 
-    explode_to_files(working_dir_path.as_path(), input_file.as_path(), &config.allow_data_on_tables).unwrap_or_else(|e| {
-        panic!("Problem exploding to files: {e:?}");
-    });
+    let collection = CheckCollection::new(config.filters.iter().chain(&config.cascades), &data_types)?;
+
+    let mut per_table = from_config(&collection)?;
+
+    // dbg!(&per_table);
+    // panic!("stop");
+
+    let mut fc = FilterConditions::new(&mut per_table);
+
+    println!("First pass...");
+    process_file(input_file.as_path(), output_file.as_path(), &config.allow_data_on_tables, &mut fc);
+
+    println!("Second pass...");
+    fs::rename(output_file.as_path(), &working_file_path).expect("cannot rename");
+    process_file(&working_file_path, output_file.as_path(), &config.allow_data_on_tables, &mut fc);
 
     if let Some(dir) = temp_dir {
        let _ = dir.close();

@@ -1,16 +1,10 @@
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use nom::{
-  IResult,
-  Parser,
-  branch::alt,
-  bytes::complete::{escaped, is_not, take_until, tag, take_till},
-  character::complete::{char, one_of, none_of},
-  multi::{separated_list0, separated_list1},
-  sequence::{delimited, preceded},
+  branch::alt, bytes::complete::{escaped, is_not, tag, take_till, take_until}, character::complete::{char, none_of, one_of, tab}, multi::{separated_list0, separated_list1}, sequence::{delimited, preceded}, AsBytes, IResult, Parser
 };
 use regex::Regex;
-use std::collections::{HashMap, HashSet};
+use std::{collections::{HashMap, HashSet}, fs::File, hash::Hash};
 use std::fs;
 use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -25,18 +19,18 @@ pub fn extract_table(sql_comment: &str) -> String {
     TABLE_DUMP_RE.captures(sql_comment).unwrap().get(1).unwrap().as_str().to_string()
 }
 
-pub fn get_column_positions(insert_statement: &str) -> HashMap<String, usize> {
+pub fn get_columns(insert_statement: &str) -> Vec<String> {
     let dialect = MySqlDialect {};
     let ast = SqlParser::parse_sql(&dialect, insert_statement).unwrap();
 
     let st = ast.first().unwrap();
     let sqlparser::ast::Statement::Insert(x) = st else { panic!("stop") };
 
-    let positions: HashMap<String, usize> = HashMap::from_iter(
-        x.columns.iter().enumerate().map(|(idx, c)| (c.value.to_owned(), idx))
-    );
+    x.columns.iter().map(|x| x.value.to_owned()).collect()
+}
 
-    positions
+pub fn get_column_positions(insert_statement: &str) -> HashMap<String, usize> {
+    get_columns(insert_statement).iter().enumerate().map(|(idx, c)| (c.to_owned(), idx)).collect()
 }
 
 pub fn get_values(insert_statement: &str) -> Vec<&str> {
@@ -176,4 +170,47 @@ pub fn write_sql_file<I: Iterator<Item=(Option<String>, String)>>(filepath: &Pat
 
     writer.flush().expect("Cannot flush buffer");
     filepath.to_path_buf()
+}
+
+pub fn get_writer(filepath: &Path) -> Result<BufWriter<File>, anyhow::Error> {
+    fs::File::create(filepath)?;
+    let file = fs::OpenOptions::new()
+        .append(true)
+        .open(filepath)?;
+    Ok(BufWriter::new(file))
+}
+pub fn explode_to_files(working_dir_path: &Path, sqldump_filepath: &Path, allowed_tables: &HashSet<String>) -> Result<(PathBuf, HashSet<String>), anyhow::Error> {
+    let working_file_path = working_dir_path.join("INTERIM").with_extension("sql");
+    let mut writers: HashMap<String, BufWriter<File>> = HashMap::new();
+    let mut table_files: HashSet<String> = HashSet::new();
+    let mut working_file_writer = get_writer(&working_file_path)?;
+
+    let statements = SqlStatements::from_file(sqldump_filepath, allowed_tables);
+
+    for (table_option, line) in statements {
+        match table_option {
+            None => working_file_writer.write_all(line.as_bytes())?,
+            Some(table) => {
+                let writer = match writers.get_mut(&table) {
+                    None => {
+                        table_files.insert(table.to_owned());
+                        let table_file = working_dir_path.join(&table).with_extension("sql");
+                        working_file_writer.write_all(format!("--- INLINE {}\n", table_file.display()).as_bytes())?;
+                        writers.insert(table.to_owned(), get_writer(&table_file)?);
+                        writers.get_mut(&table).unwrap()
+                    },
+                    Some(w) => w,
+                };
+
+                writer.write_all(line.as_bytes())?
+            }
+        }
+    };
+
+    working_file_writer.flush()?;
+    for w in writers.values_mut() {
+        w.flush()?
+    }
+
+    Ok((working_file_path, table_files))
 }
