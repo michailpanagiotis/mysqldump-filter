@@ -92,6 +92,16 @@ impl SqlStatements {
         }
     }
 
+    pub fn from_table_data_file(table: &str, sqldump_filepath: &Path) -> Self {
+        let file = fs::File::open(sqldump_filepath).expect("Cannot open file");
+        SqlStatements {
+            buf: io::BufReader::new(file),
+            cur_table: Some(table.to_owned()),
+            last_statement: None,
+            allowed_tables: HashSet::from([table.to_owned()]),
+        }
+    }
+
     fn capture_table(&mut self, cur_statement: &str) {
         if self.last_statement.as_ref().is_some_and(|x| x.starts_with("UNLOCK TABLES;")) {
             self.cur_table = None;
@@ -151,6 +161,10 @@ pub fn get_data_types(sqldump_filepath: &Path) -> HashMap<String, sqlparser::ast
 
 pub fn read_sql_file(sqldump_filepath: &Path, allowed_tables: &HashSet<String>) -> impl Iterator<Item = (Option<String>, String)> {
     SqlStatements::from_file(sqldump_filepath, allowed_tables)
+}
+
+pub fn read_table_data_file(table: &str, sqldump_filepath: &Path) -> impl Iterator<Item = (Option<String>, String)> {
+    SqlStatements::from_table_data_file(table, sqldump_filepath)
 }
 
 pub fn write_sql_file<I: Iterator<Item=(Option<String>, String)>>(filepath: &Path, lines: I) -> PathBuf {

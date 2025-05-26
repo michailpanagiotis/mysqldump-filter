@@ -12,7 +12,7 @@ mod traits;
 
 use checks::{from_config, CheckCollection};
 use filters::FilterConditions;
-use sql::{explode_to_files, get_data_types, read_sql_file, write_sql_file};
+use sql::{explode_to_files, get_data_types, read_table_data_file, write_sql_file};
 
 #[derive(Deserialize)]
 #[serde(rename = "name")]
@@ -43,9 +43,12 @@ struct Cli {
     working_dir: Option<PathBuf>,
 }
 
-fn process_file(input_file: &Path, output_file: &Path, allow_data_on_tables: &HashSet<String>, filters: &mut FilterConditions) {
-    let filtered = filters.filter(read_sql_file(input_file, allow_data_on_tables));
-    write_sql_file(output_file, filtered);
+fn process_table(table: &str, file: &Path, filters: &mut FilterConditions) {
+    println!("Processing table {}", table);
+    let input_file = file.with_extension("proc");
+    fs::rename(file, &file.with_extension("proc")).expect("cannot rename");
+    let filtered = filters.filter(read_table_data_file(table, &input_file));
+    write_sql_file(file, filtered);
 }
 
 fn main() -> Result<(), anyhow::Error> {
@@ -66,10 +69,17 @@ fn main() -> Result<(), anyhow::Error> {
     println!("Read data types!");
 
     let config = Config::from_file(config_file.as_path());
+    let collection = CheckCollection::new(config.filters.iter().chain(&config.cascades), &data_types)?;
+    let mut per_table = from_config(&collection)?;
 
-    explode_to_files(working_dir_path.as_path(), input_file.as_path(), &config.allow_data_on_tables).unwrap_or_else(|e| {
+    let (working_file_path, table_files) = explode_to_files(working_dir_path.as_path(), input_file.as_path(), &config.allow_data_on_tables).unwrap_or_else(|e| {
         panic!("Problem exploding to files: {e:?}");
     });
+
+    let mut fc = FilterConditions::new(&mut per_table);
+    for (table, file) in table_files {
+        process_table(&table, &file, &mut fc);
+    }
 
     if let Some(dir) = temp_dir {
        let _ = dir.close();
