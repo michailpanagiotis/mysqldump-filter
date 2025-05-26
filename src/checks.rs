@@ -5,6 +5,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::fs;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
@@ -249,24 +250,35 @@ impl<'a> RowCheck<'a> {
         Ok(all_checks_passed)
     }
 
-    pub fn process_data_file(&mut self, current_pass: &usize, lookup_table: &HashMap<String, HashSet<String>>) {
+    pub fn process_data_file(&mut self, current_pass: &usize, lookup_table: &HashMap<String, HashSet<String>>) -> Result<(), anyhow::Error> {
         println!("Processing table {}", self.table);
+        let current_table = &self.table.clone();
         let table_file = self.file.clone();
-        let table = self.table.to_owned();
         let input_file = &table_file.with_extension("proc");
         fs::rename(&table_file, input_file).expect("cannot rename");
-        let statements = read_table_data_file(&table, input_file);
-        let filtered = statements.filter(|(table_option, sql_statement)| {
-            if table_option.as_ref().is_none_or(|t| t != &table) {
-                panic!("wrong table");
+        let statements = read_table_data_file(current_table, input_file);
+
+        let mut writer = BufWriter::new(
+            fs::OpenOptions::new()
+            .append(true)
+            .open(&self.file)?
+        );
+
+        for (table_option, sql_statement) in statements {
+            let Some(ref table) = table_option else { return Err(anyhow::anyhow!("unknown table")) };
+            if current_table != table {
+                return Err(anyhow::anyhow!("wrong table {} != {}", current_table, table));
             }
-            let passed = self.test(current_pass, sql_statement, lookup_table);
-            if passed.is_err() {
-                panic!("{}", &passed.unwrap_err());
+
+            let passed = self.test(current_pass, &sql_statement, lookup_table)?;
+            if passed {
+                writer.write_all(sql_statement.as_bytes())?;
             }
-            !(passed.is_ok_and(|p| !p))
-        });
-        write_sql_file(&table_file, filtered);
+        }
+
+        writer.flush()?;
+
+        Ok(())
     }
 }
 
