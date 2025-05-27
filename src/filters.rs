@@ -1,19 +1,25 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use crate::checks::RowCheck;
-use crate::traits::ReferenceTracker;
+use crate::traits::{Dependency, ReferenceTracker};
+
+use crate::sql::{explode_to_files, get_data_types, read_table_data_file, write_sql_file};
 
 #[derive(Debug)]
 pub struct FilterConditions<'a> {
+    table_files: HashMap<String, PathBuf>,
     per_table: &'a mut HashMap<String, Rc<RefCell<RowCheck<'a>>>>,
     pub current_pass: usize,
 }
 
 impl<'a> FilterConditions<'a> {
-    pub fn new(per_table: &'a mut HashMap<String, Rc<RefCell<RowCheck<'a>>>>) -> Self {
+    pub fn new(table_files: &HashMap<String, PathBuf>, per_table: &'a mut HashMap<String, Rc<RefCell<RowCheck<'a>>>>) -> Self {
         FilterConditions {
+            table_files: table_files.clone(),
             per_table,
             current_pass: 0,
         }
@@ -35,13 +41,18 @@ impl<'a> FilterConditions<'a> {
         table_option: &Option<String>,
         lookup_table: &HashMap<String, HashSet<String>>,
     ) -> Result<bool, anyhow::Error> {
-        let Some(table) = table_option else { return Ok(true) };
+        let Some(table) = table_option else {
+            println!("WRONG TABLE");
+            return Ok(true)
+        };
 
         if !sql_statement.starts_with("INSERT") {
+            println!("NO INSERT");
             return Ok(true);
         }
 
         if !self.per_table.contains_key(table) {
+            println!("NO KEY {table}");
             return Ok(true);
         }
 
@@ -59,5 +70,21 @@ impl<'a> FilterConditions<'a> {
             }
             !(passed.is_ok_and(|p| !p))
         })
+    }
+
+    pub fn is_table_ready(&self, table: &str) -> bool {
+        self.per_table.get(table).is_none_or(|t| t.borrow().has_fulfilled_dependencies())
+    }
+
+    pub fn process_table(&mut self, table: &str, file: &Path) {
+        if !self.is_table_ready(table) {
+            println!("Skipping table {table} since it still has dependencies");
+            return;
+        }
+        println!("Processing table {table}");
+        let input_file = file.with_extension("proc");
+        fs::rename(file, &input_file).expect("cannot rename");
+        let filtered = self.filter(read_table_data_file(table, &input_file));
+        write_sql_file(file, filtered);
     }
 }

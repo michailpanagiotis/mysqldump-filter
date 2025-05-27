@@ -69,8 +69,8 @@ pub trait Dependency {
     fn has_been_fulfilled(&self) -> bool;
     fn get_dependencies(&self) -> &Vec<Weak<RefCell<dyn Dependency>>>;
 
-    fn is_ready_to_be_tested(&self) -> bool {
-        !self.has_been_fulfilled() && self.get_dependencies().iter().all(|d| {
+    fn has_fulfilled_dependencies(&self) -> bool {
+        self.get_dependencies().iter().all(|d| {
             d.upgrade().unwrap().borrow().has_been_fulfilled()
         })
     }

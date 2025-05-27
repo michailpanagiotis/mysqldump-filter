@@ -228,7 +228,7 @@ impl<'a> RowCheck<'a> {
     }
 
     pub fn test(&mut self, pass: &usize, insert_statement: &str, lookup_table: &HashMap<String, HashSet<String>>) -> Result<bool, anyhow::Error> {
-        if !self.is_ready_to_be_tested() {
+        if !self.has_fulfilled_dependencies() {
             return Ok(true);
         }
 
@@ -236,6 +236,7 @@ impl<'a> RowCheck<'a> {
 
         self.resolve_column_positions(insert_statement);
 
+        println!("CHECKING {insert_statement}");
         let values = get_values(insert_statement);
         let value_per_field = self.pick_values(self.tracked_columns.iter(), &values);
 
@@ -330,7 +331,6 @@ impl CheckCollection {
         for check in checks.values().flatten().filter(|c| c.get_column_dependencies().len() > 0) {
             for dep in check.get_column_dependencies() {
                 let found = tracked_columns.values().flatten().find(|x| x.get_column_meta() == &dep);
-                dbg!(found);
             }
         }
 

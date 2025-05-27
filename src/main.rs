@@ -43,14 +43,6 @@ struct Cli {
     working_dir: Option<PathBuf>,
 }
 
-fn process_table(table: &str, file: &Path, filters: &mut FilterConditions) {
-    println!("Processing table {}", table);
-    let input_file = file.with_extension("proc");
-    fs::rename(file, &file.with_extension("proc")).expect("cannot rename");
-    let filtered = filters.filter(read_table_data_file(table, &input_file));
-    write_sql_file(file, filtered);
-}
-
 fn main() -> Result<(), anyhow::Error> {
     let cli = Cli::parse();
     let input_file = std::env::current_dir().unwrap().to_path_buf().join(cli.input);
@@ -76,9 +68,9 @@ fn main() -> Result<(), anyhow::Error> {
 
     let collection = CheckCollection::new(&table_files, config.filters.iter().chain(&config.cascades), &data_types)?;
     let mut per_table = from_config(&collection)?;
-    let mut fc = FilterConditions::new(&mut per_table);
+    let mut fc = FilterConditions::new(&table_files, &mut per_table);
     for (table, file) in table_files {
-        process_table(&table, &file, &mut fc);
+        fc.process_table(&table, &file);
     }
 
     if let Some(dir) = temp_dir {
