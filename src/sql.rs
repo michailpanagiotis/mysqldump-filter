@@ -1,10 +1,10 @@
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use nom::{
-  branch::alt, bytes::complete::{escaped, is_not, tag, take_till, take_until}, character::complete::{char, none_of, one_of, tab}, multi::{separated_list0, separated_list1}, sequence::{delimited, preceded}, AsBytes, IResult, Parser
+  branch::alt, bytes::complete::{escaped, is_not, tag, take_till, take_until}, character::complete::{char, none_of, one_of}, multi::{separated_list0, separated_list1}, sequence::{delimited, preceded}, IResult, Parser
 };
 use regex::Regex;
-use std::{collections::{HashMap, HashSet}, fs::File, hash::Hash};
+use std::{collections::{HashMap, HashSet}, fs::File};
 use std::fs;
 use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};

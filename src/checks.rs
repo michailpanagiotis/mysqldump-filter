@@ -6,16 +6,16 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::fs;
 use std::io::{BufWriter, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use crate::traits::{ColumnMeta, ColumnPositions, DBColumn, ColumnTest, ReferenceTracker, Dependency};
-use crate::sql::{get_values, read_table_data_file, write_sql_file};
+use crate::sql::{get_values, read_table_data_file};
 
 type CheckType = Box<dyn ColumnTest>;
 type ColumnType = ColumnMeta;
-type RowType<'a> = Rc<RefCell<RowCheck<'a>>>;
+pub type RowType<'a> = Rc<RefCell<RowCheck<'a>>>;
 type DependencyType = Weak<RefCell<dyn Dependency>>;
 
 fn new_check<C: ColumnTest + 'static>(test: C) -> CheckType {
@@ -159,8 +159,7 @@ impl ColumnTest for LookupTest {
 
 #[derive(Debug)]
 pub struct RowCheck<'a> {
-    table: String,
-    file: PathBuf,
+    pub table: String,
     // trait ColumnPositions
     column_positions: Option<HashMap<String, usize>>,
     // trait ReferenceTracker
@@ -213,10 +212,9 @@ impl Dependency for RowCheck<'_> {
 }
 
 impl<'a> RowCheck<'a> {
-    pub fn from_config(table: &str, file: &Path, tracked_columns: &'a Vec<ColumnMeta>, checks: &'a Vec<Box<dyn ColumnTest>>, referenced_columns: &'a Vec<ColumnMeta>) -> Result<RowCheck<'a>, anyhow::Error> {
+    pub fn from_config(table: &str, tracked_columns: &'a Vec<ColumnMeta>, checks: &'a Vec<Box<dyn ColumnTest>>, referenced_columns: &'a Vec<ColumnMeta>) -> Result<RowCheck<'a>, anyhow::Error> {
         Ok(RowCheck {
             table: table.to_owned(),
-            file: file.to_owned(),
             column_positions: None,
             referenced_columns,
             references: HashMap::from_iter(referenced_columns.iter().map(|c| (c.get_column_key().to_owned(), HashSet::new()))),
@@ -254,14 +252,14 @@ impl<'a> RowCheck<'a> {
         Ok(all_checks_passed)
     }
 
-    pub fn process_data_file(&mut self, current_pass: &usize, lookup_table: &HashMap<String, HashSet<String>>) -> Result<(), anyhow::Error> {
+    pub fn process_data_file(&mut self, current_pass: &usize, file: &Path, lookup_table: &HashMap<String, HashSet<String>>) -> Result<(), anyhow::Error> {
         if !self.has_fulfilled_dependencies() {
             println!("Skipping table {} since it still has dependencies", &self.table);
             return Ok(());
         }
         println!("Processing table {}", self.table);
         let current_table = &self.table.clone();
-        let table_file = self.file.clone();
+        let table_file = file.to_path_buf();
         let input_file = &table_file.with_extension("proc");
         fs::rename(&table_file, input_file).expect("cannot rename");
         fs::File::create(&table_file)?;
@@ -303,7 +301,6 @@ fn new_col_test(table: &str, definition: &str, data_types: &HashMap<String, sqlp
 
 #[derive(Debug)]
 pub struct CheckCollection {
-    files: HashMap<String, PathBuf>,
     checks: HashMap<String, Vec<CheckType>>,
     tracked_columns: HashMap<String, Vec<ColumnType>>,
     referenced_columns: HashMap<String, Vec<ColumnType>>,
@@ -335,13 +332,6 @@ impl CheckCollection {
             c.get_tracked_columns().iter().map(ColumnType::from).collect::<Vec<ColumnType>>()
         }).into_group_map_by(|x| x.get_table_name().to_owned());
         tracked_columns.values_mut().for_each(|v| v.dedup());
-
-        for check in checks.values().flatten().filter(|c| c.get_column_dependencies().len() > 0) {
-            for dep in check.get_column_dependencies() {
-                let found = tracked_columns.values().flatten().find(|x| x.get_column_meta() == &dep);
-            }
-        }
-
         tracked_columns
     }
 
@@ -350,11 +340,11 @@ impl CheckCollection {
             c.get_column_dependencies().iter().map(ColumnType::from).collect::<Vec<ColumnType>>()
         }).into_group_map_by(|x| x.get_table_name().to_owned());
         referenced_columns.values_mut().for_each(|v| v.dedup());
+        dbg!(&referenced_columns);
         referenced_columns
     }
 
     pub fn new<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
-        files: &HashMap<String, PathBuf>,
         conditions: I,
         data_types: &HashMap<String, sqlparser::ast::DataType>,
     ) -> Result<Self, anyhow::Error> {
@@ -372,7 +362,6 @@ impl CheckCollection {
         }
 
         Ok(CheckCollection {
-            files: files.clone(),
             checks,
             tracked_columns,
             referenced_columns,
@@ -383,9 +372,8 @@ impl CheckCollection {
         let mut res: HashMap<String, RowType<'_>> = HashMap::new();
         for (table, tracked_columns) in self.tracked_columns.iter() {
             let checks = &self.checks[table];
-            let file = &self.files[table];
             let referenced_columns = &self.referenced_columns[table];
-            res.insert(table.to_owned(), RowType::from(RowCheck::from_config(table, file, tracked_columns, checks, referenced_columns)?));
+            res.insert(table.to_owned(), RowType::from(RowCheck::from_config(table, tracked_columns, checks, referenced_columns)?));
         }
         dbg!(&res);
         Ok(res)

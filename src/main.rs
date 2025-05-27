@@ -1,18 +1,16 @@
 use clap::Parser;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 use tempdir::TempDir;
 
 mod checks;
-mod filters;
 mod sql;
 mod traits;
 
+use traits::ReferenceTracker;
 use checks::{from_config, CheckCollection};
-use filters::FilterConditions;
-use sql::{explode_to_files, get_data_types, read_table_data_file, write_sql_file};
+use sql::{explode_to_files, get_data_types};
 
 #[derive(Deserialize)]
 #[serde(rename = "name")]
@@ -55,22 +53,28 @@ fn main() -> Result<(), anyhow::Error> {
         None => cli.working_dir.unwrap(),
     };
 
-    let working_file_path = working_dir_path.join("INTERIM").with_extension("sql");
     let data_types = get_data_types(input_file.as_path());
 
     println!("Read data types!");
 
     let config = Config::from_file(config_file.as_path());
+    let collection = CheckCollection::new(config.filters.iter().chain(&config.cascades), &data_types)?;
 
     let (working_file_path, table_files) = explode_to_files(working_dir_path.as_path(), input_file.as_path(), &config.allow_data_on_tables).unwrap_or_else(|e| {
         panic!("Problem exploding to files: {e:?}");
     });
 
-    let collection = CheckCollection::new(&table_files, config.filters.iter().chain(&config.cascades), &data_types)?;
+    let mut lookup_table: HashMap<String, HashSet<String>> = HashMap::new();
+
     let mut per_table = from_config(&collection)?;
-    let mut fc = FilterConditions::new(&table_files, &mut per_table);
-    for (table, file) in table_files {
-        fc.process_table(&table, &file);
+    for (_, row_check) in per_table.iter() {
+        lookup_table.extend(row_check.borrow().get_references().iter().map(|(k, v)| (k.to_owned(), v.to_owned())));
+    }
+    let current_pass = 0;
+
+    for row_check in per_table.values_mut() {
+        let file = table_files[&row_check.borrow().table].to_path_buf();
+        row_check.borrow_mut().process_data_file(&current_pass, &file, &lookup_table)?;
     }
 
     if let Some(dir) = temp_dir {
