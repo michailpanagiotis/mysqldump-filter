@@ -227,17 +227,20 @@ impl<'a> RowCheck<'a> {
         })
     }
 
-    pub fn test(&mut self, pass: &usize, insert_statement: &str, lookup_table: &HashMap<String, HashSet<String>>) -> Result<bool, anyhow::Error> {
+    pub fn test(&mut self, pass: &usize, sql_statement: &str, lookup_table: &HashMap<String, HashSet<String>>) -> Result<bool, anyhow::Error> {
+        if !sql_statement.starts_with("INSERT") {
+            return Ok(true);
+        }
+
         if !self.has_fulfilled_dependencies() {
             return Ok(true);
         }
 
         self.fulfill_dependency(pass);
 
-        self.resolve_column_positions(insert_statement);
+        self.resolve_column_positions(sql_statement);
 
-        println!("CHECKING {insert_statement}");
-        let values = get_values(insert_statement);
+        let values = get_values(sql_statement);
         let value_per_field = self.pick_values(self.tracked_columns.iter(), &values);
 
         let all_checks_passed = self.checks.iter().all(|t| {
@@ -252,19 +255,24 @@ impl<'a> RowCheck<'a> {
     }
 
     pub fn process_data_file(&mut self, current_pass: &usize, lookup_table: &HashMap<String, HashSet<String>>) -> Result<(), anyhow::Error> {
+        if !self.has_fulfilled_dependencies() {
+            println!("Skipping table {} since it still has dependencies", &self.table);
+            return Ok(());
+        }
         println!("Processing table {}", self.table);
         let current_table = &self.table.clone();
         let table_file = self.file.clone();
         let input_file = &table_file.with_extension("proc");
         fs::rename(&table_file, input_file).expect("cannot rename");
-        let statements = read_table_data_file(current_table, input_file);
+        fs::File::create(&table_file)?;
 
         let mut writer = BufWriter::new(
             fs::OpenOptions::new()
             .append(true)
-            .open(&self.file)?
+            .open(&table_file)?
         );
 
+        let statements = read_table_data_file(current_table, input_file);
         for (table_option, sql_statement) in statements {
             let Some(ref table) = table_option else { return Err(anyhow::anyhow!("unknown table")) };
             if current_table != table {
@@ -379,6 +387,7 @@ impl CheckCollection {
             let referenced_columns = &self.referenced_columns[table];
             res.insert(table.to_owned(), RowType::from(RowCheck::from_config(table, file, tracked_columns, checks, referenced_columns)?));
         }
+        dbg!(&res);
         Ok(res)
     }
 }

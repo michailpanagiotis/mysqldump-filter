@@ -77,14 +77,11 @@ impl<'a> FilterConditions<'a> {
     }
 
     pub fn process_table(&mut self, table: &str, file: &Path) {
-        if !self.is_table_ready(table) {
-            println!("Skipping table {table} since it still has dependencies");
+        let lookup = &self.get_current_loookup();
+        let Some(row_check) = self.per_table.get_mut(table) else {
+            println!("Skipping table {table} since it has no filters");
             return;
-        }
-        println!("Processing table {table}");
-        let input_file = file.with_extension("proc");
-        fs::rename(file, &input_file).expect("cannot rename");
-        let filtered = self.filter(read_table_data_file(table, &input_file));
-        write_sql_file(file, filtered);
+        };
+        row_check.borrow_mut().process_data_file(&self.current_pass, lookup).unwrap();
     }
 }
