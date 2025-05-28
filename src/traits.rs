@@ -8,6 +8,7 @@ use std::rc::Weak;
 
 pub trait DBColumn {
     fn get_column_meta(&self) -> &ColumnMeta;
+    fn get_column_meta_mut(&mut self) -> &mut ColumnMeta;
 
     fn get_table_name(&self) -> &str {
         &self.get_column_meta().table
@@ -111,10 +112,15 @@ pub struct ColumnMeta {
     column: String,
     data_type: sqlparser::ast::DataType,
     dependencies: Vec<ColumnMeta>,
+    position: Option<usize>,
 }
 
 impl DBColumn for ColumnMeta {
     fn get_column_meta(&self) -> &ColumnMeta {
+        self
+    }
+
+    fn get_column_meta_mut(&mut self) -> &mut ColumnMeta {
         self
     }
 }
@@ -129,7 +135,12 @@ impl ColumnMeta {
             column: column.to_string(),
             data_type: data_type.to_owned(),
             dependencies: Vec::new(),
+            position: None,
         })
+    }
+
+    pub fn capture_position(&mut self, positions: &HashMap<String, usize>) {
+        self.position = Some(positions[self.get_column_name()]);
     }
 
     pub fn set_target_column(&mut self, column_meta: &ColumnMeta) {

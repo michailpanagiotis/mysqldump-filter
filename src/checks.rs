@@ -98,6 +98,10 @@ impl DBColumn for CelTest {
     fn get_column_meta(&self) -> &ColumnMeta {
         &self.column_meta
     }
+
+    fn get_column_meta_mut(&mut self) -> &mut ColumnMeta {
+        &mut self.column_meta
+    }
 }
 
 impl ColumnTest for CelTest {
@@ -139,6 +143,10 @@ pub struct LookupTest {
 impl DBColumn for LookupTest {
     fn get_column_meta(&self) -> &ColumnMeta {
         &self.column_meta
+    }
+
+    fn get_column_meta_mut(&mut self) -> &mut ColumnMeta {
+        &mut self.column_meta
     }
 }
 
@@ -203,6 +211,12 @@ impl ColumnPositions for RowCheck {
 
     fn set_column_positions(&mut self, positions: HashMap<String, usize>) {
         self.column_positions = Some(positions.to_owned());
+        for col in self.tracked_columns.iter_mut() {
+            col.capture_position(&positions);
+        }
+        for check in self.checks.iter_mut() {
+            check.get_column_meta_mut().capture_position(&positions);
+        }
     }
 }
 

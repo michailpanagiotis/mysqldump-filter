@@ -69,6 +69,7 @@ fn main() -> Result<(), anyhow::Error> {
     let current_pass = 0;
     collection.process(&current_pass, &table_files)?;
 
+    dbg!(collection);
 
     if let Some(dir) = temp_dir {
        let _ = dir.close();
