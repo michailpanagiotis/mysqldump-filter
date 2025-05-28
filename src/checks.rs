@@ -5,6 +5,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::fs;
+use std::hash::Hash;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::rc::{Rc, Weak};
@@ -308,6 +309,7 @@ fn new_col_test(table: &str, definition: &str, data_types: &HashMap<String, sqlp
     Ok(item)
 }
 
+
 #[derive(Debug)]
 pub struct CheckCollection {
     checks: HashMap<String, Vec<CheckType>>,
@@ -352,6 +354,21 @@ impl CheckCollection {
         referenced_columns
     }
 
+    fn determine_checks_per_table<'a, I: Iterator<Item=(&'a String, &'a Vec<ColumnType>)>>(
+        tracked_columns: I,
+        checks: &'a HashMap<String, Vec<CheckType>>,
+        referenced_columns: &'a HashMap<String, Vec<ColumnType>>,
+    ) -> Result<HashMap<String, RowType<'a>>, anyhow::Error> {
+        let mut res: HashMap<String, RowType<'_>> = HashMap::new();
+        for (table, tracked_columns) in tracked_columns {
+            let checks = &checks[table];
+            let referenced_columns = &referenced_columns[table];
+            res.insert(table.to_owned(), RowType::from(RowCheck::from_config(table, tracked_columns, checks, referenced_columns)?));
+        }
+        dbg!(&res);
+        Ok(res)
+    }
+
     pub fn new<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
         conditions: I,
         data_types: &HashMap<String, sqlparser::ast::DataType>,
@@ -377,14 +394,7 @@ impl CheckCollection {
     }
 
     fn determine_row_checks(&self) -> Result<HashMap<String, RowType<'_>>, anyhow::Error> {
-        let mut res: HashMap<String, RowType<'_>> = HashMap::new();
-        for (table, tracked_columns) in self.tracked_columns.iter() {
-            let checks = &self.checks[table];
-            let referenced_columns = &self.referenced_columns[table];
-            res.insert(table.to_owned(), RowType::from(RowCheck::from_config(table, tracked_columns, checks, referenced_columns)?));
-        }
-        dbg!(&res);
-        Ok(res)
+        CheckCollection::determine_checks_per_table(self.tracked_columns.iter(), &self.checks, &self.referenced_columns)
     }
 }
 
