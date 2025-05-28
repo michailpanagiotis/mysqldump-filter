@@ -5,9 +5,8 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::fs;
-use std::hash::Hash;
 use std::io::{BufWriter, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
@@ -184,8 +183,8 @@ impl ColumnPositions for RowCheck<'_> {
 }
 
 impl ReferenceTracker for RowCheck<'_> {
-    fn get_referenced_columns(&self) -> &Vec<ColumnMeta> {
-        self.referenced_columns
+    fn get_referenced_columns(&self) -> impl Iterator<Item=&ColumnMeta> {
+        self.referenced_columns.iter()
     }
 
     fn get_references(&self) -> &HashMap<String, HashSet<String>> {
@@ -226,6 +225,14 @@ impl<'a> RowCheck<'a> {
         })
     }
 
+    fn get_checks(&self) -> impl Iterator<Item=&Box<dyn ColumnTest>> {
+        self.checks.iter()
+    }
+
+    fn get_tracked_columns(&self) -> impl Iterator<Item=&ColumnMeta> {
+        self.tracked_columns.iter()
+    }
+
     pub fn test(&mut self, pass: &usize, sql_statement: &str, lookup_table: &HashMap<String, HashSet<String>>) -> Result<bool, anyhow::Error> {
         if !sql_statement.starts_with("INSERT") {
             return Ok(true);
@@ -240,9 +247,9 @@ impl<'a> RowCheck<'a> {
         self.resolve_column_positions(sql_statement);
 
         let values = get_values(sql_statement);
-        let value_per_field = self.pick_values(self.tracked_columns.iter(), &values);
+        let value_per_field = self.pick_values(self.get_tracked_columns(), &values);
 
-        let all_checks_passed = self.checks.iter().all(|t| {
+        let all_checks_passed = self.get_checks().all(|t| {
             t.test(value_per_field[t.get_column_key()], lookup_table)
         });
 
@@ -288,17 +295,32 @@ impl<'a> RowCheck<'a> {
 
         Ok(())
     }
+}
 
-    pub fn into_lookup_table<'b, I: Iterator<Item=&'b RowType<'b>>>(row_checks: I) -> HashMap<String, HashSet<String>> {
+#[derive(Debug)]
+pub struct DBChecks<'a> {
+    pub per_table: HashMap<String, RowType<'a>>,
+}
+
+impl<'a> DBChecks<'a> {
+    fn get_lookup_table(&self) -> HashMap<String, HashSet<String>> {
         let mut lookup_table: HashMap<String, HashSet<String>> = HashMap::new();
 
-        for row_check in row_checks {
+        for row_check in self.per_table.values() {
             lookup_table.extend(row_check.borrow().get_references().iter().map(|(k, v)| (k.to_owned(), v.to_owned())));
         }
         lookup_table
     }
-}
 
+    pub fn process(&mut self, current_pass: &usize, table_files: &HashMap<String, PathBuf>) -> Result<(), anyhow::Error> {
+        let lookup_table = self.get_lookup_table();
+        for row_check in self.per_table.values_mut() {
+            let file = table_files[&row_check.borrow().table].to_path_buf();
+            row_check.borrow_mut().process_data_file(current_pass, &file, &lookup_table)?;
+        }
+        Ok(())
+    }
+}
 
 fn new_col_test(table: &str, definition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<CheckType, anyhow::Error> {
     let item: CheckType = if definition.contains("->") {
@@ -400,6 +422,6 @@ impl CheckCollection {
 
 pub fn from_config<'a>(
     collection: &'a CheckCollection,
-) -> Result<HashMap<String, RowType<'a>>, anyhow::Error> {
-    collection.determine_row_checks()
+) -> Result<DBChecks<'a>, anyhow::Error> {
+    Ok(DBChecks { per_table: collection.determine_row_checks()? })
 }

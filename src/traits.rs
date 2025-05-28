@@ -49,12 +49,12 @@ pub trait ColumnPositions {
 }
 
 pub trait ReferenceTracker: ColumnPositions {
-    fn get_referenced_columns(&self) -> &Vec<ColumnMeta>;
+    fn get_referenced_columns(&self) -> impl Iterator<Item=&ColumnMeta>;
     fn get_references(&self) -> &HashMap<String, HashSet<String>>;
     fn get_references_mut(&mut self) -> &mut HashMap<String, HashSet<String>>;
 
     fn capture_references(&mut self, values: &[&str]) -> Result<(), anyhow::Error> {
-        let to_insert = self.pick_values(self.get_referenced_columns().iter(), values);
+        let to_insert = self.pick_values(self.get_referenced_columns(), values);
         let references = self.get_references_mut();
         for (key, value) in to_insert.into_iter() {
             let Some(r) = references.get_mut(&key) else { return Err(anyhow::anyhow!("No references set for '{}'", key)) };

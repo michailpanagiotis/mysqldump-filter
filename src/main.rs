@@ -59,24 +59,16 @@ fn main() -> Result<(), anyhow::Error> {
 
     let config = Config::from_file(config_file.as_path());
     let collection = CheckCollection::new(config.filters.iter().chain(&config.cascades), &data_types)?;
+    let mut db_checks = from_config(&collection)?;
 
     let (working_file_path, table_files) = explode_to_files(working_dir_path.as_path(), input_file.as_path(), &config.allow_data_on_tables).unwrap_or_else(|e| {
         panic!("Problem exploding to files: {e:?}");
     });
 
-    let mut per_table = from_config(&collection)?;
 
-    let mut lookup_table: HashMap<String, HashSet<String>> = HashMap::new();
-
-    for (_, row_check) in per_table.iter() {
-        lookup_table.extend(row_check.borrow().get_references().iter().map(|(k, v)| (k.to_owned(), v.to_owned())));
-    }
     let current_pass = 0;
+    db_checks.process(&current_pass, &table_files)?;
 
-    for row_check in per_table.values_mut() {
-        let file = table_files[&row_check.borrow().table].to_path_buf();
-        row_check.borrow_mut().process_data_file(&current_pass, &file, &lookup_table)?;
-    }
 
     if let Some(dir) = temp_dir {
        let _ = dir.close();
