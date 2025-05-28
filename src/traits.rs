@@ -118,10 +118,11 @@ impl std::fmt::Display for NoDataTypeError {
 #[derive(Hash)]
 #[derive(Eq, PartialEq)]
 pub struct ColumnMeta {
-    pub key: String,
-    pub table: String,
-    pub column: String,
+    key: String,
+    table: String,
+    column: String,
     data_type: sqlparser::ast::DataType,
+    dependencies: Vec<ColumnMeta>,
 }
 
 impl DBColumn for ColumnMeta {
@@ -139,7 +140,20 @@ impl ColumnMeta {
             table: table.to_owned(),
             column: column.to_string(),
             data_type: data_type.to_owned(),
+            dependencies: Vec::new(),
         })
+    }
+
+    pub fn set_target_column(&mut self, column_meta: &ColumnMeta) {
+        self.dependencies.push(column_meta.to_owned());
+    }
+
+    pub fn get_column_dependencies(&self) -> impl Iterator<Item=&ColumnMeta> {
+        self.dependencies.iter()
+    }
+
+    pub fn get_referenced_columns(&self) -> impl Iterator<Item=&ColumnMeta> {
+        std::iter::once(self).chain(self.dependencies.iter())
     }
 }
 

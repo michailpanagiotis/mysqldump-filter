@@ -134,7 +134,6 @@ impl ColumnTest for CelTest {
 pub struct LookupTest {
     definition: String,
     column_meta: ColumnMeta,
-    target_column_meta: ColumnMeta,
 }
 
 impl DBColumn for LookupTest {
@@ -150,27 +149,31 @@ impl ColumnTest for LookupTest {
             panic!("cannot parse cascade");
         };
 
-        let column_meta = ColumnMeta::new(table, source_column, data_types)?;
+        let mut column_meta = ColumnMeta::new(table, source_column, data_types)?;
 
         let mut split = foreign_key.split('.');
         let (Some(target_table), Some(target_column), None) = (split.next(), split.next(), split.next()) else {
             panic!("malformed foreign key {foreign_key}");
         };
 
+        column_meta.set_target_column(&ColumnMeta::new(target_table, target_column, data_types)?);
+
         Ok(LookupTest {
             definition: definition.to_owned(),
             column_meta,
-            target_column_meta: ColumnMeta::new(target_table, target_column, data_types)?,
         })
     }
 
     fn test(&self, value:&str, lookup_table: &HashMap<String, HashSet<String>>) -> bool {
-        let Some(set) = lookup_table.get(&self.target_column_meta.key) else { return true };
-        set.contains(value)
-    }
-
-    fn get_column_dependencies(&self) -> HashSet<ColumnMeta> {
-        HashSet::from([self.target_column_meta.to_owned()])
+        let mut found = false;
+        for key in self.column_meta.get_column_dependencies().map(|d| d.get_column_key()) {
+            let Some(set) = lookup_table.get(key) else { return true };
+            if set.contains(value) {
+                found = true;
+                break;
+            }
+        }
+        found
     }
 
     fn get_definition(&self) -> &str {
@@ -300,7 +303,7 @@ impl RowCheck {
                 new_col_test(
                     c.get_table_name(),
                     c.get_definition(),
-                    &HashMap::from_iter(c.get_tracked_columns().iter().map(|c| {
+                    &HashMap::from_iter(c.get_column_meta().get_referenced_columns().map(|c| {
                         (c.get_column_key().to_owned(), c.get_data_type().to_owned())
                     })),
                 )?
@@ -418,7 +421,7 @@ impl CheckCollection {
 
     fn determine_tracked_columns<'a, I: Iterator<Item=&'a CheckType>>(checks: I) -> HashMap<String, Vec<ColumnType>> {
         let mut tracked_columns = checks.flat_map(|c| {
-            c.get_tracked_columns().iter().map(ColumnType::from).collect::<Vec<ColumnType>>()
+            c.get_column_meta().get_referenced_columns().map(ColumnType::from).collect::<Vec<ColumnType>>()
         }).into_group_map_by(|x| x.get_table_name().to_owned());
         tracked_columns.values_mut().for_each(|v| v.dedup());
         tracked_columns
@@ -426,7 +429,7 @@ impl CheckCollection {
 
     fn determine_referenced_columns<'a, I: Iterator<Item=&'a CheckType>>(checks: I) -> HashMap<String, Vec<ColumnType>> {
         let mut referenced_columns: HashMap<String, Vec<ColumnType>> = checks.flat_map(|c| {
-            c.get_column_dependencies().iter().map(ColumnType::from).collect::<Vec<ColumnType>>()
+            c.get_column_meta().get_column_dependencies().map(ColumnType::from).collect::<Vec<ColumnType>>()
         }).into_group_map_by(|x| x.get_table_name().to_owned());
         referenced_columns.values_mut().for_each(|v| v.dedup());
         referenced_columns
