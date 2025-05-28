@@ -15,11 +15,20 @@ use crate::sql::{get_values, read_table_data_file};
 
 type CheckType = Box<dyn ColumnTest>;
 type ColumnType = ColumnMeta;
-pub type RowType<'a> = Rc<RefCell<RowCheck<'a>>>;
+pub type RowType = Rc<RefCell<RowCheck>>;
 type DependencyType = Weak<RefCell<dyn Dependency>>;
 
 fn new_check<C: ColumnTest + 'static>(test: C) -> CheckType {
     Box::new(test)
+}
+
+fn new_col_test(table: &str, definition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<CheckType, anyhow::Error> {
+    let item: CheckType = if definition.contains("->") {
+        new_check(LookupTest::new(definition, table, data_types)?)
+    } else {
+        new_check(CelTest::new(definition, table, data_types)?)
+    };
+    Ok(item)
 }
 
 impl From<&ColumnMeta> for ColumnType {
@@ -28,14 +37,15 @@ impl From<&ColumnMeta> for ColumnType {
     }
 }
 
-impl<'a> From<RowCheck<'a>> for RowType<'a> {
-    fn from(c: RowCheck<'a>) -> Self {
+impl<'a> From<RowCheck> for RowType {
+    fn from(c: RowCheck) -> Self {
         Rc::new(RefCell::new(c))
     }
 }
 
 #[derive(Debug)]
 pub struct CelTest {
+    definition: String,
     column_meta: ColumnMeta,
     program: Program,
 }
@@ -98,6 +108,7 @@ impl ColumnTest for CelTest {
         let column_meta = ColumnMeta::new(table, column, data_types)?;
 
         Ok(CelTest {
+            definition: definition.to_owned(),
             column_meta,
             program,
         })
@@ -113,10 +124,15 @@ impl ColumnTest for CelTest {
             _ => panic!("filter does not return a boolean"),
         }
     }
+
+    fn get_definition(&self) -> &str {
+        &self.definition
+    }
 }
 
 #[derive(Debug)]
 pub struct LookupTest {
+    definition: String,
     column_meta: ColumnMeta,
     target_column_meta: ColumnMeta,
 }
@@ -142,6 +158,7 @@ impl ColumnTest for LookupTest {
         };
 
         Ok(LookupTest {
+            definition: definition.to_owned(),
             column_meta,
             target_column_meta: ColumnMeta::new(target_table, target_column, data_types)?,
         })
@@ -154,6 +171,10 @@ impl ColumnTest for LookupTest {
 
     fn get_column_dependencies(&self) -> HashSet<ColumnMeta> {
         HashSet::from([self.target_column_meta.to_owned()])
+    }
+
+    fn get_definition(&self) -> &str {
+        &self.definition
     }
 }
 
@@ -218,7 +239,7 @@ impl TableChecks {
 
 
 #[derive(Debug)]
-pub struct RowCheck<'a> {
+pub struct RowCheck {
     pub table: String,
     // trait ColumnPositions
     column_positions: Option<HashMap<String, usize>>,
@@ -229,10 +250,10 @@ pub struct RowCheck<'a> {
     tested_at_pass: Option<usize>,
     pending_dependencies: Vec<DependencyType>,
     tracked_columns: Vec<ColumnMeta>,
-    checks: &'a Vec<Box<dyn ColumnTest>>,
+    checks: Vec<Box<dyn ColumnTest>>,
 }
 
-impl ColumnPositions for RowCheck<'_> {
+impl ColumnPositions for RowCheck {
     fn get_column_positions(&self) -> &Option<HashMap<String, usize>> {
         &self.column_positions
     }
@@ -242,7 +263,7 @@ impl ColumnPositions for RowCheck<'_> {
     }
 }
 
-impl ReferenceTracker for RowCheck<'_> {
+impl ReferenceTracker for RowCheck {
     fn get_referenced_columns(&self) -> impl Iterator<Item=&ColumnMeta> {
         self.referenced_columns.iter()
     }
@@ -256,7 +277,7 @@ impl ReferenceTracker for RowCheck<'_> {
     }
 }
 
-impl Dependency for RowCheck<'_> {
+impl Dependency for RowCheck {
     fn set_fulfilled_at_depth(&mut self, depth: &usize) {
         self.tested_at_pass = Some(depth.to_owned());
     }
@@ -271,15 +292,27 @@ impl Dependency for RowCheck<'_> {
 
 }
 
-impl<'a> RowCheck<'a> {
-    pub fn from_config(table: &str, tracked_columns: &'a Vec<ColumnMeta>, checks: &'a Vec<Box<dyn ColumnTest>>, referenced_columns: &'a Vec<ColumnMeta>) -> Result<RowCheck<'a>, anyhow::Error> {
+impl RowCheck {
+    pub fn from_config(table: &str, tracked_columns: &Vec<ColumnMeta>, checks: &Vec<Box<dyn ColumnTest>>, referenced_columns: &Vec<ColumnMeta>) -> Result<RowCheck, anyhow::Error> {
+        let mut curr_checks: Vec<Box<dyn ColumnTest>> = Vec::new();
+        for c in checks {
+            curr_checks.push(
+                new_col_test(
+                    c.get_table_name(),
+                    c.get_definition(),
+                    &HashMap::from_iter(c.get_tracked_columns().iter().map(|c| {
+                        (c.get_column_key().to_owned(), c.get_data_type().to_owned())
+                    })),
+                )?
+            );
+        }
         Ok(RowCheck {
             table: table.to_owned(),
             column_positions: None,
             referenced_columns: referenced_columns.clone(),
             references: HashMap::from_iter(referenced_columns.iter().map(|c| (c.get_column_key().to_owned(), HashSet::new()))),
             tracked_columns: tracked_columns.clone(),
-            checks,
+            checks: curr_checks,
             tested_at_pass: None,
             pending_dependencies: Vec::new(),
         })
@@ -358,45 +391,8 @@ impl<'a> RowCheck<'a> {
 }
 
 #[derive(Debug)]
-pub struct DBChecks<'a> {
-    pub per_table: HashMap<String, RowType<'a>>,
-}
-
-impl<'a> DBChecks<'a> {
-    fn get_lookup_table(&self) -> HashMap<String, HashSet<String>> {
-        let mut lookup_table: HashMap<String, HashSet<String>> = HashMap::new();
-
-        for row_check in self.per_table.values() {
-            lookup_table.extend(row_check.borrow().get_references().iter().map(|(k, v)| (k.to_owned(), v.to_owned())));
-        }
-        lookup_table
-    }
-
-    pub fn process(&mut self, current_pass: &usize, table_files: &HashMap<String, PathBuf>) -> Result<(), anyhow::Error> {
-        let lookup_table = self.get_lookup_table();
-        for row_check in self.per_table.values_mut() {
-            let file = table_files[&row_check.borrow().table].to_path_buf();
-            row_check.borrow_mut().process_data_file(current_pass, &file, &lookup_table)?;
-        }
-        Ok(())
-    }
-}
-
-fn new_col_test(table: &str, definition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<CheckType, anyhow::Error> {
-    let item: CheckType = if definition.contains("->") {
-        new_check(LookupTest::new(definition, table, data_types)?)
-    } else {
-        new_check(CelTest::new(definition, table, data_types)?)
-    };
-    Ok(item)
-}
-
-
-#[derive(Debug)]
 pub struct CheckCollection {
-    checks: HashMap<String, Vec<CheckType>>,
-    tracked_columns: HashMap<String, Vec<ColumnType>>,
-    referenced_columns: HashMap<String, Vec<ColumnType>>,
+    per_table: HashMap<String, RowType>,
 }
 
 impl CheckCollection {
@@ -440,8 +436,8 @@ impl CheckCollection {
         tracked_columns: I,
         checks: &'a HashMap<String, Vec<CheckType>>,
         referenced_columns: &'a HashMap<String, Vec<ColumnType>>,
-    ) -> Result<HashMap<String, RowType<'a>>, anyhow::Error> {
-        let mut res: HashMap<String, RowType<'_>> = HashMap::new();
+    ) -> Result<HashMap<String, RowType>, anyhow::Error> {
+        let mut res: HashMap<String, RowType> = HashMap::new();
         for (table, tracked_columns) in tracked_columns {
             let checks = &checks[table];
             let referenced_columns = &referenced_columns[table];
@@ -468,20 +464,33 @@ impl CheckCollection {
             }
         }
 
+        let per_table = CheckCollection::determine_checks_per_table(tracked_columns.iter(), &checks, &referenced_columns)?;
+
         Ok(CheckCollection {
-            checks,
-            tracked_columns,
-            referenced_columns,
+            per_table,
         })
     }
 
-    fn determine_row_checks(&self) -> Result<HashMap<String, RowType<'_>>, anyhow::Error> {
-        CheckCollection::determine_checks_per_table(self.tracked_columns.iter(), &self.checks, &self.referenced_columns)
+    fn get_lookup_table(&self) -> HashMap<String, HashSet<String>> {
+        let mut lookup_table: HashMap<String, HashSet<String>> = HashMap::new();
+
+        for row_check in self.per_table.values() {
+            lookup_table.extend(row_check.borrow().get_references().iter().map(|(k, v)| (k.to_owned(), v.to_owned())));
+        }
+        lookup_table
     }
 
-    pub fn process(&self, current_pass: &usize, table_files: &HashMap<String, PathBuf>) -> Result<(), anyhow::Error> {
-        let mut db_checks = DBChecks { per_table: self.determine_row_checks()? };
-        db_checks.process(current_pass, table_files)?;
+    pub fn process_tables(&mut self, current_pass: &usize, table_files: &HashMap<String, PathBuf>) -> Result<(), anyhow::Error> {
+        let lookup_table = self.get_lookup_table();
+        for row_check in self.per_table.values_mut() {
+            let file = table_files[&row_check.borrow().table].to_path_buf();
+            row_check.borrow_mut().process_data_file(current_pass, &file, &lookup_table)?;
+        }
+        Ok(())
+    }
+
+    pub fn process(&mut self, current_pass: &usize, table_files: &HashMap<String, PathBuf>) -> Result<(), anyhow::Error> {
+        self.process_tables(current_pass, table_files)?;
 
         Ok(())
     }
