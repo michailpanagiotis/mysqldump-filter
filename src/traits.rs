@@ -89,18 +89,6 @@ pub trait ColumnTest: DBColumn {
     fn test(&self, value:&str, lookup_table: &HashMap<String, HashSet<String>>) -> bool;
 
     fn get_definition(&self) -> &str;
-
-    fn get_column_dependencies(&self) -> HashSet<ColumnMeta> {
-        HashSet::new()
-    }
-
-    fn get_tracked_columns(&self) -> HashSet<ColumnMeta> {
-        let mut res: HashSet<ColumnMeta> = HashSet::from([self.get_column_meta().to_owned()]);
-        for dep in self.get_column_dependencies() {
-            res.insert(dep.to_owned());
-        }
-        res
-    }
 }
 
 #[derive(Debug)]
