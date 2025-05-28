@@ -158,6 +158,66 @@ impl ColumnTest for LookupTest {
 }
 
 #[derive(Debug)]
+pub struct TableChecks {
+    table: String,
+    // trait ColumnPositions
+    column_positions: Option<HashMap<String, usize>>,
+    // trait ReferenceTracker
+    referenced_columns: Vec<ColumnMeta>,
+    references: HashMap<String, HashSet<String>>,
+    tracked_columns: Vec<ColumnMeta>,
+    checks: Vec<CheckType>,
+}
+
+impl ColumnPositions for TableChecks {
+    fn get_column_positions(&self) -> &Option<HashMap<String, usize>> {
+        &self.column_positions
+    }
+
+    fn set_column_positions(&mut self, positions: HashMap<String, usize>) {
+        self.column_positions = Some(positions.to_owned());
+    }
+}
+
+impl ReferenceTracker for TableChecks {
+    fn get_referenced_columns(&self) -> impl Iterator<Item=&ColumnMeta> {
+        self.referenced_columns.iter()
+    }
+
+    fn get_references(&self) -> &HashMap<String, HashSet<String>> {
+        &self.references
+    }
+
+    fn get_references_mut(&mut self) -> &mut HashMap<String, HashSet<String>> {
+        &mut self.references
+    }
+}
+
+impl TableChecks {
+    pub fn test(&mut self, sql_statement: &str, lookup_table: &HashMap<String, HashSet<String>>) -> Result<bool, anyhow::Error> {
+        if !sql_statement.starts_with("INSERT") {
+            return Ok(true);
+        }
+
+        self.resolve_column_positions(sql_statement);
+
+        let values = get_values(sql_statement);
+        let value_per_field = self.pick_values(self.tracked_columns.iter(), &values);
+
+        let all_checks_passed = self.checks.iter().all(|t| {
+            t.test(value_per_field[t.get_column_key()], lookup_table)
+        });
+
+        if all_checks_passed {
+            self.capture_references(&values)?;
+        }
+
+        Ok(all_checks_passed)
+    }
+}
+
+
+#[derive(Debug)]
 pub struct RowCheck<'a> {
     pub table: String,
     // trait ColumnPositions
