@@ -6,6 +6,7 @@ use crate::sql::get_column_positions;
 use std::cell::RefCell;
 use std::rc::Weak;
 
+
 pub trait DBColumn {
     fn get_column_meta(&self) -> &ColumnMeta;
     fn get_column_meta_mut(&mut self) -> &mut ColumnMeta;
@@ -111,6 +112,7 @@ pub struct ColumnMeta {
     table: String,
     column: String,
     data_type: sqlparser::ast::DataType,
+    dependency_keys: Vec<String>,
     dependencies: Vec<ColumnMeta>,
     position: Option<usize>,
 }
@@ -126,7 +128,32 @@ impl DBColumn for ColumnMeta {
 }
 
 impl ColumnMeta {
-    pub fn new(table: &str, column: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<Self, anyhow::Error> {
+    pub fn get_components_from_key(key: &str) -> Result<(String, String), anyhow::Error> {
+        let mut split = key.split('.');
+        let (Some(table), Some(column), None) = (split.next(), split.next(), split.next()) else {
+            return Err(anyhow::anyhow!("malformed key {}", key));
+        };
+        Ok((table.to_owned(), column.to_owned()))
+    }
+
+    fn get_key_from_components(table: &str, column: &str) -> String {
+        table.to_owned() + "." + column
+    }
+
+    pub fn from_check_definition(table: &str, column: &str, data_type: &sqlparser::ast::DataType) -> Self {
+        let key = table.to_owned() + "." + column;
+        Self {
+            key,
+            table: table.to_owned(),
+            column: column.to_string(),
+            data_type: data_type.to_owned(),
+            dependency_keys: Vec::new(),
+            dependencies: Vec::new(),
+            position: None,
+        }
+    }
+
+    pub fn new(table: &str, column: &str, dependency_keys: &[&str], data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<Self, anyhow::Error> {
         let key = table.to_owned() + "." + column;
         let Some(data_type) = data_types.get(&key) else { return Err(anyhow::anyhow!("No data type: {}", key)) };
         Ok(Self {
@@ -134,6 +161,7 @@ impl ColumnMeta {
             table: table.to_owned(),
             column: column.to_string(),
             data_type: data_type.to_owned(),
+            dependency_keys: dependency_keys.iter().map(|x| x.to_string()).collect(),
             dependencies: Vec::new(),
             position: None,
         })
@@ -141,10 +169,6 @@ impl ColumnMeta {
 
     pub fn capture_position(&mut self, positions: &HashMap<String, usize>) {
         self.position = Some(positions[self.get_column_name()]);
-    }
-
-    pub fn set_target_column(&mut self, column_meta: &ColumnMeta) {
-        self.dependencies.push(column_meta.to_owned());
     }
 
     pub fn get_column_dependencies(&self) -> impl Iterator<Item=&ColumnMeta> {

@@ -16,6 +16,7 @@ use crate::sql::{get_values, read_table_data_file};
 type CheckType = Box<dyn ColumnTest>;
 type ColumnType = ColumnMeta;
 pub type RowType = Rc<RefCell<RowCheck>>;
+pub type TrackedColumnType = Rc<RefCell<ColumnMeta>>;
 type DependencyType = Weak<RefCell<dyn Dependency>>;
 
 fn new_check<C: ColumnTest + 'static>(test: C) -> CheckType {
@@ -51,6 +52,14 @@ pub struct CelTest {
 }
 
 impl CelTest {
+    fn resolve_column_meta(table: &str, definition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<(ColumnMeta, Vec<String>), anyhow::Error> {
+        let program = Program::compile(definition).unwrap();
+        let variables: Vec<String> = program.references().variables().iter().map(|f| f.to_string()).collect();
+        let column = &variables[0];
+        let column_meta = ColumnMeta::new(table, column, &Vec::new(), data_types)?;
+        Ok((column_meta, Vec::new()))
+    }
+
     fn parse_int(s: &str) -> i64 {
         s.parse().unwrap_or_else(|_| panic!("cannot parse int {s}"))
     }
@@ -109,7 +118,7 @@ impl ColumnTest for CelTest {
         let program = Program::compile(definition).unwrap();
         let variables: Vec<String> = program.references().variables().iter().map(|f| f.to_string()).collect();
         let column = &variables[0];
-        let column_meta = ColumnMeta::new(table, column, data_types)?;
+        let column_meta = ColumnMeta::new(table, column, &Vec::new(), data_types)?;
 
         Ok(CelTest {
             definition: definition.to_owned(),
@@ -140,6 +149,24 @@ pub struct LookupTest {
     column_meta: ColumnMeta,
 }
 
+impl LookupTest {
+    fn resolve_column_meta(table: &str, definition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<(ColumnMeta, Vec<String>), anyhow::Error> {
+        let mut split = definition.split("->");
+        let (Some(source_column), Some(foreign_key), None) = (split.next(), split.next(), split.next()) else {
+            panic!("cannot parse cascade");
+        };
+
+        let mut split = foreign_key.split('.');
+        let (Some(target_table), Some(target_column), None) = (split.next(), split.next(), split.next()) else {
+            panic!("malformed foreign key {foreign_key}");
+        };
+        let target_column_meta = ColumnMeta::new(target_table, target_column, &Vec::new(), data_types)?;
+
+        let column_meta = ColumnMeta::new(table, source_column, &Vec::from([target_column_meta.get_column_key()]), data_types)?;
+        Ok((column_meta, Vec::from([target_column_meta.get_column_key().to_owned()])))
+    }
+}
+
 impl DBColumn for LookupTest {
     fn get_column_meta(&self) -> &ColumnMeta {
         &self.column_meta
@@ -157,14 +184,12 @@ impl ColumnTest for LookupTest {
             panic!("cannot parse cascade");
         };
 
-        let mut column_meta = ColumnMeta::new(table, source_column, data_types)?;
+        let mut column_meta = ColumnMeta::new(table, source_column, &Vec::new(), data_types)?;
 
         let mut split = foreign_key.split('.');
         let (Some(target_table), Some(target_column), None) = (split.next(), split.next(), split.next()) else {
             panic!("malformed foreign key {foreign_key}");
         };
-
-        column_meta.set_target_column(&ColumnMeta::new(target_table, target_column, data_types)?);
 
         Ok(LookupTest {
             definition: definition.to_owned(),
@@ -347,6 +372,13 @@ impl RowCheck {
     }
 }
 
+pub fn parse_test_definition(table: &str, definition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<(ColumnMeta, Vec<String>), anyhow::Error> {
+    if definition.contains("->") {
+        return LookupTest::resolve_column_meta(table, definition, data_types);
+    }
+    CelTest::resolve_column_meta(table, definition, data_types)
+}
+
 #[derive(Debug)]
 pub struct CheckCollection {
     per_table: HashMap<String, RowType>,
@@ -408,7 +440,52 @@ impl CheckCollection {
         conditions: I,
         data_types: &HashMap<String, sqlparser::ast::DataType>,
     ) -> Result<Self, anyhow::Error> {
-        let mut checks = CheckCollection::determine_checks(conditions, data_types)?;
+        let all_conditions: HashMap<String, Vec<String>> = HashMap::new();
+        let all_conditions: HashMap<String, Vec<String>> = conditions.map(
+            |(table, conditions)| (table.to_owned(), conditions.iter().map(|c| {
+                c.to_owned()
+            }).collect()),
+        ).collect();
+
+        let mut tracked_cols: Vec<TrackedColumnType> = Vec::new();
+        let mut all_deps: HashMap<String, Vec<String>> = HashMap::new();
+
+        for (table, conditions) in all_conditions.iter() {
+            for condition in conditions {
+                let (column_meta, deps) = parse_test_definition(table, condition, data_types)?;
+                let key = &column_meta.get_column_key().to_string();
+                tracked_cols.push(Rc::new(RefCell::new(column_meta)));
+
+                // track target columns
+                if !deps.is_empty() {
+                    all_deps.insert(key.to_owned(), deps.clone());
+                }
+                for key in deps {
+                    let (target_table, target_column) = ColumnMeta::get_components_from_key(&key)?;
+                    let column_meta = ColumnMeta::new(&target_table, &target_column, &Vec::new(), data_types)?;
+                    tracked_cols.push(Rc::new(RefCell::new(column_meta)));
+                }
+            }
+        }
+
+        for (source_key, target_keys) in all_deps.iter() {
+            for target_key in target_keys {
+                let source_meta = tracked_cols.iter().find(|t| t.borrow().get_column_key() == source_key);
+                let target_meta = tracked_cols.iter().find(|t| t.borrow().get_column_key() == source_key);
+            }
+        }
+
+        tracked_cols.sort_by_key(|t| t.borrow().get_column_key().to_owned());
+        tracked_cols.dedup();
+
+        dbg!(&all_conditions);
+        dbg!(&all_deps);
+        dbg!(&tracked_cols);
+
+        panic!("stop");
+
+
+        let mut checks = CheckCollection::determine_checks(all_conditions.iter(), data_types)?;
         let tracked_columns = CheckCollection::determine_tracked_columns(checks.values().flatten());
         let mut referenced_columns = CheckCollection::determine_referenced_columns(checks.values().flatten());
 
