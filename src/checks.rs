@@ -223,12 +223,12 @@ pub struct RowCheck<'a> {
     // trait ColumnPositions
     column_positions: Option<HashMap<String, usize>>,
     // trait ReferenceTracker
-    referenced_columns: &'a Vec<ColumnMeta>,
+    referenced_columns: Vec<ColumnMeta>,
     references: HashMap<String, HashSet<String>>,
     // trait Dependency
     tested_at_pass: Option<usize>,
     pending_dependencies: Vec<DependencyType>,
-    tracked_columns: &'a Vec<ColumnMeta>,
+    tracked_columns: Vec<ColumnMeta>,
     checks: &'a Vec<Box<dyn ColumnTest>>,
 }
 
@@ -276,9 +276,9 @@ impl<'a> RowCheck<'a> {
         Ok(RowCheck {
             table: table.to_owned(),
             column_positions: None,
-            referenced_columns,
+            referenced_columns: referenced_columns.clone(),
             references: HashMap::from_iter(referenced_columns.iter().map(|c| (c.get_column_key().to_owned(), HashSet::new()))),
-            tracked_columns,
+            tracked_columns: tracked_columns.clone(),
             checks,
             tested_at_pass: None,
             pending_dependencies: Vec::new(),
