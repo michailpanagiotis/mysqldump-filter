@@ -64,9 +64,10 @@ fn main() -> Result<(), anyhow::Error> {
         panic!("Problem exploding to files: {e:?}");
     });
 
+    let mut per_table = from_config(&collection)?;
+
     let mut lookup_table: HashMap<String, HashSet<String>> = HashMap::new();
 
-    let mut per_table = from_config(&collection)?;
     for (_, row_check) in per_table.iter() {
         lookup_table.extend(row_check.borrow().get_references().iter().map(|(k, v)| (k.to_owned(), v.to_owned())));
     }

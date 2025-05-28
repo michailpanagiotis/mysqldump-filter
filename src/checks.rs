@@ -287,6 +287,15 @@ impl<'a> RowCheck<'a> {
 
         Ok(())
     }
+
+    pub fn into_lookup_table<'b, I: Iterator<Item=&'b RowType<'b>>>(row_checks: I) -> HashMap<String, HashSet<String>> {
+        let mut lookup_table: HashMap<String, HashSet<String>> = HashMap::new();
+
+        for row_check in row_checks {
+            lookup_table.extend(row_check.borrow().get_references().iter().map(|(k, v)| (k.to_owned(), v.to_owned())));
+        }
+        lookup_table
+    }
 }
 
 
@@ -327,20 +336,19 @@ impl CheckCollection {
         Ok(checks)
     }
 
-    fn determine_tracked_columns(checks: &HashMap<String, Vec<CheckType>>) -> HashMap<String, Vec<ColumnType>> {
-        let mut tracked_columns = checks.values().flatten().flat_map(|c| {
+    fn determine_tracked_columns<'a, I: Iterator<Item=&'a CheckType>>(checks: I) -> HashMap<String, Vec<ColumnType>> {
+        let mut tracked_columns = checks.flat_map(|c| {
             c.get_tracked_columns().iter().map(ColumnType::from).collect::<Vec<ColumnType>>()
         }).into_group_map_by(|x| x.get_table_name().to_owned());
         tracked_columns.values_mut().for_each(|v| v.dedup());
         tracked_columns
     }
 
-    fn determine_referenced_columns(checks: &HashMap<String, Vec<CheckType>>) -> HashMap<String, Vec<ColumnType>> {
-        let mut referenced_columns: HashMap<String, Vec<ColumnType>> = checks.values().flatten().flat_map(|c| {
+    fn determine_referenced_columns<'a, I: Iterator<Item=&'a CheckType>>(checks: I) -> HashMap<String, Vec<ColumnType>> {
+        let mut referenced_columns: HashMap<String, Vec<ColumnType>> = checks.flat_map(|c| {
             c.get_column_dependencies().iter().map(ColumnType::from).collect::<Vec<ColumnType>>()
         }).into_group_map_by(|x| x.get_table_name().to_owned());
         referenced_columns.values_mut().for_each(|v| v.dedup());
-        dbg!(&referenced_columns);
         referenced_columns
     }
 
@@ -349,8 +357,8 @@ impl CheckCollection {
         data_types: &HashMap<String, sqlparser::ast::DataType>,
     ) -> Result<Self, anyhow::Error> {
         let mut checks = CheckCollection::determine_checks(conditions, data_types)?;
-        let tracked_columns = CheckCollection::determine_tracked_columns(&checks);
-        let mut referenced_columns = CheckCollection::determine_referenced_columns(&checks);
+        let tracked_columns = CheckCollection::determine_tracked_columns(checks.values().flatten());
+        let mut referenced_columns = CheckCollection::determine_referenced_columns(checks.values().flatten());
 
         for (table, _) in tracked_columns.iter() {
             if !referenced_columns.contains_key(table) {
