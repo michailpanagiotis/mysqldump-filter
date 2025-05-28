@@ -418,10 +418,11 @@ impl CheckCollection {
     fn determine_row_checks(&self) -> Result<HashMap<String, RowType<'_>>, anyhow::Error> {
         CheckCollection::determine_checks_per_table(self.tracked_columns.iter(), &self.checks, &self.referenced_columns)
     }
-}
 
-pub fn from_config<'a>(
-    collection: &'a CheckCollection,
-) -> Result<DBChecks<'a>, anyhow::Error> {
-    Ok(DBChecks { per_table: collection.determine_row_checks()? })
+    pub fn process(&self, current_pass: &usize, table_files: &HashMap<String, PathBuf>) -> Result<(), anyhow::Error> {
+        let mut db_checks = DBChecks { per_table: self.determine_row_checks()? };
+        db_checks.process(current_pass, table_files)?;
+
+        Ok(())
+    }
 }

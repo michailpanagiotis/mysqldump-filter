@@ -8,8 +8,7 @@ mod checks;
 mod sql;
 mod traits;
 
-use traits::ReferenceTracker;
-use checks::{from_config, CheckCollection};
+use checks::CheckCollection;
 use sql::{explode_to_files, get_data_types};
 
 #[derive(Deserialize)]
@@ -59,7 +58,6 @@ fn main() -> Result<(), anyhow::Error> {
 
     let config = Config::from_file(config_file.as_path());
     let collection = CheckCollection::new(config.filters.iter().chain(&config.cascades), &data_types)?;
-    let mut db_checks = from_config(&collection)?;
 
     let (working_file_path, table_files) = explode_to_files(working_dir_path.as_path(), input_file.as_path(), &config.allow_data_on_tables).unwrap_or_else(|e| {
         panic!("Problem exploding to files: {e:?}");
@@ -67,7 +65,7 @@ fn main() -> Result<(), anyhow::Error> {
 
 
     let current_pass = 0;
-    db_checks.process(&current_pass, &table_files)?;
+    collection.process(&current_pass, &table_files)?;
 
 
     if let Some(dir) = temp_dir {
