@@ -105,8 +105,7 @@ impl std::fmt::Display for NoDataTypeError {
 
 #[derive(Clone)]
 #[derive(Debug)]
-#[derive(Hash)]
-#[derive(Eq, PartialEq)]
+#[derive(PartialEq)]
 pub struct ColumnMeta {
     key: String,
     table: String,
@@ -183,5 +182,13 @@ impl ColumnMeta {
 impl core::fmt::Debug for dyn ColumnTest {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.get_column_meta().fmt(f)
+    }
+}
+
+impl Extend<ColumnMeta> for HashMap<std::string::String, ColumnMeta> {
+    fn extend<T: IntoIterator<Item=ColumnMeta>>(&mut self, iter: T) {
+        for elem in iter {
+            self.insert(elem.get_column_name().to_owned(), elem);
+        }
     }
 }

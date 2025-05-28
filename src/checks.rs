@@ -16,7 +16,7 @@ use crate::sql::{get_values, read_table_data_file};
 type CheckType = Box<dyn ColumnTest>;
 type ColumnType = ColumnMeta;
 pub type RowType = Rc<RefCell<RowCheck>>;
-pub type TrackedColumnType = Rc<RefCell<ColumnMeta>>;
+pub type TrackedColumnType = ColumnMeta;
 type DependencyType = Weak<RefCell<dyn Dependency>>;
 
 fn new_check<C: ColumnTest + 'static>(test: C) -> CheckType {
@@ -454,7 +454,7 @@ impl CheckCollection {
             for condition in conditions {
                 let (column_meta, deps) = parse_test_definition(table, condition, data_types)?;
                 let key = &column_meta.get_column_key().to_string();
-                tracked_cols.push(Rc::new(RefCell::new(column_meta)));
+                tracked_cols.push(column_meta);
 
                 // track target columns
                 if !deps.is_empty() {
@@ -463,24 +463,22 @@ impl CheckCollection {
                 for key in deps {
                     let (target_table, target_column) = ColumnMeta::get_components_from_key(&key)?;
                     let column_meta = ColumnMeta::new(&target_table, &target_column, &Vec::new(), data_types)?;
-                    tracked_cols.push(Rc::new(RefCell::new(column_meta)));
+                    tracked_cols.push(column_meta);
                 }
             }
         }
 
-        for (source_key, target_keys) in all_deps.iter() {
-            for target_key in target_keys {
-                let source_meta = tracked_cols.iter().find(|t| t.borrow().get_column_key() == source_key);
-                let target_meta = tracked_cols.iter().find(|t| t.borrow().get_column_key() == source_key);
-            }
-        }
-
-        tracked_cols.sort_by_key(|t| t.borrow().get_column_key().to_owned());
+        tracked_cols.sort_by_key(|t| t.get_column_key().to_owned());
         tracked_cols.dedup();
+
+        let grouped: HashMap<String, HashMap<String, TrackedColumnType>> = tracked_cols
+            .into_iter()
+            .into_grouping_map_by(|t| t.get_table_name().to_owned())
+            .collect();
 
         dbg!(&all_conditions);
         dbg!(&all_deps);
-        dbg!(&tracked_cols);
+        dbg!(&grouped);
 
         panic!("stop");
 
