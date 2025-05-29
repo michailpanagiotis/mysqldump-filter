@@ -91,14 +91,15 @@ pub trait ColumnTest: DBColumn {
 }
 
 pub trait PlainColumnCheck {
-    fn new(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<impl ColumnTest + 'static, anyhow::Error> where Self: Sized;
+    fn new(definition: &str, table: &str) -> Result<impl PlainColumnCheck + 'static, anyhow::Error> where Self: Sized;
 
     fn test(&self, column_meta: &ColumnMeta, value:&str, lookup_table: &HashMap<String, HashSet<String>>) -> bool;
 
-    fn get_definition(&self) -> &str;
+    fn get_table_name(&self) -> &str;
 
-    fn get_column_key(&self) -> &str;
     fn get_column_name(&self) -> &str;
+
+    fn get_definition(&self) -> &str;
 }
 
 #[derive(Debug)]
