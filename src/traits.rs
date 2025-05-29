@@ -211,19 +211,3 @@ impl core::fmt::Debug for dyn ColumnTest {
         self.get_column_meta().fmt(f)
     }
 }
-
-impl Extend<ColumnMeta> for HashMap<std::string::String, ColumnMeta> {
-    fn extend<T: IntoIterator<Item=ColumnMeta>>(&mut self, iter: T) {
-        for elem in iter {
-            let key = elem.get_column_name();
-            match self.get_mut(key) {
-                None => {
-                    self.insert(key.to_owned(), elem);
-                },
-                Some(cm) => {
-                    cm.extend(&elem);
-                }
-            }
-        }
-    }
-}
