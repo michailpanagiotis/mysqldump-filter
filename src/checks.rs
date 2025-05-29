@@ -73,14 +73,14 @@ impl CelTest {
             .timestamp()
     }
 
-    fn build_context(&self, other_value: &str) -> Context {
+    fn build_context(&self, column_meta: &ColumnMeta, other_value: &str) -> Context {
         let mut context = Context::default();
         context.add_function("timestamp", |d: Arc<String>| {
             CelTest::parse_date(&d)
         });
 
-        let column_name = self.get_column_name();
-        let data_type = self.get_data_type();
+        let column_name = column_meta.get_column_name();
+        let data_type = column_meta.get_data_type();
 
         if other_value == "NULL" {
             context.add_variable(column_name.to_owned(), false).unwrap();
@@ -128,8 +128,8 @@ impl ColumnTest for CelTest {
         })
     }
 
-    fn test(&self, value:&str, _lookup_table: &HashMap<String, HashSet<String>>) -> bool {
-        let context = self.build_context(value);
+    fn test(&self, column_meta: &ColumnMeta, value:&str, _lookup_table: &HashMap<String, HashSet<String>>) -> bool {
+        let context = self.build_context(column_meta, value);
         match self.program.execute(&context).unwrap() {
             cel_interpreter::objects::Value::Bool(v) => {
                 // println!("testing {}.{} {} -> {}", self.table, self.column, &other_value, &v);
@@ -198,9 +198,9 @@ impl ColumnTest for LookupTest {
         })
     }
 
-    fn test(&self, value:&str, lookup_table: &HashMap<String, HashSet<String>>) -> bool {
+    fn test(&self, column_meta: &ColumnMeta, value:&str, lookup_table: &HashMap<String, HashSet<String>>) -> bool {
         let mut found = false;
-        for key in self.column_meta.get_column_dependencies().map(|d| d.get_column_key()) {
+        for key in column_meta.get_column_dependencies().map(|d| d.get_column_key()) {
             let Some(set) = lookup_table.get(key) else { return true };
             if set.contains(value) {
                 found = true;
@@ -283,10 +283,6 @@ impl Extend<ColumnMeta> for TableMeta {
 }
 
 impl TableMeta {
-    fn get_checks(&self) -> impl Iterator<Item=&Box<dyn ColumnTest>> {
-        self.columns.values().flat_map(|v| v.get_checks())
-    }
-
     fn get_tracked_columns(&self) -> impl Iterator<Item=&ColumnMeta> {
         self.columns.values()
     }
@@ -308,7 +304,8 @@ impl TableMeta {
         let value_per_field = self.pick_values(self.get_tracked_columns(), &values);
 
         let all_checks_passed = self.get_checks().all(|t| {
-            t.test(value_per_field[t.get_column_key()], lookup_table)
+            let column_meta = t.get_column_meta();
+            t.test(&column_meta, value_per_field[t.get_column_key()], lookup_table)
         });
 
         if all_checks_passed {
@@ -427,7 +424,8 @@ impl RowCheck {
         let value_per_field = self.pick_values(self.get_tracked_columns(), &values);
 
         let all_checks_passed = self.get_checks().all(|t| {
-            t.test(value_per_field[t.get_column_key()], lookup_table)
+            let column_meta = t.get_column_meta();
+            t.test(&column_meta, value_per_field[t.get_column_key()], lookup_table)
         });
 
         if all_checks_passed {

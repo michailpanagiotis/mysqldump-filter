@@ -3,9 +3,6 @@ use std::fmt::Debug;
 use thiserror::Error;
 
 use crate::sql::get_column_positions;
-use std::cell::RefCell;
-use std::rc::Weak;
-
 
 pub trait DBColumn {
     fn get_column_meta(&self) -> &ColumnMeta;
@@ -88,7 +85,7 @@ pub trait Dependency {
 pub trait ColumnTest: DBColumn {
     fn new(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<impl ColumnTest + 'static, anyhow::Error> where Self: Sized;
 
-    fn test(&self, value:&str, lookup_table: &HashMap<String, HashSet<String>>) -> bool;
+    fn test(&self, column_meta: &ColumnMeta, value:&str, lookup_table: &HashMap<String, HashSet<String>>) -> bool;
 
     fn get_definition(&self) -> &str;
 }
