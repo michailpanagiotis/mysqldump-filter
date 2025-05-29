@@ -388,8 +388,39 @@ pub struct CheckCollection {
 }
 
 impl CheckCollection {
-    fn parse_columns() {
+    fn parse_columns<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
+        conditions: I,
+        data_types: &HashMap<String, sqlparser::ast::DataType>,
+    ) -> Result<HashMap<String, HashMap<String, TrackedColumnType>>, anyhow::Error> {
+        let definitions: Vec<(String, String)> = conditions.map(|(table, conds)| {
+            conds.iter().map(|c| (table.to_owned(), c.to_owned()))
+        }).flatten().collect();
 
+        dbg!(&definitions);
+
+        let mut tracked_cols: Vec<TrackedColumnType> = Vec::new();
+        let mut all_deps: HashMap<String, Vec<String>> = HashMap::new();
+
+        for (table, definition) in definitions.iter() {
+            let (column_meta, deps) = parse_test_definition(table, definition, data_types)?;
+            let key = &column_meta.get_column_key().to_string();
+            tracked_cols.push(column_meta);
+
+            // track target columns
+            if !deps.is_empty() {
+                all_deps.insert(key.to_owned(), deps.clone());
+            }
+            for key in deps {
+                let (target_table, target_column) = ColumnMeta::get_components_from_key(&key)?;
+                let column_meta = ColumnMeta::new(&target_table, &target_column, &Vec::new(), data_types)?;
+                tracked_cols.push(column_meta);
+            }
+        }
+
+        Ok(tracked_cols
+            .into_iter()
+            .into_grouping_map_by(|t| t.get_table_name().to_owned())
+            .collect())
     }
 
     fn determine_checks<'a, I: Iterator<Item=&'a ColumnMeta>>(
@@ -447,38 +478,9 @@ impl CheckCollection {
         conditions: I,
         data_types: &HashMap<String, sqlparser::ast::DataType>,
     ) -> Result<Self, anyhow::Error> {
-        let definitions: Vec<(String, String)> = conditions.map(|(table, conds)| {
-            conds.iter().map(|c| (table.to_owned(), c.to_owned()))
-        }).flatten().collect();
-
-        dbg!(&definitions);
-
-        let mut tracked_cols: Vec<TrackedColumnType> = Vec::new();
-        let mut all_deps: HashMap<String, Vec<String>> = HashMap::new();
-
-        for (table, definition) in definitions.iter() {
-            let (column_meta, deps) = parse_test_definition(table, definition, data_types)?;
-            let key = &column_meta.get_column_key().to_string();
-            tracked_cols.push(column_meta);
-
-            // track target columns
-            if !deps.is_empty() {
-                all_deps.insert(key.to_owned(), deps.clone());
-            }
-            for key in deps {
-                let (target_table, target_column) = ColumnMeta::get_components_from_key(&key)?;
-                let column_meta = ColumnMeta::new(&target_table, &target_column, &Vec::new(), data_types)?;
-                tracked_cols.push(column_meta);
-            }
-        }
-
-        let grouped: HashMap<String, HashMap<String, TrackedColumnType>> = tracked_cols
-            .into_iter()
-            .into_grouping_map_by(|t| t.get_table_name().to_owned())
-            .collect();
+        let grouped = CheckCollection::parse_columns(conditions, data_types)?;
 
         dbg!(&grouped);
-
 
         let iter = grouped.values().map(|per_field| per_field.values()).flatten();
 
