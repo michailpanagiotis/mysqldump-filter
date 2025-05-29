@@ -392,13 +392,13 @@ impl CheckCollection {
 
     }
 
-    fn determine_checks<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
+    fn determine_checks<'a, I: Iterator<Item=&'a ColumnMeta>>(
         conditions: I,
         data_types: &HashMap<String, sqlparser::ast::DataType>,
     ) -> Result<HashMap<String, Vec<CheckType>>, anyhow::Error> {
         let mut checks: HashMap<String, Vec<CheckType>> = HashMap::new();
         let parsed: Vec<_> = conditions
-            .flat_map(|(table, conditions)| conditions.iter().map(|c| new_col_test(table, c, data_types)))
+            .flat_map(|column_meta| column_meta.get_checks().map(|c| new_col_test(column_meta.get_table_name(), c, data_types)))
             .collect();
         for check_option in parsed.into_iter() {
             let check = check_option?;
@@ -447,49 +447,42 @@ impl CheckCollection {
         conditions: I,
         data_types: &HashMap<String, sqlparser::ast::DataType>,
     ) -> Result<Self, anyhow::Error> {
-        let all_conditions: HashMap<String, Vec<String>> = HashMap::new();
-        let all_conditions: HashMap<String, Vec<String>> = conditions.map(
-            |(table, conditions)| (table.to_owned(), conditions.iter().map(|c| {
-                c.to_owned()
-            }).collect()),
-        ).collect();
+        let definitions: Vec<(String, String)> = conditions.map(|(table, conds)| {
+            conds.iter().map(|c| (table.to_owned(), c.to_owned()))
+        }).flatten().collect();
+
+        dbg!(&definitions);
 
         let mut tracked_cols: Vec<TrackedColumnType> = Vec::new();
         let mut all_deps: HashMap<String, Vec<String>> = HashMap::new();
 
-        for (table, conditions) in all_conditions.iter() {
-            for condition in conditions {
-                let (column_meta, deps) = parse_test_definition(table, condition, data_types)?;
-                let key = &column_meta.get_column_key().to_string();
-                tracked_cols.push(column_meta);
+        for (table, definition) in definitions.iter() {
+            let (column_meta, deps) = parse_test_definition(table, definition, data_types)?;
+            let key = &column_meta.get_column_key().to_string();
+            tracked_cols.push(column_meta);
 
-                // track target columns
-                if !deps.is_empty() {
-                    all_deps.insert(key.to_owned(), deps.clone());
-                }
-                for key in deps {
-                    let (target_table, target_column) = ColumnMeta::get_components_from_key(&key)?;
-                    let column_meta = ColumnMeta::new(&target_table, &target_column, &Vec::new(), data_types)?;
-                    tracked_cols.push(column_meta);
-                }
+            // track target columns
+            if !deps.is_empty() {
+                all_deps.insert(key.to_owned(), deps.clone());
+            }
+            for key in deps {
+                let (target_table, target_column) = ColumnMeta::get_components_from_key(&key)?;
+                let column_meta = ColumnMeta::new(&target_table, &target_column, &Vec::new(), data_types)?;
+                tracked_cols.push(column_meta);
             }
         }
-
-        tracked_cols.sort_by_key(|t| t.get_column_key().to_owned());
 
         let grouped: HashMap<String, HashMap<String, TrackedColumnType>> = tracked_cols
             .into_iter()
             .into_grouping_map_by(|t| t.get_table_name().to_owned())
             .collect();
 
-        dbg!(&all_conditions);
-        dbg!(&all_deps);
         dbg!(&grouped);
 
-        panic!("stop");
 
+        let iter = grouped.values().map(|per_field| per_field.values()).flatten();
 
-        let mut checks = CheckCollection::determine_checks(all_conditions.iter(), data_types)?;
+        let mut checks = CheckCollection::determine_checks(iter, data_types)?;
         let tracked_columns = CheckCollection::determine_tracked_columns(checks.values().flatten());
         let mut referenced_columns = CheckCollection::determine_referenced_columns(checks.values().flatten());
 

@@ -167,8 +167,16 @@ impl ColumnMeta {
         std::iter::once(self).chain(self.dependencies.iter())
     }
 
+    pub fn get_checks(&self) -> impl Iterator<Item=&String> {
+        self.checks.iter()
+    }
+
     pub fn add_check(&mut self, check_definition: &str) {
         self.checks.push(check_definition.to_owned());
+    }
+
+    pub fn add_dependency_key(&mut self, dependency_key: &str) {
+        self.dependency_keys.push(dependency_key.to_owned());
     }
 }
 
@@ -181,6 +189,7 @@ impl core::fmt::Debug for dyn ColumnTest {
 impl Extend<ColumnMeta> for HashMap<std::string::String, ColumnMeta> {
     fn extend<T: IntoIterator<Item=ColumnMeta>>(&mut self, iter: T) {
         for elem in iter {
+            dbg!("EXTEND", &elem);
             let key = elem.get_column_name();
             match self.get_mut(key) {
                 None => {
@@ -189,6 +198,9 @@ impl Extend<ColumnMeta> for HashMap<std::string::String, ColumnMeta> {
                 Some(cm) => {
                     for check in elem.checks {
                         cm.add_check(&check)
+                    }
+                    for key in elem.dependency_keys {
+                        cm.add_dependency_key(&key)
                     }
                 }
             }

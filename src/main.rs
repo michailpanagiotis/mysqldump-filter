@@ -11,6 +11,7 @@ mod traits;
 use checks::CheckCollection;
 use sql::{explode_to_files, get_data_types};
 
+#[derive(Debug)]
 #[derive(Deserialize)]
 #[serde(rename = "name")]
 pub struct Config {
@@ -57,6 +58,7 @@ fn main() -> Result<(), anyhow::Error> {
     println!("Read data types!");
 
     let config = Config::from_file(config_file.as_path());
+    dbg!(&config);
     let mut collection = CheckCollection::new(config.filters.iter().chain(&config.cascades), &data_types)?;
 
     dbg!(&collection);
