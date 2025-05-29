@@ -90,6 +90,17 @@ pub trait ColumnTest: DBColumn {
     fn get_definition(&self) -> &str;
 }
 
+pub trait PlainColumnCheck {
+    fn new(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<impl ColumnTest + 'static, anyhow::Error> where Self: Sized;
+
+    fn test(&self, column_meta: &ColumnMeta, value:&str, lookup_table: &HashMap<String, HashSet<String>>) -> bool;
+
+    fn get_definition(&self) -> &str;
+
+    fn get_column_key(&self) -> &str;
+    fn get_column_name(&self) -> &str;
+}
+
 #[derive(Debug)]
 #[derive(Error)]
 pub struct NoDataTypeError;
@@ -215,6 +226,13 @@ impl ColumnMeta {
 
 impl core::fmt::Debug for dyn ColumnTest {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        self.get_column_meta().fmt(f)
+        self.get_definition().fmt(f)
+    }
+}
+
+
+impl core::fmt::Debug for dyn PlainColumnCheck {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.get_definition().fmt(f)
     }
 }

@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
-use crate::traits::{ColumnMeta, ColumnPositions, DBColumn, ColumnTest, ReferenceTracker, Dependency};
+use crate::traits::{ColumnMeta, ColumnPositions, DBColumn, ColumnTest, ReferenceTracker, Dependency, PlainColumnCheck};
 use crate::sql::{get_values, read_table_data_file};
 
 type CheckType = Box<dyn ColumnTest>;
@@ -223,6 +223,7 @@ pub struct TableMeta {
     column_positions: Option<HashMap<String, usize>>,
     // trait ReferenceTracker
     references: HashMap<String, HashSet<String>>,
+    checks: Vec<Box<dyn PlainColumnCheck>>,
 }
 
 impl ColumnPositions for TableMeta {
@@ -283,6 +284,10 @@ impl Extend<ColumnMeta> for TableMeta {
 }
 
 impl TableMeta {
+    fn get_checks(&self) -> impl Iterator<Item=&Box<dyn PlainColumnCheck>> {
+        self.checks.iter()
+    }
+
     fn get_tracked_columns(&self) -> impl Iterator<Item=&ColumnMeta> {
         self.columns.values()
     }
@@ -304,8 +309,8 @@ impl TableMeta {
         let value_per_field = self.pick_values(self.get_tracked_columns(), &values);
 
         let all_checks_passed = self.get_checks().all(|t| {
-            let column_meta = t.get_column_meta();
-            t.test(&column_meta, value_per_field[t.get_column_key()], lookup_table)
+            let column_meta = &self.columns[t.get_column_name()];
+            t.test(column_meta, value_per_field[column_meta.get_column_key()], lookup_table)
         });
 
         if all_checks_passed {
