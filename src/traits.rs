@@ -69,11 +69,11 @@ pub trait ReferenceTracker: ColumnPositions {
 pub trait Dependency {
     fn set_fulfilled_at_depth(&mut self, depth: &usize);
     fn has_been_fulfilled(&self) -> bool;
-    fn get_dependencies(&self) -> &Vec<Weak<RefCell<dyn Dependency>>>;
+    fn get_dependencies(&self) -> impl Iterator<Item=&ColumnMeta>;
 
     fn has_fulfilled_dependencies(&self) -> bool {
-        self.get_dependencies().iter().all(|d| {
-            d.upgrade().unwrap().borrow().has_been_fulfilled()
+        self.get_dependencies().all(|d| {
+            d.has_been_fulfilled()
         })
     }
 
@@ -116,6 +116,7 @@ pub struct ColumnMeta {
     checks: Vec<String>,
     dependencies: Vec<ColumnMeta>,
     position: Option<usize>,
+    tested_at_pass: Option<usize>,
 }
 
 impl DBColumn for ColumnMeta {
@@ -154,6 +155,7 @@ impl ColumnMeta {
             checks: Vec::new(),
             dependencies: Vec::new(),
             position: None,
+            tested_at_pass: None,
         })
     }
 
@@ -191,6 +193,14 @@ impl ColumnMeta {
 
     pub fn set_referenced(&mut self) {
         self.is_referenced = true
+    }
+
+    pub fn set_fulfilled_at_depth(&mut self, depth: &usize) {
+        self.tested_at_pass = Some(depth.to_owned());
+    }
+
+    pub fn has_been_fulfilled(&self) -> bool {
+        self.tested_at_pass.is_some()
     }
 
     pub fn extend(&mut self, other: &ColumnMeta) {

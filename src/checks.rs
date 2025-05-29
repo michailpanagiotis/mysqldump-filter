@@ -252,6 +252,20 @@ impl ReferenceTracker for TableMeta {
     }
 }
 
+impl Dependency for TableMeta {
+    fn get_dependencies(&self) -> impl Iterator<Item=&ColumnMeta> {
+        std::iter::empty()
+    }
+
+    fn set_fulfilled_at_depth(&mut self, depth: &usize) {
+        self.columns.values_mut().for_each(|v| v.set_fulfilled_at_depth(depth))
+    }
+
+    fn has_been_fulfilled(&self) -> bool {
+        self.columns.values().all(|v| v.has_been_fulfilled())
+    }
+}
+
 impl Extend<ColumnMeta> for TableMeta {
     fn extend<T: IntoIterator<Item=ColumnMeta>>(&mut self, iter: T) {
         for elem in iter {
@@ -268,6 +282,43 @@ impl Extend<ColumnMeta> for TableMeta {
     }
 }
 
+impl TableMeta {
+    fn get_checks(&self) -> impl Iterator<Item=&Box<dyn ColumnTest>> {
+        self.columns.values().flat_map(|v| v.get_checks())
+    }
+
+    fn get_tracked_columns(&self) -> impl Iterator<Item=&ColumnMeta> {
+        self.columns.values()
+    }
+
+    pub fn test(&mut self, pass: &usize, sql_statement: &str, lookup_table: &HashMap<String, HashSet<String>>) -> Result<bool, anyhow::Error> {
+        if !sql_statement.starts_with("INSERT") {
+            return Ok(true);
+        }
+
+        if !self.has_fulfilled_dependencies() {
+            return Ok(true);
+        }
+
+        self.fulfill_dependency(pass);
+
+        self.resolve_column_positions(sql_statement);
+
+        let values = get_values(sql_statement);
+        let value_per_field = self.pick_values(self.get_tracked_columns(), &values);
+
+        let all_checks_passed = self.get_checks().all(|t| {
+            t.test(value_per_field[t.get_column_key()], lookup_table)
+        });
+
+        if all_checks_passed {
+            self.capture_references(&values)?;
+        }
+
+        Ok(all_checks_passed)
+    }
+}
+
 #[derive(Debug)]
 pub struct RowCheck {
     pub table: String,
@@ -278,7 +329,6 @@ pub struct RowCheck {
     references: HashMap<String, HashSet<String>>,
     // trait Dependency
     tested_at_pass: Option<usize>,
-    pending_dependencies: Vec<DependencyType>,
     tracked_columns: Vec<ColumnMeta>,
     checks: Vec<Box<dyn ColumnTest>>,
 }
@@ -314,16 +364,16 @@ impl ReferenceTracker for RowCheck {
 }
 
 impl Dependency for RowCheck {
+    fn get_dependencies(&self) -> impl Iterator<Item=&ColumnMeta> {
+        std::iter::empty()
+    }
+
     fn set_fulfilled_at_depth(&mut self, depth: &usize) {
         self.tested_at_pass = Some(depth.to_owned());
     }
 
     fn has_been_fulfilled(&self) -> bool {
         self.tested_at_pass.is_some()
-    }
-
-    fn get_dependencies(&self) -> &Vec<DependencyType> {
-        &self.pending_dependencies
     }
 }
 
@@ -349,7 +399,6 @@ impl RowCheck {
             tracked_columns: tracked_columns.clone(),
             checks: curr_checks,
             tested_at_pass: None,
-            pending_dependencies: Vec::new(),
         })
     }
 
