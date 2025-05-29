@@ -44,6 +44,34 @@ impl From<RowCheck> for RowType {
     }
 }
 
+
+#[derive(Debug)]
+#[derive(Default)]
+pub struct TableMeta {
+    pub columns: HashMap<String, ColumnMeta>,
+}
+
+impl Extend<ColumnMeta> for TableMeta {
+    fn extend<T: IntoIterator<Item=ColumnMeta>>(&mut self, iter: T) {
+        for elem in iter {
+            let key = elem.get_column_name();
+            match self.columns.get_mut(key) {
+                None => {
+                    self.columns.insert(key.to_owned(), elem);
+                },
+                Some(cm) => {
+                    for check in elem.get_checks() {
+                        cm.add_check(check)
+                    }
+                    for key in elem.get_dependency_keys() {
+                        cm.add_dependency_key(key)
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct CelTest {
     definition: String,
@@ -391,7 +419,7 @@ impl CheckCollection {
     fn parse_columns<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
         conditions: I,
         data_types: &HashMap<String, sqlparser::ast::DataType>,
-    ) -> Result<HashMap<String, HashMap<String, TrackedColumnType>>, anyhow::Error> {
+    ) -> Result<HashMap<String, TableMeta>, anyhow::Error> {
         let definitions: Vec<(String, String)> = conditions.map(|(table, conds)| {
             conds.iter().map(|c| (table.to_owned(), c.to_owned()))
         }).flatten().collect();
@@ -480,8 +508,9 @@ impl CheckCollection {
         let grouped = CheckCollection::parse_columns(conditions, data_types)?;
 
         dbg!(&grouped);
+        panic!("stop");
 
-        let iter = grouped.values().map(|per_field| per_field.values()).flatten();
+        let iter = grouped.values().map(|per_field| per_field.columns.values()).flatten();
 
         let mut checks = CheckCollection::determine_checks(iter, data_types)?;
         let tracked_columns = CheckCollection::determine_tracked_columns(checks.values().flatten());

@@ -175,6 +175,10 @@ impl ColumnMeta {
         self.checks.push(check_definition.to_owned());
     }
 
+    pub fn get_dependency_keys(&self) -> impl Iterator<Item=&String> {
+        self.dependency_keys.iter()
+    }
+
     pub fn add_dependency_key(&mut self, dependency_key: &str) {
         self.dependency_keys.push(dependency_key.to_owned());
     }
