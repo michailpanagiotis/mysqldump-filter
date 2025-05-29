@@ -162,6 +162,15 @@ impl ColumnMeta {
         self.foreign_keys.iter()
     }
 
+    pub fn get_foreign_tables(&self) -> Result<Vec<String>, anyhow::Error> {
+        let mut tables: Vec<String> = Vec::new();
+        for key in self.foreign_keys.iter() {
+            let (table, _) = ColumnMeta::get_components_from_key(key)?;
+            tables.push(table.to_owned());
+        }
+        Ok(tables)
+    }
+
     pub fn add_foreign_key(&mut self, dependency_key: &str) {
         self.foreign_keys.push(dependency_key.to_owned());
     }

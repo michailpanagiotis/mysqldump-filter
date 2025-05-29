@@ -110,8 +110,12 @@ impl TableMeta {
         }
     }
 
-    pub fn get_foreign_tables(&self) -> Vec<String> {
-        self.columns.values().flat_map(|v| v.get_foreign_keys().map(|x| x.to_owned())).collect()
+    pub fn get_foreign_tables(&self) -> Result<Vec<String>, anyhow::Error> {
+        let mut tables: Vec<String> = Vec::new();
+        for cm in self.columns.values() {
+            tables.extend(cm.get_foreign_tables()?);
+        }
+        Ok(tables)
     }
 
     fn add_dependency(&mut self, target: &Rc<RefCell<TableMeta>>) {
@@ -226,10 +230,9 @@ impl CheckCollection {
 
         for table_meta in grouped.values() {
             let mut table_borrow = table_meta.borrow_mut();
-            let deps = table_borrow.get_foreign_tables();
-            for dep in deps.iter() {
-                let (target_table, _) = ColumnMeta::get_components_from_key(dep)?;
-                let target_table_meta = &grouped[&target_table];
+            let foreign_tables = table_borrow.get_foreign_tables()?;
+            for target_table in foreign_tables.iter() {
+                let target_table_meta = &grouped[target_table];
                 table_borrow.add_dependency(target_table_meta);
             }
         }
