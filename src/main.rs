@@ -5,10 +5,11 @@ use std::path::{Path, PathBuf};
 use tempdir::TempDir;
 
 mod checks;
+mod table;
 mod sql;
 mod traits;
 
-use checks::CheckCollection;
+use table::CheckCollection;
 use sql::{explode_to_files, get_data_types};
 
 #[derive(Debug)]

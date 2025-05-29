@@ -64,18 +64,6 @@ pub trait Dependency {
     }
 }
 
-pub trait PlainColumnCheck {
-    fn new(definition: &str, table: &str) -> Result<impl PlainColumnCheck + 'static, anyhow::Error> where Self: Sized;
-
-    fn test(&self, column_meta: &ColumnMeta, value:&str, lookup_table: &HashMap<String, HashSet<String>>) -> bool;
-
-    fn get_table_name(&self) -> &str;
-
-    fn get_column_name(&self) -> &str;
-
-    fn get_definition(&self) -> &str;
-}
-
 #[derive(Debug)]
 #[derive(Error)]
 pub struct NoDataTypeError;
@@ -202,11 +190,5 @@ impl ColumnMeta {
         for key in other.get_dependency_keys() {
             self.add_dependency_key(key)
         }
-    }
-}
-
-impl core::fmt::Debug for dyn PlainColumnCheck {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        (self.get_table_name().to_string() + ": " + self.get_definition()).fmt(f)
     }
 }
