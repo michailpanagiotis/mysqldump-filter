@@ -112,6 +112,7 @@ pub struct ColumnMeta {
     column: String,
     data_type: sqlparser::ast::DataType,
     dependency_keys: Vec<String>,
+    checks: Vec<String>,
     dependencies: Vec<ColumnMeta>,
     position: Option<usize>,
 }
@@ -139,19 +140,6 @@ impl ColumnMeta {
         table.to_owned() + "." + column
     }
 
-    pub fn from_check_definition(table: &str, column: &str, data_type: &sqlparser::ast::DataType) -> Self {
-        let key = table.to_owned() + "." + column;
-        Self {
-            key,
-            table: table.to_owned(),
-            column: column.to_string(),
-            data_type: data_type.to_owned(),
-            dependency_keys: Vec::new(),
-            dependencies: Vec::new(),
-            position: None,
-        }
-    }
-
     pub fn new(table: &str, column: &str, dependency_keys: &[&str], data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<Self, anyhow::Error> {
         let key = table.to_owned() + "." + column;
         let Some(data_type) = data_types.get(&key) else { return Err(anyhow::anyhow!("No data type: {}", key)) };
@@ -161,6 +149,7 @@ impl ColumnMeta {
             column: column.to_string(),
             data_type: data_type.to_owned(),
             dependency_keys: dependency_keys.iter().map(|x| x.to_string()).collect(),
+            checks: Vec::new(),
             dependencies: Vec::new(),
             position: None,
         })
@@ -177,6 +166,10 @@ impl ColumnMeta {
     pub fn get_referenced_columns(&self) -> impl Iterator<Item=&ColumnMeta> {
         std::iter::once(self).chain(self.dependencies.iter())
     }
+
+    pub fn add_check(&mut self, check_definition: &str) {
+        self.checks.push(check_definition.to_owned());
+    }
 }
 
 impl core::fmt::Debug for dyn ColumnTest {
@@ -188,7 +181,17 @@ impl core::fmt::Debug for dyn ColumnTest {
 impl Extend<ColumnMeta> for HashMap<std::string::String, ColumnMeta> {
     fn extend<T: IntoIterator<Item=ColumnMeta>>(&mut self, iter: T) {
         for elem in iter {
-            self.insert(elem.get_column_name().to_owned(), elem);
+            let key = elem.get_column_name();
+            match self.get_mut(key) {
+                None => {
+                    self.insert(key.to_owned(), elem);
+                },
+                Some(cm) => {
+                    for check in elem.checks {
+                        cm.add_check(&check)
+                    }
+                }
+            }
         }
     }
 }

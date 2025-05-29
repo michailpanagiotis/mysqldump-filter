@@ -373,10 +373,13 @@ impl RowCheck {
 }
 
 pub fn parse_test_definition(table: &str, definition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<(ColumnMeta, Vec<String>), anyhow::Error> {
-    if definition.contains("->") {
-        return LookupTest::resolve_column_meta(table, definition, data_types);
-    }
-    CelTest::resolve_column_meta(table, definition, data_types)
+    let (mut column_meta, deps) = if definition.contains("->") {
+        LookupTest::resolve_column_meta(table, definition, data_types)?
+    } else {
+        CelTest::resolve_column_meta(table, definition, data_types)?
+    };
+    column_meta.add_check(definition);
+    Ok((column_meta, deps))
 }
 
 #[derive(Debug)]
@@ -385,6 +388,10 @@ pub struct CheckCollection {
 }
 
 impl CheckCollection {
+    fn parse_columns() {
+
+    }
+
     fn determine_checks<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
         conditions: I,
         data_types: &HashMap<String, sqlparser::ast::DataType>,
@@ -469,7 +476,6 @@ impl CheckCollection {
         }
 
         tracked_cols.sort_by_key(|t| t.get_column_key().to_owned());
-        tracked_cols.dedup();
 
         let grouped: HashMap<String, HashMap<String, TrackedColumnType>> = tracked_cols
             .into_iter()
