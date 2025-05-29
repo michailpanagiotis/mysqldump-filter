@@ -440,12 +440,12 @@ impl Extend<ColumnMeta> for TableMeta {
                 panic!("mismatched table names");
             }
             let key = elem.get_column_name();
+
+            for check in elem.get_checks() {
+                self.checks.push(new_plain_test(&self.table, &check).unwrap())
+            }
             match self.columns.get_mut(key) {
                 None => {
-                    for check in elem.get_checks() {
-                        println!("PARSING {check}");
-                        self.checks.push(new_plain_test(&self.table, &check).unwrap())
-                    }
                     self.columns.insert(key.to_owned(), elem);
                 },
                 Some(cm) => {
@@ -731,6 +731,8 @@ impl CheckCollection {
                 tracked_cols.push(column_meta);
             }
         }
+
+        dbg!(&tracked_cols);
 
         Ok(
             tracked_cols
