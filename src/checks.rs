@@ -439,18 +439,22 @@ impl Extend<ColumnMeta> for TableMeta {
             } else if self.table != elem.get_table_name() {
                 panic!("mismatched table names");
             }
-            let key = elem.get_column_name();
+
+            let key = elem.get_column_name().to_owned();
 
             for check in elem.get_checks() {
                 self.checks.push(new_plain_test(&self.table, &check).unwrap())
             }
-            match self.columns.get_mut(key) {
+            match self.columns.get_mut(&key) {
                 None => {
                     self.columns.insert(key.to_owned(), elem);
                 },
                 Some(cm) => {
                     cm.extend(&elem);
                 }
+            }
+            if self.columns[&key].is_referenced() {
+                self.references.insert(self.columns[&key].get_column_key().to_owned(), HashSet::new());
             }
         }
     }
@@ -699,6 +703,7 @@ pub fn parse_test_definition(table: &str, definition: &str, data_types: &HashMap
 #[derive(Debug)]
 pub struct CheckCollection {
     per_table: HashMap<String, RowType>,
+    table_meta: HashMap<String, TableMeta>,
 }
 
 impl CheckCollection {
@@ -799,7 +804,6 @@ impl CheckCollection {
         let grouped = CheckCollection::parse_columns(conditions, data_types)?;
 
         dbg!(&grouped);
-        panic!("stop");
 
         let iter = grouped.values().map(|per_field| per_field.columns.values()).flatten();
 
@@ -820,23 +824,24 @@ impl CheckCollection {
 
         Ok(CheckCollection {
             per_table,
+            table_meta: grouped,
         })
     }
 
     fn get_lookup_table(&self) -> HashMap<String, HashSet<String>> {
         let mut lookup_table: HashMap<String, HashSet<String>> = HashMap::new();
 
-        for row_check in self.per_table.values() {
-            lookup_table.extend(row_check.borrow().get_references().iter().map(|(k, v)| (k.to_owned(), v.to_owned())));
+        for table_meta in self.table_meta.values() {
+            lookup_table.extend(table_meta.get_references().iter().map(|(k, v)| (k.to_owned(), v.to_owned())));
         }
         lookup_table
     }
 
     pub fn process_tables(&mut self, current_pass: &usize, table_files: &HashMap<String, PathBuf>) -> Result<(), anyhow::Error> {
         let lookup_table = self.get_lookup_table();
-        for row_check in self.per_table.values_mut() {
-            let file = table_files[&row_check.borrow().table].to_path_buf();
-            row_check.borrow_mut().process_data_file(current_pass, &file, &lookup_table)?;
+        for table_meta in self.table_meta.values_mut() {
+            let file = table_files[&table_meta.table].to_path_buf();
+            table_meta.process_data_file(current_pass, &file, &lookup_table)?;
         }
         Ok(())
     }
