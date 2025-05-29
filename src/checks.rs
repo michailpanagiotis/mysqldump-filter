@@ -381,7 +381,7 @@ impl ColumnTest for LookupTest {
 #[derive(Debug)]
 #[derive(Default)]
 pub struct TableMeta {
-    table: String,
+    pub table: String,
     pub columns: HashMap<String, ColumnMeta>,
     // trait ColumnPositions
     column_positions: Option<HashMap<String, usize>>,
@@ -465,6 +465,15 @@ impl TableMeta {
         if self.columns[&key].is_referenced() {
             self.references.insert(self.columns[&key].get_column_key().to_owned(), HashSet::new());
         }
+    }
+
+    pub fn get_dependency_keys(&self) -> Vec<String> {
+        self.columns.values().map(|v| v.get_dependency_keys().map(|x| x.to_owned())).flatten().collect()
+    }
+
+    fn add_dependency(&mut self, target: &Rc<RefCell<TableMeta>>) {
+        let weak = Rc::downgrade(target);
+        self.dependencies.push(weak);
     }
 
     fn get_column_meta(&self) -> Vec<ColumnMeta> {
@@ -744,13 +753,22 @@ impl CheckCollection {
                 tracked_cols.push(column_meta);
             }
         }
+        let grouped: HashMap<String, Rc<RefCell<TableMeta>>> = tracked_cols
+            .into_iter()
+            .into_grouping_map_by(|t| t.get_table_name().to_owned())
+            .collect();
 
-        Ok(
-            tracked_cols
-                .into_iter()
-                .into_grouping_map_by(|t| t.get_table_name().to_owned())
-                .collect()
-        )
+        for table_meta in grouped.values() {
+            let mut table_borrow = table_meta.borrow_mut();
+            let deps = table_borrow.get_dependency_keys();
+            for dep in deps.iter() {
+                let (target_table, _) = ColumnMeta::get_components_from_key(dep)?;
+                let target_table_meta = &grouped[&target_table];
+                table_borrow.add_dependency(target_table_meta);
+            }
+        }
+
+        Ok(grouped)
     }
 
     fn determine_checks<'a, I: Iterator<Item=&'a ColumnMeta>>(
