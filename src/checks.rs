@@ -46,33 +46,6 @@ impl From<RowCheck> for RowType {
 
 
 #[derive(Debug)]
-#[derive(Default)]
-pub struct TableMeta {
-    pub columns: HashMap<String, ColumnMeta>,
-}
-
-impl Extend<ColumnMeta> for TableMeta {
-    fn extend<T: IntoIterator<Item=ColumnMeta>>(&mut self, iter: T) {
-        for elem in iter {
-            let key = elem.get_column_name();
-            match self.columns.get_mut(key) {
-                None => {
-                    self.columns.insert(key.to_owned(), elem);
-                },
-                Some(cm) => {
-                    for check in elem.get_checks() {
-                        cm.add_check(check)
-                    }
-                    for key in elem.get_dependency_keys() {
-                        cm.add_dependency_key(key)
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[derive(Debug)]
 pub struct CelTest {
     definition: String,
     column_meta: ColumnMeta,
@@ -241,6 +214,34 @@ impl ColumnTest for LookupTest {
         &self.definition
     }
 }
+
+#[derive(Debug)]
+#[derive(Default)]
+pub struct TableMeta {
+    pub columns: HashMap<String, ColumnMeta>,
+}
+
+impl Extend<ColumnMeta> for TableMeta {
+    fn extend<T: IntoIterator<Item=ColumnMeta>>(&mut self, iter: T) {
+        for elem in iter {
+            let key = elem.get_column_name();
+            match self.columns.get_mut(key) {
+                None => {
+                    self.columns.insert(key.to_owned(), elem);
+                },
+                Some(cm) => {
+                    for check in elem.get_checks() {
+                        cm.add_check(check)
+                    }
+                    for key in elem.get_dependency_keys() {
+                        cm.add_dependency_key(key)
+                    }
+                }
+            }
+        }
+    }
+}
+
 
 #[derive(Debug)]
 pub struct RowCheck {
