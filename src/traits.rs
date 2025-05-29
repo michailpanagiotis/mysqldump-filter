@@ -6,27 +6,6 @@ use std::cell::RefCell;
 
 use crate::sql::get_column_positions;
 
-pub trait DBColumn {
-    fn get_column_meta(&self) -> &ColumnMeta;
-    fn get_column_meta_mut(&mut self) -> &mut ColumnMeta;
-
-    fn get_table_name(&self) -> &str {
-        &self.get_column_meta().table
-    }
-
-    fn get_column_name(&self) -> &str {
-        &self.get_column_meta().column
-    }
-
-    fn get_column_key(&self) -> &str {
-        &self.get_column_meta().key
-    }
-
-    fn get_data_type(&self) -> &sqlparser::ast::DataType {
-        &self.get_column_meta().data_type
-    }
-}
-
 pub trait ColumnPositions {
     fn get_column_positions(&self) -> &Option<HashMap<String, usize>>;
 
@@ -85,14 +64,6 @@ pub trait Dependency {
     }
 }
 
-pub trait ColumnTest: DBColumn {
-    fn new(definition: &str, table: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<impl ColumnTest + 'static, anyhow::Error> where Self: Sized;
-
-    fn test(&self, column_meta: &ColumnMeta, value:&str, lookup_table: &HashMap<String, HashSet<String>>) -> bool;
-
-    fn get_definition(&self) -> &str;
-}
-
 pub trait PlainColumnCheck {
     fn new(definition: &str, table: &str) -> Result<impl PlainColumnCheck + 'static, anyhow::Error> where Self: Sized;
 
@@ -131,16 +102,6 @@ pub struct ColumnMeta {
     tested_at_pass: Option<usize>,
 }
 
-impl DBColumn for ColumnMeta {
-    fn get_column_meta(&self) -> &ColumnMeta {
-        self
-    }
-
-    fn get_column_meta_mut(&mut self) -> &mut ColumnMeta {
-        self
-    }
-}
-
 impl ColumnMeta {
     pub fn get_components_from_key(key: &str) -> Result<(String, String), anyhow::Error> {
         let mut split = key.split('.');
@@ -169,6 +130,22 @@ impl ColumnMeta {
             position: None,
             tested_at_pass: None,
         })
+    }
+
+    pub fn get_table_name(&self) -> &str {
+        &self.table
+    }
+
+    pub fn get_column_name(&self) -> &str {
+        &self.column
+    }
+
+    pub fn get_column_key(&self) -> &str {
+        &self.key
+    }
+
+    pub fn get_data_type(&self) -> &sqlparser::ast::DataType {
+        &self.data_type
     }
 
     pub fn capture_position(&mut self, positions: &HashMap<String, usize>) {
@@ -227,13 +204,6 @@ impl ColumnMeta {
         }
     }
 }
-
-impl core::fmt::Debug for dyn ColumnTest {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        self.get_definition().fmt(f)
-    }
-}
-
 
 impl core::fmt::Debug for dyn PlainColumnCheck {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
