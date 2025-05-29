@@ -59,13 +59,7 @@ fn main() -> Result<(), anyhow::Error> {
 
     let config = Config::from_file(config_file.as_path());
     dbg!(&config);
-
-    let grouped = CheckCollection::parse_columns(config.filters.iter().chain(&config.cascades), &data_types)?;
-
-    let mut collection = CheckCollection::new(
-        &grouped,
-        &data_types,
-    )?;
+    let mut collection = CheckCollection::new(config.filters.iter().chain(&config.cascades), &data_types)?;
 
     let (working_file_path, table_files) = explode_to_files(working_dir_path.as_path(), input_file.as_path(), &config.allow_data_on_tables).unwrap_or_else(|e| {
         panic!("Problem exploding to files: {e:?}");
