@@ -111,6 +111,7 @@ pub struct ColumnMeta {
     table: String,
     column: String,
     data_type: sqlparser::ast::DataType,
+    is_referenced: bool,
     dependency_keys: Vec<String>,
     checks: Vec<String>,
     dependencies: Vec<ColumnMeta>,
@@ -148,6 +149,7 @@ impl ColumnMeta {
             table: table.to_owned(),
             column: column.to_string(),
             data_type: data_type.to_owned(),
+            is_referenced: false,
             dependency_keys: dependency_keys.iter().map(|x| x.to_string()).collect(),
             checks: Vec::new(),
             dependencies: Vec::new(),
@@ -182,6 +184,26 @@ impl ColumnMeta {
     pub fn add_dependency_key(&mut self, dependency_key: &str) {
         self.dependency_keys.push(dependency_key.to_owned());
     }
+
+    pub fn is_referenced(&self) -> bool {
+        self.is_referenced
+    }
+
+    pub fn set_referenced(&mut self) {
+        self.is_referenced = true
+    }
+
+    pub fn extend(&mut self, other: &ColumnMeta) {
+        if self.is_referenced() || other.is_referenced() {
+            self.set_referenced();
+        }
+        for check in other.get_checks() {
+            self.add_check(check)
+        }
+        for key in other.get_dependency_keys() {
+            self.add_dependency_key(key)
+        }
+    }
 }
 
 impl core::fmt::Debug for dyn ColumnTest {
@@ -193,19 +215,13 @@ impl core::fmt::Debug for dyn ColumnTest {
 impl Extend<ColumnMeta> for HashMap<std::string::String, ColumnMeta> {
     fn extend<T: IntoIterator<Item=ColumnMeta>>(&mut self, iter: T) {
         for elem in iter {
-            dbg!("EXTEND", &elem);
             let key = elem.get_column_name();
             match self.get_mut(key) {
                 None => {
                     self.insert(key.to_owned(), elem);
                 },
                 Some(cm) => {
-                    for check in elem.checks {
-                        cm.add_check(&check)
-                    }
-                    for key in elem.dependency_keys {
-                        cm.add_dependency_key(&key)
-                    }
+                    cm.extend(&elem);
                 }
             }
         }

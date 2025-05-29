@@ -219,6 +219,37 @@ impl ColumnTest for LookupTest {
 #[derive(Default)]
 pub struct TableMeta {
     pub columns: HashMap<String, ColumnMeta>,
+    // trait ColumnPositions
+    column_positions: Option<HashMap<String, usize>>,
+    // trait ReferenceTracker
+    references: HashMap<String, HashSet<String>>,
+}
+
+impl ColumnPositions for TableMeta {
+    fn get_column_positions(&self) -> &Option<HashMap<String, usize>> {
+        &self.column_positions
+    }
+
+    fn set_column_positions(&mut self, positions: HashMap<String, usize>) {
+        self.column_positions = Some(positions.to_owned());
+        for col in self.columns.values_mut() {
+            col.capture_position(&positions);
+        }
+    }
+}
+
+impl ReferenceTracker for TableMeta {
+    fn get_referenced_columns(&self) -> impl Iterator<Item=&ColumnMeta> {
+        self.columns.values().filter(|v| v.is_referenced())
+    }
+
+    fn get_references(&self) -> &HashMap<String, HashSet<String>> {
+        &self.references
+    }
+
+    fn get_references_mut(&mut self) -> &mut HashMap<String, HashSet<String>> {
+        &mut self.references
+    }
 }
 
 impl Extend<ColumnMeta> for TableMeta {
@@ -230,18 +261,12 @@ impl Extend<ColumnMeta> for TableMeta {
                     self.columns.insert(key.to_owned(), elem);
                 },
                 Some(cm) => {
-                    for check in elem.get_checks() {
-                        cm.add_check(check)
-                    }
-                    for key in elem.get_dependency_keys() {
-                        cm.add_dependency_key(key)
-                    }
+                    cm.extend(&elem);
                 }
             }
         }
     }
 }
-
 
 #[derive(Debug)]
 pub struct RowCheck {
@@ -300,7 +325,6 @@ impl Dependency for RowCheck {
     fn get_dependencies(&self) -> &Vec<DependencyType> {
         &self.pending_dependencies
     }
-
 }
 
 impl RowCheck {
@@ -441,15 +465,18 @@ impl CheckCollection {
             }
             for key in deps {
                 let (target_table, target_column) = ColumnMeta::get_components_from_key(&key)?;
-                let column_meta = ColumnMeta::new(&target_table, &target_column, &Vec::new(), data_types)?;
+                let mut column_meta = ColumnMeta::new(&target_table, &target_column, &Vec::new(), data_types)?;
+                column_meta.set_referenced();
                 tracked_cols.push(column_meta);
             }
         }
 
-        Ok(tracked_cols
-            .into_iter()
-            .into_grouping_map_by(|t| t.get_table_name().to_owned())
-            .collect())
+        Ok(
+            tracked_cols
+                .into_iter()
+                .into_grouping_map_by(|t| t.get_table_name().to_owned())
+                .collect()
+        )
     }
 
     fn determine_checks<'a, I: Iterator<Item=&'a ColumnMeta>>(
