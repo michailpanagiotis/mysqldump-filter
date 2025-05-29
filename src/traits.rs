@@ -83,7 +83,7 @@ pub struct ColumnMeta {
     column: String,
     data_type: sqlparser::ast::DataType,
     is_referenced: bool,
-    dependency_keys: Vec<String>,
+    foreign_keys: Vec<String>,
     checks: Vec<String>,
     position: Option<usize>,
     tested_at_pass: Option<usize>,
@@ -102,7 +102,12 @@ impl ColumnMeta {
         table.to_owned() + "." + column
     }
 
-    pub fn new(table: &str, column: &str, dependency_keys: &[String], data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<Self, anyhow::Error> {
+    pub fn new(
+        table: &str,
+        column: &str,
+        foreign_keys: &[String],
+        data_types: &HashMap<String, sqlparser::ast::DataType>,
+    ) -> Result<Self, anyhow::Error> {
         let key = ColumnMeta::get_key_from_components(table, column);
         let Some(data_type) = data_types.get(&key) else { return Err(anyhow::anyhow!("No data type: {}", key)) };
         Ok(Self {
@@ -111,11 +116,18 @@ impl ColumnMeta {
             column: column.to_string(),
             data_type: data_type.to_owned(),
             is_referenced: false,
-            dependency_keys: dependency_keys.iter().map(|x| x.to_string()).collect(),
+            foreign_keys: foreign_keys.iter().map(|x| x.to_string()).collect(),
             checks: Vec::new(),
             position: None,
             tested_at_pass: None,
         })
+    }
+
+    pub fn from_foreign_key(key: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<Self, anyhow::Error> {
+        let (target_table, target_column) = ColumnMeta::get_components_from_key(key)?;
+        let mut target_column_meta = ColumnMeta::new(&target_table, &target_column, &Vec::new(), data_types)?;
+        target_column_meta.set_referenced();
+        Ok(target_column_meta)
     }
 
     pub fn get_table_name(&self) -> &str {
@@ -146,12 +158,12 @@ impl ColumnMeta {
         self.checks.push(check_definition.to_owned());
     }
 
-    pub fn get_dependency_keys(&self) -> impl Iterator<Item=&String> {
-        self.dependency_keys.iter()
+    pub fn get_foreign_keys(&self) -> impl Iterator<Item=&String> {
+        self.foreign_keys.iter()
     }
 
-    pub fn add_dependency_key(&mut self, dependency_key: &str) {
-        self.dependency_keys.push(dependency_key.to_owned());
+    pub fn add_foreign_key(&mut self, dependency_key: &str) {
+        self.foreign_keys.push(dependency_key.to_owned());
     }
 
     pub fn is_referenced(&self) -> bool {
@@ -177,8 +189,8 @@ impl ColumnMeta {
         for check in other.get_checks() {
             self.add_check(check)
         }
-        for key in other.get_dependency_keys() {
-            self.add_dependency_key(key)
+        for key in other.get_foreign_keys() {
+            self.add_foreign_key(key)
         }
     }
 }

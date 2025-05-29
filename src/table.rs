@@ -110,8 +110,8 @@ impl TableMeta {
         }
     }
 
-    pub fn get_dependency_keys(&self) -> Vec<String> {
-        self.columns.values().flat_map(|v| v.get_dependency_keys().map(|x| x.to_owned())).collect()
+    pub fn get_foreign_tables(&self) -> Vec<String> {
+        self.columns.values().flat_map(|v| v.get_foreign_keys().map(|x| x.to_owned())).collect()
     }
 
     fn add_dependency(&mut self, target: &Rc<RefCell<TableMeta>>) {
@@ -207,24 +207,16 @@ impl CheckCollection {
         }).collect();
 
         let mut tracked_cols: Vec<TrackedColumnType> = Vec::new();
-        let mut all_deps: HashMap<String, Vec<String>> = HashMap::new();
 
         for (table, definition) in definitions.iter() {
             let (column_name, deps) = parse_test_definition(table, definition, data_types)?;
             let mut column_meta = ColumnMeta::new(table, &column_name, &deps, data_types)?;
             column_meta.add_check(definition);
-            let key = &column_meta.get_column_key().to_string();
             tracked_cols.push(column_meta);
 
             // track target columns
-            if !deps.is_empty() {
-                all_deps.insert(key.to_owned(), deps.clone());
-            }
-            for key in deps {
-                let (target_table, target_column) = ColumnMeta::get_components_from_key(&key)?;
-                let mut target_column_meta = ColumnMeta::new(&target_table, &target_column, &Vec::new(), data_types)?;
-                target_column_meta.set_referenced();
-                tracked_cols.push(target_column_meta);
+            for key in deps.iter() {
+                tracked_cols.push(ColumnMeta::from_foreign_key(key, data_types)?);
             }
         }
         let grouped: HashMap<String, Rc<RefCell<TableMeta>>> = tracked_cols
@@ -234,7 +226,7 @@ impl CheckCollection {
 
         for table_meta in grouped.values() {
             let mut table_borrow = table_meta.borrow_mut();
-            let deps = table_borrow.get_dependency_keys();
+            let deps = table_borrow.get_foreign_tables();
             for dep in deps.iter() {
                 let (target_table, _) = ColumnMeta::get_components_from_key(dep)?;
                 let target_table_meta = &grouped[&target_table];
