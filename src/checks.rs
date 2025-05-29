@@ -432,36 +432,45 @@ impl Dependency for TableMeta {
     }
 }
 
-impl Extend<ColumnMeta> for TableMeta {
+impl Extend<ColumnMeta> for Rc<RefCell<TableMeta>> {
     fn extend<T: IntoIterator<Item=ColumnMeta>>(&mut self, iter: T) {
+        let mut borrowed_self = self.borrow_mut();
         for elem in iter {
-            if self.table.is_empty() {
-                self.table = elem.get_table_name().to_owned();
-            } else if self.table != elem.get_table_name() {
-                panic!("mismatched table names");
-            }
-
-            let key = elem.get_column_name().to_owned();
-
-            for check in elem.get_checks() {
-                self.checks.push(new_plain_test(&self.table, &check).unwrap())
-            }
-            match self.columns.get_mut(&key) {
-                None => {
-                    self.columns.insert(key.to_owned(), elem);
-                },
-                Some(cm) => {
-                    cm.extend(&elem);
-                }
-            }
-            if self.columns[&key].is_referenced() {
-                self.references.insert(self.columns[&key].get_column_key().to_owned(), HashSet::new());
-            }
+            borrowed_self.add_column_meta(elem);
         }
     }
 }
 
 impl TableMeta {
+    fn add_column_meta(&mut self, elem: ColumnMeta) {
+        if self.table.is_empty() {
+            self.table = elem.get_table_name().to_owned();
+        } else if self.table != elem.get_table_name() {
+            panic!("mismatched table names");
+        }
+
+        let key = elem.get_column_name().to_owned();
+
+        for check in elem.get_checks() {
+            self.checks.push(new_plain_test(&self.table, &check).unwrap())
+        }
+        match self.columns.get_mut(&key) {
+            None => {
+                self.columns.insert(key.to_owned(), elem);
+            },
+            Some(cm) => {
+                cm.extend(&elem);
+            }
+        }
+        if self.columns[&key].is_referenced() {
+            self.references.insert(self.columns[&key].get_column_key().to_owned(), HashSet::new());
+        }
+    }
+
+    fn get_column_meta(&self) -> Vec<ColumnMeta> {
+        self.columns.values().map(|c| c.to_owned()).collect()
+    }
+
     fn get_checks(&self) -> impl Iterator<Item=&Box<dyn PlainColumnCheck>> {
         self.checks.iter()
     }
@@ -704,14 +713,14 @@ pub fn parse_test_definition(table: &str, definition: &str, data_types: &HashMap
 #[derive(Debug)]
 pub struct CheckCollection {
     per_table: HashMap<String, RowType>,
-    table_meta: HashMap<String, TableMeta>,
+    table_meta: HashMap<String, Rc<RefCell<TableMeta>>>,
 }
 
 impl CheckCollection {
     fn parse_columns<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
         conditions: I,
         data_types: &HashMap<String, sqlparser::ast::DataType>,
-    ) -> Result<HashMap<String, TableMeta>, anyhow::Error> {
+    ) -> Result<HashMap<String, Rc<RefCell<TableMeta>>>, anyhow::Error> {
         let definitions: Vec<(String, String)> = conditions.map(|(table, conds)| {
             conds.iter().map(|c| (table.to_owned(), c.to_owned()))
         }).flatten().collect();
@@ -802,9 +811,9 @@ impl CheckCollection {
 
         dbg!(&grouped);
 
-        let iter = grouped.values().map(|per_field| per_field.columns.values()).flatten();
+        let iter: Vec<ColumnMeta> = grouped.values().map(|per_field| per_field.borrow().get_column_meta()).flatten().collect();
 
-        let mut checks = CheckCollection::determine_checks(iter, data_types)?;
+        let mut checks = CheckCollection::determine_checks(iter.iter(), data_types)?;
         let tracked_columns = CheckCollection::determine_tracked_columns(checks.values().flatten());
         let mut referenced_columns = CheckCollection::determine_referenced_columns(checks.values().flatten());
 
@@ -829,7 +838,7 @@ impl CheckCollection {
         let mut lookup_table: HashMap<String, HashSet<String>> = HashMap::new();
 
         for table_meta in self.table_meta.values() {
-            lookup_table.extend(table_meta.get_references().iter().map(|(k, v)| (k.to_owned(), v.to_owned())));
+            lookup_table.extend(table_meta.borrow().get_references().iter().map(|(k, v)| (k.to_owned(), v.to_owned())));
         }
         lookup_table
     }
@@ -837,8 +846,8 @@ impl CheckCollection {
     pub fn process_tables(&mut self, current_pass: &usize, table_files: &HashMap<String, PathBuf>) -> Result<(), anyhow::Error> {
         let lookup_table = self.get_lookup_table();
         for table_meta in self.table_meta.values_mut() {
-            let file = table_files[&table_meta.table].to_path_buf();
-            table_meta.process_data_file(current_pass, &file, &lookup_table)?;
+            let file = table_files[&table_meta.borrow().table].to_path_buf();
+            table_meta.borrow_mut().process_data_file(current_pass, &file, &lookup_table)?;
         }
         Ok(())
     }
