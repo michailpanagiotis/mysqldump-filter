@@ -388,6 +388,7 @@ pub struct TableMeta {
     // trait ReferenceTracker
     references: HashMap<String, HashSet<String>>,
     checks: Vec<Box<dyn PlainColumnCheck>>,
+    dependencies: Vec<DependencyType>,
 }
 
 impl ColumnPositions for TableMeta {
@@ -418,8 +419,8 @@ impl ReferenceTracker for TableMeta {
 }
 
 impl Dependency for TableMeta {
-    fn get_dependencies(&self) -> impl Iterator<Item=&ColumnMeta> {
-        std::iter::empty()
+    fn get_dependencies(&self) -> &[Weak<RefCell<dyn Dependency>>] {
+        &self.dependencies
     }
 
     fn set_fulfilled_at_depth(&mut self, depth: &usize) {
@@ -579,8 +580,8 @@ impl ReferenceTracker for RowCheck {
 }
 
 impl Dependency for RowCheck {
-    fn get_dependencies(&self) -> impl Iterator<Item=&ColumnMeta> {
-        std::iter::empty()
+    fn get_dependencies(&self) -> &[Weak<RefCell<dyn Dependency>>] {
+        &[]
     }
 
     fn set_fulfilled_at_depth(&mut self, depth: &usize) {
@@ -715,8 +716,6 @@ impl CheckCollection {
             conds.iter().map(|c| (table.to_owned(), c.to_owned()))
         }).flatten().collect();
 
-        dbg!(&definitions);
-
         let mut tracked_cols: Vec<TrackedColumnType> = Vec::new();
         let mut all_deps: HashMap<String, Vec<String>> = HashMap::new();
 
@@ -736,8 +735,6 @@ impl CheckCollection {
                 tracked_cols.push(column_meta);
             }
         }
-
-        dbg!(&tracked_cols);
 
         Ok(
             tracked_cols
