@@ -198,6 +198,7 @@ pub fn explode_to_files(working_dir_path: &Path, sqldump_filepath: &Path, allowe
     let working_file_path = working_dir_path.join("INTERIM").with_extension("sql");
     let mut writers: HashMap<String, BufWriter<File>> = HashMap::new();
     let mut table_files: HashMap<String, PathBuf> = HashMap::new();
+    dbg!(&working_file_path);
     let mut working_file_writer = get_writer(&working_file_path)?;
 
     let statements = SqlStatements::from_file(sqldump_filepath, allowed_tables);
