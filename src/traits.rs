@@ -234,6 +234,6 @@ impl core::fmt::Debug for dyn ColumnTest {
 
 impl core::fmt::Debug for dyn PlainColumnCheck {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        self.get_definition().fmt(f)
+        (self.get_table_name().to_string() + ": " + self.get_definition()).fmt(f)
     }
 }

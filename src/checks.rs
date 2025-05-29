@@ -443,6 +443,7 @@ impl Extend<ColumnMeta> for TableMeta {
             match self.columns.get_mut(key) {
                 None => {
                     for check in elem.get_checks() {
+                        println!("PARSING {check}");
                         self.checks.push(new_plain_test(&self.table, &check).unwrap())
                     }
                     self.columns.insert(key.to_owned(), elem);
