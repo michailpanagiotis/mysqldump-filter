@@ -492,10 +492,18 @@ impl<'a> CheckCollection<'a> {
             }
         }
 
-        let per_table = CheckCollection::determine_checks_per_table(&grouped, tracked_columns.iter(), &checks, &referenced_columns)?;
+        let mut res: HashMap<String, RowType> = HashMap::new();
+        for (table, tracked_columns) in tracked_columns {
+            let checks = &checks[&table];
+            let referenced_columns = &referenced_columns[&table];
+            let cols = &grouped[&table];
+            res.insert(table.to_owned(), Rc::new(RefCell::new(RowCheck::from_config(&table, cols, &tracked_columns, checks, referenced_columns)?)));
+        }
+
+        dbg!(&res);
 
         Ok(CheckCollection {
-            per_table,
+            per_table: res,
         })
     }
 
