@@ -32,12 +32,11 @@ pub struct PlainCelTest {
 }
 
 impl PlainCelTest {
-    pub fn resolve_column_meta(table: &str, definition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<(ColumnMeta, Vec<String>), anyhow::Error> {
-        let program = Program::compile(definition).unwrap();
+    pub fn get_column_info(definition: &str) -> Result<(String, Vec<String>), anyhow::Error> {
+        let program = Program::compile(definition)?;
         let variables: Vec<String> = program.references().variables().iter().map(|f| f.to_string()).collect();
-        let column = &variables[0];
-        let column_meta = ColumnMeta::new(table, column, &Vec::new(), data_types)?;
-        Ok((column_meta, Vec::new()))
+        let column_name = &variables[0];
+        Ok((column_name.to_owned(), Vec::new()))
     }
 
     fn parse_int(s: &str) -> i64 {
@@ -130,20 +129,12 @@ pub struct PlainLookupTest {
 }
 
 impl PlainLookupTest {
-    pub fn resolve_column_meta(table: &str, definition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<(ColumnMeta, Vec<String>), anyhow::Error> {
+    pub fn get_column_info(definition: &str) -> Result<(String, Vec<String>), anyhow::Error> {
         let mut split = definition.split("->");
-        let (Some(source_column), Some(foreign_key), None) = (split.next(), split.next(), split.next()) else {
+        let (Some(column_name), Some(foreign_key), None) = (split.next(), split.next(), split.next()) else {
             panic!("cannot parse cascade");
         };
-
-        let mut split = foreign_key.split('.');
-        let (Some(target_table), Some(target_column), None) = (split.next(), split.next(), split.next()) else {
-            panic!("malformed foreign key {foreign_key}");
-        };
-        let target_column_meta = ColumnMeta::new(target_table, target_column, &Vec::new(), data_types)?;
-
-        let column_meta = ColumnMeta::new(table, source_column, &Vec::from([target_column_meta.get_column_key()]), data_types)?;
-        Ok((column_meta, Vec::from([target_column_meta.get_column_key().to_owned()])))
+        Ok((column_name.to_owned(), Vec::from([foreign_key.to_owned()])))
     }
 }
 
@@ -187,6 +178,15 @@ pub fn new_plain_test(table: &str, definition: &str) -> Result<PlainCheckType, a
         Box::new(PlainCelTest::new(definition, table)?)
     };
     Ok(item)
+}
+
+pub fn parse_test_definition(table: &str, definition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<(String, Vec<String>), anyhow::Error> {
+    let (column_name, foreign_keys) = if definition.contains("->") {
+        PlainLookupTest::get_column_info(definition)?
+    } else {
+        PlainCelTest::get_column_info(definition)?
+    };
+    Ok((column_name, foreign_keys))
 }
 
 pub type PlainCheckType = Box<dyn PlainColumnCheck>;

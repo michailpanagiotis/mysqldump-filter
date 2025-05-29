@@ -85,7 +85,6 @@ pub struct ColumnMeta {
     is_referenced: bool,
     dependency_keys: Vec<String>,
     checks: Vec<String>,
-    dependencies: Vec<ColumnMeta>,
     position: Option<usize>,
     tested_at_pass: Option<usize>,
 }
@@ -103,8 +102,8 @@ impl ColumnMeta {
         table.to_owned() + "." + column
     }
 
-    pub fn new(table: &str, column: &str, dependency_keys: &[&str], data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<Self, anyhow::Error> {
-        let key = table.to_owned() + "." + column;
+    pub fn new(table: &str, column: &str, dependency_keys: &[String], data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<Self, anyhow::Error> {
+        let key = ColumnMeta::get_key_from_components(table, column);
         let Some(data_type) = data_types.get(&key) else { return Err(anyhow::anyhow!("No data type: {}", key)) };
         Ok(Self {
             key,
@@ -114,7 +113,6 @@ impl ColumnMeta {
             is_referenced: false,
             dependency_keys: dependency_keys.iter().map(|x| x.to_string()).collect(),
             checks: Vec::new(),
-            dependencies: Vec::new(),
             position: None,
             tested_at_pass: None,
         })
@@ -138,14 +136,6 @@ impl ColumnMeta {
 
     pub fn capture_position(&mut self, positions: &HashMap<String, usize>) {
         self.position = Some(positions[self.get_column_name()]);
-    }
-
-    pub fn get_column_dependencies(&self) -> impl Iterator<Item=&ColumnMeta> {
-        self.dependencies.iter()
-    }
-
-    pub fn get_referenced_columns(&self) -> impl Iterator<Item=&ColumnMeta> {
-        std::iter::once(self).chain(self.dependencies.iter())
     }
 
     pub fn get_checks(&self) -> impl Iterator<Item=&String> {

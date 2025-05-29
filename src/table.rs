@@ -9,7 +9,7 @@ use std::rc::{Rc, Weak};
 
 use crate::traits::{ColumnMeta, ColumnPositions, ReferenceTracker, Dependency};
 use crate::sql::{get_values, read_table_data_file};
-use crate::checks::{PlainLookupTest, PlainCelTest, PlainCheckType, new_plain_test};
+use crate::checks::{PlainCheckType, new_plain_test, parse_test_definition};
 
 type ColumnType = ColumnMeta;
 pub type TrackedColumnType = ColumnMeta;
@@ -192,16 +192,6 @@ impl TableMeta {
     }
 }
 
-pub fn parse_test_definition(table: &str, definition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<(ColumnMeta, Vec<String>), anyhow::Error> {
-    let (mut column_meta, deps) = if definition.contains("->") {
-        PlainLookupTest::resolve_column_meta(table, definition, data_types)?
-    } else {
-        PlainCelTest::resolve_column_meta(table, definition, data_types)?
-    };
-    column_meta.add_check(definition);
-    Ok((column_meta, deps))
-}
-
 #[derive(Debug)]
 pub struct CheckCollection {
     table_meta: HashMap<String, Rc<RefCell<TableMeta>>>,
@@ -220,7 +210,9 @@ impl CheckCollection {
         let mut all_deps: HashMap<String, Vec<String>> = HashMap::new();
 
         for (table, definition) in definitions.iter() {
-            let (column_meta, deps) = parse_test_definition(table, definition, data_types)?;
+            let (column_name, deps) = parse_test_definition(table, definition, data_types)?;
+            let mut column_meta = ColumnMeta::new(table, &column_name, &deps, data_types)?;
+            column_meta.add_check(definition);
             let key = &column_meta.get_column_key().to_string();
             tracked_cols.push(column_meta);
 
@@ -230,9 +222,9 @@ impl CheckCollection {
             }
             for key in deps {
                 let (target_table, target_column) = ColumnMeta::get_components_from_key(&key)?;
-                let mut column_meta = ColumnMeta::new(&target_table, &target_column, &Vec::new(), data_types)?;
-                column_meta.set_referenced();
-                tracked_cols.push(column_meta);
+                let mut target_column_meta = ColumnMeta::new(&target_table, &target_column, &Vec::new(), data_types)?;
+                target_column_meta.set_referenced();
+                tracked_cols.push(target_column_meta);
             }
         }
         let grouped: HashMap<String, Rc<RefCell<TableMeta>>> = tracked_cols
@@ -250,6 +242,7 @@ impl CheckCollection {
             }
         }
 
+        dbg!(&grouped);
         Ok(grouped)
     }
 
