@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use thiserror::Error;
+use std::rc::Weak;
+use std::cell::RefCell;
 
 use crate::sql::get_column_positions;
 
@@ -66,11 +68,12 @@ pub trait ReferenceTracker: ColumnPositions {
 pub trait Dependency {
     fn set_fulfilled_at_depth(&mut self, depth: &usize);
     fn has_been_fulfilled(&self) -> bool;
-    fn get_dependencies(&self) -> impl Iterator<Item=&ColumnMeta>;
+
+    fn get_dependencies(&self) -> &[Weak<RefCell<dyn Dependency>>];
 
     fn has_fulfilled_dependencies(&self) -> bool {
-        self.get_dependencies().all(|d| {
-            d.has_been_fulfilled()
+        self.get_dependencies().iter().all(|d| {
+            d.upgrade().unwrap().borrow().has_been_fulfilled()
         })
     }
 
