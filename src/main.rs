@@ -11,7 +11,7 @@ mod sql;
 mod traits;
 
 use table::CheckCollection;
-use sql::{explode_to_files, get_data_types};
+use sql::{explode_to_files, get_data_types, gather};
 
 #[derive(Debug)]
 #[derive(Deserialize)]
@@ -54,21 +54,22 @@ fn main() -> Result<(), anyhow::Error> {
         Some(ref dir) => dir.path().to_path_buf(),
         None => cli.working_dir.unwrap(),
     };
+    let working_file_path = working_dir_path.join("INTERIM").with_extension("sql");
 
-    let data_types = get_data_types(input_file.as_path());
+    gather(&working_dir_path, &working_file_path, &output_file)?;
 
-    println!("Read data types!");
-
-    let config = Config::from_file(config_file.as_path());
-    let mut collection = CheckCollection::new(config.filters.iter().chain(&config.cascades), &data_types)?;
-
-    let (working_file_path, table_files) = explode_to_files(working_dir_path.as_path(), input_file.as_path(), &config.allow_data_on_tables).unwrap_or_else(|e| {
-        panic!("Problem exploding to files: {e:?}");
-    });
-
-
-    collection.process(&table_files)?;
-
+    // let data_types = get_data_types(input_file.as_path());
+    //
+    // println!("Read data types!");
+    //
+    // let config = Config::from_file(config_file.as_path());
+    // let mut collection = CheckCollection::new(config.filters.iter().chain(&config.cascades), &data_types)?;
+    //
+    // let table_files = explode_to_files(working_file_path.as_path(), working_dir_path.as_path(), input_file.as_path(), &config.allow_data_on_tables).unwrap_or_else(|e| {
+    //     panic!("Problem exploding to files: {e:?}");
+    // });
+    //
+    // collection.process(&table_files)?;
 
     if let Some(dir) = temp_dir {
        let _ = dir.close();

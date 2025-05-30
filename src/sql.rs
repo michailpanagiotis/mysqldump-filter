@@ -74,17 +74,61 @@ pub fn parse_insert_fields(insert_statement: &str) -> HashMap<String, usize> {
     )
 }
 
-pub struct SqlStatements {
+pub struct PlainStatements {
+    buf: io::BufReader<fs::File>,
+}
+
+impl PlainStatements {
+    pub fn from_file(sqldump_filepath: &Path) -> Result<Self, anyhow::Error> {
+        let file = fs::File::open(sqldump_filepath)?;
+        Ok(PlainStatements {
+            buf: io::BufReader::new(file),
+        })
+    }
+
+    pub fn is_full_line(line: &str) -> bool {
+        if line.ends_with(";\n") {
+            return true;
+        }
+
+        if line.starts_with("--") {
+            return true;
+        }
+
+        return false;
+    }
+}
+
+impl Iterator for PlainStatements {
+    type Item = String;
+    fn next(&mut self) -> Option<String> {
+        let mut buf: String = String::new();
+
+        while {
+            let read_bytes = self.buf.read_line(&mut buf).ok()?;
+            read_bytes > 0 && !PlainStatements::is_full_line(&buf)
+        } {}
+
+        match buf.is_empty() {
+            true => None,
+            false => {
+                Some(buf)
+            }
+        }
+    }
+}
+
+pub struct SqlStatementsWithTable {
     buf: io::BufReader<fs::File>,
     cur_table: Option<String>,
     last_statement: Option<String>,
     allowed_tables: HashSet<String>,
 }
 
-impl SqlStatements {
+impl SqlStatementsWithTable {
     pub fn from_file(sqldump_filepath: &Path, allowed_tables: &HashSet<String>, curr_table: &Option<String>) -> Self {
         let file = fs::File::open(sqldump_filepath).expect("Cannot open file");
-        SqlStatements {
+        SqlStatementsWithTable {
             buf: io::BufReader::new(file),
             cur_table: curr_table.clone(),
             last_statement: None,
@@ -93,16 +137,17 @@ impl SqlStatements {
     }
 
     fn next_statement(&mut self) -> Option<String> {
-        let mut buf8 = vec![];
+        let mut buf: String = String::new();
+
         while {
-            let first_read_bytes = self.buf.read_until(b';', &mut buf8).ok()?;
-            let second_read_bytes = if first_read_bytes > 0 { self.buf.read_until(b'\n', &mut buf8).ok()? } else { 0 };
-            second_read_bytes > 1
+            let read_bytes = self.buf.read_line(&mut buf).ok()?;
+            read_bytes > 0 && !buf.ends_with(";\n")
         } {}
-        match buf8.is_empty() {
+
+        match buf.is_empty() {
             true => None,
             false => {
-                let statement: String = String::from_utf8(buf8).ok()?.split('\n').filter(|x| !x.is_empty()).map(|x| x.trim()).map(|x| x.to_owned() + "\n").collect();
+                let statement: String = if buf.is_empty() { buf } else { buf + "\n" };
                 Some(statement)
             }
         }
@@ -131,7 +176,7 @@ impl SqlStatements {
     }
 }
 
-impl Iterator for SqlStatements {
+impl Iterator for SqlStatementsWithTable {
     type Item = (Option<String>, String);
     fn next(&mut self) -> Option<(Option<String>, String)> {
         let (mut table, mut line) = self.next_item()?;
@@ -159,7 +204,7 @@ pub fn get_data_types(sqldump_filepath: &Path) -> HashMap<String, sqlparser::ast
 }
 
 pub fn read_table_data_file(table: &str, sqldump_filepath: &Path) -> impl Iterator<Item = (Option<String>, String)> {
-    SqlStatements::from_file(sqldump_filepath, &HashSet::from([table.to_owned()]), &Some(table.to_string()))
+    SqlStatementsWithTable::from_file(sqldump_filepath, &HashSet::from([table.to_owned()]), &Some(table.to_string()))
 }
 
 pub fn get_writer(filepath: &Path) -> Result<BufWriter<File>, anyhow::Error> {
@@ -170,14 +215,13 @@ pub fn get_writer(filepath: &Path) -> Result<BufWriter<File>, anyhow::Error> {
     Ok(BufWriter::new(file))
 }
 
-pub fn explode_to_files(working_dir_path: &Path, sqldump_filepath: &Path, allowed_tables: &HashSet<String>) -> Result<(PathBuf, HashMap<String, PathBuf>), anyhow::Error> {
-    let working_file_path = working_dir_path.join("INTERIM").with_extension("sql");
+pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldump_filepath: &Path, allowed_tables: &HashSet<String>) -> Result<HashMap<String, PathBuf>, anyhow::Error> {
     let mut writers: HashMap<String, BufWriter<File>> = HashMap::new();
     let mut table_files: HashMap<String, PathBuf> = HashMap::new();
     dbg!(&working_file_path);
     let mut working_file_writer = get_writer(&working_file_path)?;
 
-    let statements = SqlStatements::from_file(sqldump_filepath, allowed_tables, &None);
+    let statements = SqlStatementsWithTable::from_file(sqldump_filepath, allowed_tables, &None);
 
     for (table_option, line) in statements {
         match table_option {
@@ -204,5 +248,26 @@ pub fn explode_to_files(working_dir_path: &Path, sqldump_filepath: &Path, allowe
         w.flush()?
     }
 
-    Ok((working_file_path, table_files))
+    Ok(table_files)
+}
+
+pub fn gather(working_dir_path: &Path,  working_file_path: &Path, output_path: &Path) -> Result<(), anyhow::Error> {
+    let input = PlainStatements::from_file(working_file_path)?;
+    let output = File::create(output_path)?;
+    let mut writer = BufWriter::new(output);
+
+    for line in input {
+        if line.starts_with("--- INLINE ") {
+            let inline_file = PathBuf::from(line.replace("--- INLINE ", "").replace("\n", ""));
+            dbg!(&inline_file);
+            let inline_input = PlainStatements::from_file(&inline_file)?;
+            for inline_line in inline_input {
+                writer.write_all(inline_line.as_bytes())?;
+            }
+        } else {
+            writer.write_all(line.as_bytes())?;
+        }
+    }
+    writer.flush()?;
+    Ok(())
 }
