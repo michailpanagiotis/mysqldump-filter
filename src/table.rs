@@ -200,10 +200,10 @@ pub struct CheckCollection {
 }
 
 impl CheckCollection {
-    fn parse_columns<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
+    pub fn new<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
         conditions: I,
         data_types: &HashMap<String, sqlparser::ast::DataType>,
-    ) -> Result<HashMap<String, Rc<RefCell<TableMeta>>>, anyhow::Error> {
+    ) -> Result<Self, anyhow::Error> {
         let definitions: Vec<(String, String)> = conditions.flat_map(|(table, conds)| {
             conds.iter().map(|c| (table.to_owned(), c.to_owned()))
         }).collect();
@@ -236,17 +236,13 @@ impl CheckCollection {
         }
 
         dbg!(&grouped);
-        Ok(grouped)
-    }
-
-    pub fn new<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
-        conditions: I,
-        data_types: &HashMap<String, sqlparser::ast::DataType>,
-    ) -> Result<Self, anyhow::Error> {
-        let grouped = CheckCollection::parse_columns(conditions, data_types)?;
         Ok(CheckCollection {
             table_meta: grouped,
         })
+    }
+
+    fn get_pending_tables(&self) -> Vec<String>{
+        self.table_meta.values().filter(|v| !v.borrow().has_been_fulfilled()).map(|v| v.borrow().table.to_owned()).collect()
     }
 
     fn get_lookup_table(&self) -> HashMap<String, HashSet<String>> {
@@ -258,18 +254,20 @@ impl CheckCollection {
         lookup_table
     }
 
-    pub fn process_tables(&mut self, current_pass: &usize, table_files: &HashMap<String, PathBuf>) -> Result<(), anyhow::Error> {
-        let lookup_table = self.get_lookup_table();
-        for table_meta in self.table_meta.values_mut() {
-            let file = table_files[&table_meta.borrow().table].to_path_buf();
-            table_meta.borrow_mut().process_data_file(current_pass, &file, &lookup_table)?;
+    pub fn process(&mut self, table_files: &HashMap<String, PathBuf>) -> Result<(), anyhow::Error> {
+        let mut current_pass = 1;
+        while !self.get_pending_tables().is_empty() {
+            let pending = self.get_pending_tables();
+            let lookup_table = self.get_lookup_table();
+            println!("Running pass {current_pass}");
+            dbg!(&pending);
+            dbg!(&lookup_table);
+            for table_meta in self.table_meta.values_mut().filter(|t| pending.iter().any(|p| p == &t.borrow().table)) {
+                let file = table_files[&table_meta.borrow().table].to_path_buf();
+                table_meta.borrow_mut().process_data_file(&current_pass, &file, &lookup_table)?;
+            }
+            current_pass += 1;
         }
-        Ok(())
-    }
-
-    pub fn process(&mut self, current_pass: &usize, table_files: &HashMap<String, PathBuf>) -> Result<(), anyhow::Error> {
-        self.process_tables(current_pass, table_files)?;
-
         Ok(())
     }
 }

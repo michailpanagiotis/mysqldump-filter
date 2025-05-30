@@ -60,7 +60,6 @@ fn main() -> Result<(), anyhow::Error> {
     println!("Read data types!");
 
     let config = Config::from_file(config_file.as_path());
-    dbg!(&config);
     let mut collection = CheckCollection::new(config.filters.iter().chain(&config.cascades), &data_types)?;
 
     let (working_file_path, table_files) = explode_to_files(working_dir_path.as_path(), input_file.as_path(), &config.allow_data_on_tables).unwrap_or_else(|e| {
@@ -68,10 +67,8 @@ fn main() -> Result<(), anyhow::Error> {
     });
 
 
-    let current_pass = 0;
-    collection.process(&current_pass, &table_files)?;
+    collection.process(&table_files)?;
 
-    dbg!(collection);
 
     if let Some(dir) = temp_dir {
        let _ = dir.close();
