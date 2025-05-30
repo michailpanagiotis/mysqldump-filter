@@ -12,20 +12,16 @@ pub trait ColumnPositions {
 
     fn set_column_positions(&mut self, positions: HashMap<String, usize>);
 
-    fn resolve_column_positions(&mut self, insert_statement: &str) {
+    fn resolve_column_positions(&mut self, insert_statement: &str) -> &Option<HashMap<String, usize>> {
         if !self.has_resolved_positions() {
             self.set_column_positions(get_column_positions(insert_statement));
             assert!(self.has_resolved_positions());
         }
+        self.get_column_positions()
     }
 
     fn has_resolved_positions(&self) -> bool {
         self.get_column_positions().is_some()
-    }
-
-    fn pick_values<'a, 'b, I: Iterator<Item=&'b ColumnMeta>>(&self, columns: I, values: &'a [&'a str]) -> HashMap<String, &'a str> {
-        let Some(positions) = self.get_column_positions() else { return HashMap::new() };
-        columns.map(|c| (c.get_column_key().to_owned(), values[positions[c.get_column_name()]])).collect()
     }
 }
 
@@ -34,12 +30,13 @@ pub trait ReferenceTracker: ColumnPositions {
     fn get_references(&self) -> &HashMap<String, HashSet<String>>;
     fn get_references_mut(&mut self) -> &mut HashMap<String, HashSet<String>>;
 
-    fn capture_references(&mut self, values: &[&str]) -> Result<(), anyhow::Error> {
-        let to_insert = self.pick_values(self.get_referenced_columns(), values);
+    fn capture_references(&mut self, values: &HashMap<String, &str>) -> Result<(), anyhow::Error> {
         let references = self.get_references_mut();
-        for (key, value) in to_insert.into_iter() {
-            let Some(r) = references.get_mut(&key) else { return Err(anyhow::anyhow!("No references set for '{}'", key)) };
-            r.insert(value.to_owned());
+
+        for (key, set) in references.iter_mut() {
+            let (table, column) = ColumnMeta::get_components_from_key(key)?;
+            let value = values[&column];
+            set.insert(value.to_owned());
         }
         Ok(())
     }

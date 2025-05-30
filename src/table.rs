@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 
 use crate::traits::{ColumnPositions, ReferenceTracker, Dependency};
-use crate::column::ColumnMeta;
+use crate::column::{ColumnMeta, DBColumn};
 use crate::sql::{get_values, read_table_data_file};
 use crate::checks::{PlainCheckType, new_plain_test, parse_test_definition};
 
@@ -143,18 +143,18 @@ impl TableMeta {
 
         self.fulfill_dependency(pass);
 
-        self.resolve_column_positions(sql_statement);
+        let Some(positions) = self.resolve_column_positions(sql_statement) else { return Err(anyhow::anyhow!("unknown positions")) };
 
         let values = get_values(sql_statement);
-        let value_per_field = self.pick_values(self.get_tracked_columns(), &values);
+        let value_per_field: HashMap<String, &str> = positions.iter().map(|(column_name, position)| (column_name.to_owned(), values[*position])).collect();
 
         let all_checks_passed = self.get_checks().all(|t| {
             let column_meta = &self.columns[t.get_column_name()];
-            t.test(column_meta, value_per_field[column_meta.get_column_key()], lookup_table)
+            t.test(column_meta, value_per_field[column_meta.get_column_name()], lookup_table)
         });
 
         if all_checks_passed {
-            self.capture_references(&values)?;
+            self.capture_references(&value_per_field)?;
         }
 
         Ok(all_checks_passed)
