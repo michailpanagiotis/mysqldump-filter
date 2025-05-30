@@ -82,23 +82,13 @@ pub struct SqlStatements {
 }
 
 impl SqlStatements {
-    pub fn from_file(sqldump_filepath: &Path, allowed_tables: &HashSet<String>) -> Self {
+    pub fn from_file(sqldump_filepath: &Path, allowed_tables: &HashSet<String>, curr_table: &Option<String>) -> Self {
         let file = fs::File::open(sqldump_filepath).expect("Cannot open file");
         SqlStatements {
             buf: io::BufReader::new(file),
-            cur_table: None,
+            cur_table: curr_table.clone(),
             last_statement: None,
             allowed_tables: allowed_tables.clone(),
-        }
-    }
-
-    pub fn from_table_data_file(table: &str, sqldump_filepath: &Path) -> Self {
-        let file = fs::File::open(sqldump_filepath).expect("Cannot open file");
-        SqlStatements {
-            buf: io::BufReader::new(file),
-            cur_table: Some(table.to_owned()),
-            last_statement: None,
-            allowed_tables: HashSet::from([table.to_owned()]),
         }
     }
 
@@ -114,7 +104,7 @@ impl SqlStatements {
         self.last_statement = Some(cur_statement.to_string());
     }
 
-    fn next_statement(&mut self) -> Option<(Option<String>, String)> {
+    fn next_item(&mut self) -> Option<(Option<String>, String)> {
         let mut buf8 = vec![];
         while {
             let first_read_bytes = self.buf.read_until(b';', &mut buf8).ok()?;
@@ -135,9 +125,9 @@ impl SqlStatements {
 impl Iterator for SqlStatements {
     type Item = (Option<String>, String);
     fn next(&mut self) -> Option<(Option<String>, String)> {
-        let (mut table, mut line) = self.next_statement()?;
+        let (mut table, mut line) = self.next_item()?;
         while table.as_ref().is_some_and(|t| !self.allowed_tables.contains(t)) {
-            (table, line) = self.next_statement()?;
+            (table, line) = self.next_item()?;
         }
         Some((table, line))
     }
@@ -159,31 +149,8 @@ pub fn get_data_types(sqldump_filepath: &Path) -> HashMap<String, sqlparser::ast
     data_types
 }
 
-pub fn read_sql_file(sqldump_filepath: &Path, allowed_tables: &HashSet<String>) -> impl Iterator<Item = (Option<String>, String)> {
-    SqlStatements::from_file(sqldump_filepath, allowed_tables)
-}
-
 pub fn read_table_data_file(table: &str, sqldump_filepath: &Path) -> impl Iterator<Item = (Option<String>, String)> {
-    SqlStatements::from_table_data_file(table, sqldump_filepath)
-}
-
-pub fn write_sql_file<I: Iterator<Item=(Option<String>, String)>>(filepath: &Path, lines: I) -> PathBuf {
-    fs::File::create(filepath).unwrap_or_else(|_| panic!("Unable to create file {}", &filepath.display()));
-    let file = fs::OpenOptions::new()
-        .append(true)
-        .open(filepath)
-        .expect("Unable to open file");
-
-    let mut writer = BufWriter::new(file);
-
-    println!("Writing to {}", &filepath.display());
-
-    for line in lines.map(|(_, line)| line) {
-        writer.write_all(line.as_bytes()).expect("Cannot write to file");
-    };
-
-    writer.flush().expect("Cannot flush buffer");
-    filepath.to_path_buf()
+    SqlStatements::from_file(sqldump_filepath, &HashSet::from([table.to_owned()]), &Some(table.to_string()))
 }
 
 pub fn get_writer(filepath: &Path) -> Result<BufWriter<File>, anyhow::Error> {
@@ -201,7 +168,7 @@ pub fn explode_to_files(working_dir_path: &Path, sqldump_filepath: &Path, allowe
     dbg!(&working_file_path);
     let mut working_file_writer = get_writer(&working_file_path)?;
 
-    let statements = SqlStatements::from_file(sqldump_filepath, allowed_tables);
+    let statements = SqlStatements::from_file(sqldump_filepath, allowed_tables, &None);
 
     for (table_option, line) in statements {
         match table_option {

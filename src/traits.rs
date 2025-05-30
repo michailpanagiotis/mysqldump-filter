@@ -34,17 +34,6 @@ pub trait ReferenceTracker: ColumnPositions {
         set.insert(value.to_owned());
         Ok(())
     }
-
-    fn capture_references(&mut self, values: &HashMap<String, &str>) -> Result<(), anyhow::Error> {
-        let references = self.get_references_mut();
-
-        for (key, set) in references.iter_mut() {
-            let (_, column) = ColumnMeta::get_components_from_key(key)?;
-            let value = values[&column];
-            set.insert(value.to_owned());
-        }
-        Ok(())
-    }
 }
 
 pub trait Dependency {
