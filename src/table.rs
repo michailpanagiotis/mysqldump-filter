@@ -7,7 +7,8 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 
-use crate::traits::{ColumnMeta, ColumnPositions, ReferenceTracker, Dependency};
+use crate::traits::{ColumnPositions, ReferenceTracker, Dependency};
+use crate::column::ColumnMeta;
 use crate::sql::{get_values, read_table_data_file};
 use crate::checks::{PlainCheckType, new_plain_test, parse_test_definition};
 
@@ -213,7 +214,7 @@ impl CheckCollection {
         let mut tracked_cols: Vec<TrackedColumnType> = Vec::new();
 
         for (table, definition) in definitions.iter() {
-            let (column_name, deps) = parse_test_definition(table, definition, data_types)?;
+            let (column_name, deps) = parse_test_definition(definition)?;
             let mut column_meta = ColumnMeta::new(table, &column_name, &deps, data_types)?;
             column_meta.add_check(definition);
             tracked_cols.push(column_meta);

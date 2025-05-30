@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use tempdir::TempDir;
 
 mod checks;
+mod column;
 mod table;
 mod sql;
 mod traits;

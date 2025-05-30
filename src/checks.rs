@@ -3,7 +3,7 @@ use chrono::NaiveDateTime;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::traits::ColumnMeta;
+use crate::column::ColumnMeta;
 
 pub trait PlainColumnCheck {
     fn new(definition: &str, table: &str) -> Result<impl PlainColumnCheck + 'static, anyhow::Error> where Self: Sized;
@@ -180,7 +180,7 @@ pub fn new_plain_test(table: &str, definition: &str) -> Result<PlainCheckType, a
     Ok(item)
 }
 
-pub fn parse_test_definition(table: &str, definition: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<(String, Vec<String>), anyhow::Error> {
+pub fn parse_test_definition(definition: &str) -> Result<(String, Vec<String>), anyhow::Error> {
     let (column_name, foreign_keys) = if definition.contains("->") {
         PlainLookupTest::get_column_info(definition)?
     } else {
