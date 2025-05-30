@@ -26,15 +26,20 @@ pub trait ColumnPositions {
 }
 
 pub trait ReferenceTracker: ColumnPositions {
-    fn get_referenced_columns(&self) -> impl Iterator<Item=&ColumnMeta>;
     fn get_references(&self) -> &HashMap<String, HashSet<String>>;
     fn get_references_mut(&mut self) -> &mut HashMap<String, HashSet<String>>;
+
+    fn capture_reference(&mut self, key: &str, value: &str) -> Result<(), anyhow::Error> {
+        let Some(set) = self.get_references_mut().get_mut(key) else { return Err(anyhow::anyhow!("unknown reference key")) };
+        set.insert(value.to_owned());
+        Ok(())
+    }
 
     fn capture_references(&mut self, values: &HashMap<String, &str>) -> Result<(), anyhow::Error> {
         let references = self.get_references_mut();
 
         for (key, set) in references.iter_mut() {
-            let (table, column) = ColumnMeta::get_components_from_key(key)?;
+            let (_, column) = ColumnMeta::get_components_from_key(key)?;
             let value = values[&column];
             set.insert(value.to_owned());
         }

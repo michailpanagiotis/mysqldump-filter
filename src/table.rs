@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 
 use crate::traits::{ColumnPositions, ReferenceTracker, Dependency};
-use crate::column::{ColumnMeta, DBColumn};
+use crate::column::ColumnMeta;
 use crate::sql::{get_values, read_table_data_file};
 use crate::checks::{PlainCheckType, new_plain_test, parse_test_definition};
 
@@ -49,10 +49,6 @@ impl ColumnPositions for TableMeta {
 }
 
 impl ReferenceTracker for TableMeta {
-    fn get_referenced_columns(&self) -> impl Iterator<Item=&ColumnMeta> {
-        self.columns.values().filter(|v| v.is_referenced())
-    }
-
     fn get_references(&self) -> &HashMap<String, HashSet<String>> {
         &self.references
     }
@@ -128,10 +124,6 @@ impl TableMeta {
         self.checks.iter()
     }
 
-    fn get_tracked_columns(&self) -> impl Iterator<Item=&ColumnMeta> {
-        self.columns.values()
-    }
-
     pub fn test(&mut self, pass: &usize, sql_statement: &str, lookup_table: &HashMap<String, HashSet<String>>) -> Result<bool, anyhow::Error> {
         if !sql_statement.starts_with("INSERT") {
             return Ok(true);
@@ -154,7 +146,12 @@ impl TableMeta {
         });
 
         if all_checks_passed {
-            self.capture_references(&value_per_field)?;
+            let keys: Vec<String> = self.get_references().keys().map(|k| k.to_owned()).collect();
+            for key in keys {
+                let (_, column) = ColumnMeta::get_components_from_key(&key)?;
+                let value = value_per_field[&column];
+                self.capture_reference(&key, value)?;
+            }
         }
 
         Ok(all_checks_passed)
