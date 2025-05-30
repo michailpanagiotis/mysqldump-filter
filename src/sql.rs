@@ -92,6 +92,22 @@ impl SqlStatements {
         }
     }
 
+    fn next_statement(&mut self) -> Option<String> {
+        let mut buf8 = vec![];
+        while {
+            let first_read_bytes = self.buf.read_until(b';', &mut buf8).ok()?;
+            let second_read_bytes = if first_read_bytes > 0 { self.buf.read_until(b'\n', &mut buf8).ok()? } else { 0 };
+            second_read_bytes > 1
+        } {}
+        match buf8.is_empty() {
+            true => None,
+            false => {
+                let statement: String = String::from_utf8(buf8).ok()?.split('\n').filter(|x| !x.is_empty()).map(|x| x.trim()).map(|x| x.to_owned() + "\n").collect();
+                Some(statement)
+            }
+        }
+    }
+
     fn capture_table(&mut self, cur_statement: &str) {
         if self.last_statement.as_ref().is_some_and(|x| x.starts_with("UNLOCK TABLES;")) {
             self.cur_table = None;
@@ -105,18 +121,11 @@ impl SqlStatements {
     }
 
     fn next_item(&mut self) -> Option<(Option<String>, String)> {
-        let mut buf8 = vec![];
-        while {
-            let first_read_bytes = self.buf.read_until(b';', &mut buf8).ok()?;
-            let second_read_bytes = if first_read_bytes > 0 { self.buf.read_until(b'\n', &mut buf8).ok()? } else { 0 };
-            second_read_bytes > 1
-        } {}
-        match buf8.is_empty() {
-            true => None,
-            false => {
-                let statement: String = String::from_utf8(buf8).ok()?.split('\n').filter(|x| !x.is_empty()).map(|x| x.trim()).map(|x| x.to_owned() + "\n").collect();
-                self.capture_table(&statement);
-                Some((self.cur_table.clone(), statement))
+        match self.next_statement() {
+            None => None,
+            Some(ref s) => {
+                self.capture_table(s);
+                Some((self.cur_table.clone(), s.to_owned()))
             }
         }
     }
