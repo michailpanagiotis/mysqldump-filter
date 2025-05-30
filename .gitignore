@@ -19,3 +19,4 @@ target/
 *.sql
 
 config*.json
+*.proc

@@ -138,6 +138,9 @@ impl TableMeta {
         let Some(positions) = self.resolve_column_positions(sql_statement) else { return Err(anyhow::anyhow!("unknown positions")) };
 
         let values = get_values(sql_statement);
+        dbg!(&sql_statement);
+        // dbg!(&positions);
+        // dbg!(&values);
         let value_per_field: HashMap<String, &str> = positions.iter().map(|(column_name, position)| (column_name.to_owned(), values[*position])).collect();
 
         let all_checks_passed = self.get_checks().all(|t| {
