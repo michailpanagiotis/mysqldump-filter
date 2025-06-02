@@ -74,24 +74,54 @@ pub fn parse_insert_fields(insert_statement: &str) -> HashMap<String, usize> {
     )
 }
 
-pub fn parse_insert(insert_statement: &str) {
-    dbg!(insert_statement);
+pub fn parse_insert_lite(insert_statement: &str) {
     let mut parser = (
+        // table
         preceded(tag("INSERT INTO `"), take_until("` (")),
+        // columns
+        preceded(tag("` ("), take_until(") VALUES (")),
+        // values
+        preceded(tag(") VALUES ("), take_until(");\n"))
+    );
+    let res: IResult<&str, (&str, &str, &str)> = parser.parse(insert_statement);
+}
+
+pub fn parse_insert(insert_statement: &str) {
+    let mut parser = (
+        // table
+        preceded(tag("INSERT INTO `"), take_until("` (")),
+        // columns
         preceded(tag("` ("), take_until(") VALUES ("))
             .and_then(
-
-              separated_list0(
-                  tag(", "),
-                  delimited(char('`'), is_not("`"), char('`')),
-              )
+                separated_list0(
+                    tag(", "),
+                    delimited(char('`'), is_not("`"), char('`')),
+                )
             )
-
         ,
-        preceded(tag(") VALUES ("), take_until(");\n")),
+        // values
+        preceded(tag(") VALUES ("), take_until(");\n"))
+            .and_then(
+                separated_list1(
+                    one_of(",)"),
+                    alt((
+                        // quoted value
+                        delimited(
+                            tag("'"),
+                            // escaped or empty
+                            alt((
+                                escaped(none_of("\\\'"), '\\', tag("'")),
+                                tag("")
+                            )),
+                            tag("'")
+                        ),
+                        // unquoted value
+                        take_till(|c| c == ','),
+                    )),
+                )
+            )
     );
-    let res: IResult<&str, (&str, Vec<&str>, &str)> = parser.parse(insert_statement);
-    dbg!(res);
+    let res: IResult<&str, (&str, Vec<&str>, Vec<&str>)> = parser.parse(insert_statement);
 }
 
 pub struct PlainStatements {
