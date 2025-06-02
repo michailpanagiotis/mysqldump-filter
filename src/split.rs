@@ -83,24 +83,15 @@ impl SqlStatement {
     }
 
     fn is_table_data_dump(&self) -> bool {
-        match &self.parts {
-            SqlStatementParts::TableDataDumpComment(_) => true,
-            _ => false,
-        }
+        matches!(&self.parts, SqlStatementParts::TableDataDumpComment(_))
     }
 
     fn is_table_unlock(&self) -> bool {
-        match &self.parts {
-            SqlStatementParts::TableUnlock(_) => true,
-            _ => false,
-        }
+        matches!(&self.parts, SqlStatementParts::TableUnlock(_))
     }
 
     fn is_insert(&self) -> bool {
-        match &self.parts {
-            SqlStatementParts::Insert{ table: _, columns_part: _, values_part: _ } => true,
-            _ => false,
-        }
+        matches!(&self.parts, SqlStatementParts::Insert{ table: _, columns_part: _, values_part: _ })
     }
 
     fn get_column_positions(&self) -> HashMap<String, usize> {
@@ -182,10 +173,10 @@ impl SqlStatementsWithTable {
 
     fn capture_table(&mut self, cur_statement: &SqlStatement) {
         if self.unlock_next {
-            self.cur_table = None;
             self.unlock_next = false;
+            self.cur_table = None;
         }
-        if cur_statement.statement.starts_with("-- Dumping data for table") {
+        if cur_statement.is_table_data_dump() {
             let table = extract_table(&cur_statement.statement);
             println!("reading table {}", &table);
             self.cur_table = Some(table);
