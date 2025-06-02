@@ -74,7 +74,7 @@ pub fn parse_insert_fields(insert_statement: &str) -> HashMap<String, usize> {
     )
 }
 
-pub fn parse_insert_lite(insert_statement: &str) {
+pub fn parse_insert(insert_statement: &str) {
     let mut parser = (
         // table
         preceded(tag("INSERT INTO `"), take_until("` (")),
@@ -86,7 +86,7 @@ pub fn parse_insert_lite(insert_statement: &str) {
     let res: IResult<&str, (&str, &str, &str)> = parser.parse(insert_statement);
 }
 
-pub fn parse_insert(insert_statement: &str) {
+pub fn parse_insert_full(insert_statement: &str) {
     let mut parser = (
         // table
         preceded(tag("INSERT INTO `"), take_until("` (")),
