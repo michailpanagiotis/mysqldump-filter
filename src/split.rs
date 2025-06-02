@@ -148,7 +148,7 @@ impl Iterator for PlainStatements {
 pub struct SqlStatementsWithTable {
     buf: PlainStatements,
     cur_table: Option<String>,
-    last_statement: Option<String>,
+    unlock_next: bool,
     allowed_tables: Option<HashSet<String>>,
     column_positions: HashMap<String, HashMap<String, usize>>,
 }
@@ -159,7 +159,7 @@ impl SqlStatementsWithTable {
         SqlStatementsWithTable {
             buf,
             cur_table: curr_table.clone(),
-            last_statement: None,
+            unlock_next: false,
             allowed_tables: allowed_tables.clone(),
             column_positions: HashMap::new(),
         }
@@ -170,8 +170,9 @@ impl SqlStatementsWithTable {
     }
 
     fn capture_table(&mut self, cur_statement: &SqlStatement) {
-        if self.last_statement.as_ref().is_some_and(|x| x.starts_with("UNLOCK TABLES;")) {
+        if self.unlock_next {
             self.cur_table = None;
+            self.unlock_next = false;
         }
         if cur_statement.statement.starts_with("-- Dumping data for table") {
             let table = extract_table(&cur_statement.statement);
@@ -194,7 +195,9 @@ impl SqlStatementsWithTable {
         let mut cur = SqlStatement::new(cur_statement)?;
         self.capture_table(&cur);
         self.capture_positions(cur_statement);
-        self.last_statement = Some(cur_statement.to_string());
+        if cur.is_table_unlock() {
+            self.unlock_next = true;
+        }
         cur.set_table(&self.cur_table);
         Ok(cur)
     }
