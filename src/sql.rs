@@ -78,10 +78,19 @@ pub fn parse_insert(insert_statement: &str) {
     dbg!(insert_statement);
     let mut parser = (
         preceded(tag("INSERT INTO `"), take_until("` (")),
-        preceded(tag("` ("), take_until(") VALUES (")),
+        preceded(tag("` ("), take_until(") VALUES ("))
+            .and_then(
+
+              separated_list0(
+                  tag(", "),
+                  delimited(char('`'), is_not("`"), char('`')),
+              )
+            )
+
+        ,
         preceded(tag(") VALUES ("), take_until(");\n")),
     );
-    let res: IResult<&str, (&str, &str, &str)> = parser.parse(insert_statement);
+    let res: IResult<&str, (&str, Vec<&str>, &str)> = parser.parse(insert_statement);
     dbg!(res);
 }
 
