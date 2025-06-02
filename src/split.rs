@@ -43,12 +43,16 @@ pub struct SqlStatement {
 }
 
 impl SqlStatement {
-    fn new(table: &Option<String>, statement: &str) -> Result<Self, anyhow::Error> {
+    fn new(statement: &str) -> Result<Self, anyhow::Error> {
         Ok(SqlStatement {
-            table: table.clone(),
+            table: None,
             statement: statement.to_owned(),
             parts: SqlStatementParts::new(statement)?,
         })
+    }
+
+    fn set_table(&mut self, table: &Option<String>) {
+        self.table = table.to_owned();
     }
 
     fn get_table(&self) -> &Option<String> {
@@ -160,10 +164,12 @@ impl SqlStatementsWithTable {
     }
 
     fn capture(&mut self, cur_statement: &str) -> Result<SqlStatement, anyhow::Error> {
+        let mut cur = SqlStatement::new(cur_statement)?;
         self.capture_table(cur_statement);
         self.capture_positions(cur_statement);
         self.last_statement = Some(cur_statement.to_string());
-        SqlStatement::new(&self.cur_table, cur_statement)
+        cur.set_table(&self.cur_table);
+        Ok(cur)
     }
 
     fn next_item(&mut self) -> Option<Result<SqlStatement, anyhow::Error>> {
