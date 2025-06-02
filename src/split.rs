@@ -5,6 +5,8 @@ use std::fs;
 use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
+use crate::sql::parse_insert;
+
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
 }
@@ -124,11 +126,14 @@ pub fn get_writer(filepath: &Path) -> Result<BufWriter<File>, anyhow::Error> {
 pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldump_filepath: &Path, allowed_tables: &Option<HashSet<String>>) -> Result<HashMap<String, PathBuf>, anyhow::Error> {
     let mut writers: HashMap<String, BufWriter<File>> = HashMap::new();
     let mut table_files: HashMap<String, PathBuf> = HashMap::new();
-    let mut working_file_writer = get_writer(&working_file_path)?;
+    let mut working_file_writer = get_writer(working_file_path)?;
 
     let statements = SqlStatementsWithTable::from_file(sqldump_filepath, allowed_tables, &None);
 
     for (table_option, line) in statements {
+        if line.starts_with("INSERT") {
+            parse_insert(&line);
+        }
         match table_option {
             None => working_file_writer.write_all(line.as_bytes())?,
             Some(table) => {

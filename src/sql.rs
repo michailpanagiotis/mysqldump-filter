@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use nom::{
-  branch::alt, bytes::complete::{escaped, is_not, tag, take_till, take_until}, character::complete::{char, none_of, one_of}, multi::{separated_list0, separated_list1}, sequence::{delimited, preceded}, IResult, Parser
+  branch::alt, bytes::complete::{escaped, is_not, tag, take_till, take_until}, character::complete::{char, none_of, one_of}, combinator::eof, multi::{separated_list0, separated_list1}, sequence::{delimited, preceded, terminated}, IResult, Parser
 };
 use regex::Regex;
 use std::{collections::{HashMap, HashSet}, fs::File};
@@ -72,6 +72,17 @@ pub fn parse_insert_fields(insert_statement: &str) -> HashMap<String, usize> {
     HashMap::from_iter(
         fields.iter().enumerate().map(|(idx, item)| (item.to_string(), idx))
     )
+}
+
+pub fn parse_insert(insert_statement: &str) {
+    dbg!(insert_statement);
+    let mut parser = (
+        preceded(tag("INSERT INTO `"), take_until("` (")),
+        preceded(tag("` ("), take_until(") VALUES (")),
+        preceded(tag(") VALUES ("), take_until(");\n")),
+    );
+    let res: IResult<&str, (&str, &str, &str)> = parser.parse(insert_statement);
+    dbg!(res);
 }
 
 pub struct PlainStatements {
