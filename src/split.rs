@@ -15,9 +15,55 @@ pub fn extract_table(sql_comment: &str) -> String {
     TABLE_DUMP_RE.captures(sql_comment).unwrap().get(1).unwrap().as_str().to_string()
 }
 
-enum SqlStatement {
-    Generic,
+enum SqlStatementParts {
+    Generic(String),
     Insert { table: String, columns_part: String, values_part: String },
+}
+
+impl SqlStatementParts {
+    fn new(st: &str) -> Result<Self, anyhow::Error> {
+        if !st.starts_with("INSERT") {
+            return Ok(SqlStatementParts::Generic(st.to_string()));
+        }
+
+        let (table, columns_part, values_part) = parse_insert_parts(st)?;
+
+        Ok(SqlStatementParts::Insert {
+            table,
+            columns_part,
+            values_part,
+        })
+    }
+}
+
+pub struct SqlStatement {
+    table: Option<String>,
+    statement: String,
+    parts: SqlStatementParts,
+}
+
+impl SqlStatement {
+    fn new(table: &Option<String>, statement: &str) -> Result<Self, anyhow::Error> {
+        Ok(SqlStatement {
+            table: table.clone(),
+            statement: statement.to_owned(),
+            parts: SqlStatementParts::new(statement)?,
+        })
+    }
+
+    fn get_table(&self) -> &Option<String> {
+        &self.table
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        let bytes: Vec<u8> = match &self.parts {
+            SqlStatementParts::Generic(s) => s.to_owned().into_bytes(),
+            SqlStatementParts::Insert{ table, columns_part, values_part } => {
+                table.to_owned().into_bytes()
+            },
+        };
+        self.statement.as_bytes()
+    }
 }
 
 pub struct PlainStatements {
@@ -113,26 +159,25 @@ impl SqlStatementsWithTable {
         );
     }
 
-    fn capture(&mut self, cur_statement: &str) -> (Option<String>, String) {
+    fn capture(&mut self, cur_statement: &str) -> Result<SqlStatement, anyhow::Error> {
         self.capture_table(cur_statement);
         self.capture_positions(cur_statement);
         self.last_statement = Some(cur_statement.to_string());
-        (self.cur_table.clone(), cur_statement.to_owned())
+        SqlStatement::new(&self.cur_table, cur_statement)
     }
 
-    fn next_item(&mut self) -> Option<(Option<String>, String)> {
+    fn next_item(&mut self) -> Option<Result<SqlStatement, anyhow::Error>> {
         self.buf.next().map(|s| self.capture(&s))
     }
 }
 
 impl Iterator for SqlStatementsWithTable {
-    type Item = (Option<String>, String);
-    fn next(&mut self) -> Option<(Option<String>, String)> {
-        let mut next: (Option<String>, String);
+    type Item = Result<SqlStatement, anyhow::Error>;
+    fn next(&mut self) -> Option<Result<SqlStatement, anyhow::Error>> {
+        let mut next: Result<SqlStatement, anyhow::Error>;
         while {
             next = self.next_item()?;
-            let (ref table,_) = next;
-            !self.is_table_allowed(table)
+            !next.as_ref().is_ok_and(|n| self.is_table_allowed(n.get_table()))
         } {}
 
         Some(next)
@@ -154,25 +199,26 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
 
     let statements = SqlStatementsWithTable::from_file(sqldump_filepath, allowed_tables, &None);
 
-    for (table_option, line) in statements {
-        if line.starts_with("INSERT") {
-            parse_insert_parts(&line)?;
-        }
-        match table_option {
-            None => working_file_writer.write_all(line.as_bytes())?,
+    for st in statements {
+        let statement = st?;
+        // if line.starts_with("INSERT") {
+        //     parse_insert_parts(&line)?;
+        // }
+        match statement.get_table() {
+            None => working_file_writer.write_all(statement.as_bytes())?,
             Some(table) => {
-                let writer = match writers.get_mut(&table) {
+                let writer = match writers.get_mut(table) {
                     None => {
-                        let table_file = std::path::absolute(working_dir_path.join(&table).with_extension("sql"))?;
+                        let table_file = std::path::absolute(working_dir_path.join(table).with_extension("sql"))?;
                         table_files.insert(table.to_owned(), table_file.to_owned());
                         working_file_writer.write_all(format!("--- INLINE {}\n", table_file.display()).as_bytes())?;
                         writers.insert(table.to_owned(), get_writer(&table_file)?);
-                        writers.get_mut(&table).unwrap()
+                        writers.get_mut(table).unwrap()
                     },
                     Some(w) => w,
                 };
 
-                writer.write_all(line.as_bytes())?
+                writer.write_all(statement.as_bytes())?
             }
         }
     };
