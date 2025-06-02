@@ -55,14 +55,14 @@ impl SqlStatement {
         &self.table
     }
 
-    fn as_bytes(&self) -> &[u8] {
+    fn as_bytes(&self) -> Vec<u8> {
         let bytes: Vec<u8> = match &self.parts {
             SqlStatementParts::Generic(s) => s.to_owned().into_bytes(),
             SqlStatementParts::Insert{ table, columns_part, values_part } => {
-                table.to_owned().into_bytes()
+                Vec::from(format!("INSERT INTO `{}` ({}) VALUES ({});\n", table, columns_part, values_part).as_bytes())
             },
         };
-        self.statement.as_bytes()
+        bytes
     }
 }
 
@@ -205,7 +205,7 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
         //     parse_insert_parts(&line)?;
         // }
         match statement.get_table() {
-            None => working_file_writer.write_all(statement.as_bytes())?,
+            None => working_file_writer.write_all(&statement.as_bytes())?,
             Some(table) => {
                 let writer = match writers.get_mut(table) {
                     None => {
@@ -218,7 +218,7 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
                     Some(w) => w,
                 };
 
-                writer.write_all(statement.as_bytes())?
+                writer.write_all(&statement.as_bytes())?
             }
         }
     };
