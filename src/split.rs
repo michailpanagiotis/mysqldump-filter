@@ -16,6 +16,7 @@ enum SqlStatementParts {
     Generic(String),
     TableUnlock(String),
     TableDataDumpComment(String),
+    InlineTable(String),
     Insert { table: String, columns_part: String, values_part: String },
 }
 
@@ -26,6 +27,12 @@ impl SqlStatementParts {
         }
         if st.starts_with("-- Dumping data for table") {
             return Ok(SqlStatementParts::TableDataDumpComment(st.to_string()));
+        }
+        if st.starts_with("UNLOCK TABLES;") {
+            return Ok(SqlStatementParts::TableUnlock(st.to_string()));
+        }
+        if st.starts_with("--- INLINE") {
+            return Ok(SqlStatementParts::InlineTable(st.to_string()));
         }
         if st.starts_with("INSERT") {
             let (table, columns_part, values_part) = parse_insert_parts(st)?;
@@ -70,6 +77,7 @@ impl SqlStatement {
             SqlStatementParts::Generic(s)
             | SqlStatementParts::TableUnlock(s)
             | SqlStatementParts::TableDataDumpComment(s)
+            | SqlStatementParts::InlineTable(s)
                 => s.to_owned().into_bytes(),
             SqlStatementParts::Insert{ table, columns_part, values_part } => {
                 Vec::from(format!("INSERT INTO `{table}` ({columns_part}) VALUES ({values_part});\n").as_bytes())
@@ -78,8 +86,8 @@ impl SqlStatement {
         bytes
     }
 
-    fn is_table_data_dump(&self) -> bool {
-        matches!(&self.parts, SqlStatementParts::TableDataDumpComment(_))
+    fn get_column_positions(&self) -> HashMap<String, usize> {
+        get_columns(&self.statement).iter().enumerate().map(|(idx, c)| (c.to_owned(), idx)).collect()
     }
 
     fn is_table_unlock(&self) -> bool {
@@ -90,15 +98,18 @@ impl SqlStatement {
         matches!(&self.parts, SqlStatementParts::Insert{ table: _, columns_part: _, values_part: _ })
     }
 
-    fn get_column_positions(&self) -> HashMap<String, usize> {
-        get_columns(&self.statement).iter().enumerate().map(|(idx, c)| (c.to_owned(), idx)).collect()
+    fn get_inline_file(&self) -> Option<PathBuf> {
+        match &self.parts {
+            SqlStatementParts::InlineTable(line) => Some(PathBuf::from(line.replace("--- INLINE ", "").replace("\n", ""))),
+            _ => None,
+        }
     }
 
     fn extract_table(&self) -> Option<&str>{
-        if !self.is_table_data_dump() {
-            return None;
+        match &self.parts {
+            SqlStatementParts::TableDataDumpComment(comment) => Some(TABLE_DUMP_RE.captures(comment).unwrap().get(1).unwrap().as_str()),
+            _ => None,
         }
-        Some(TABLE_DUMP_RE.captures(&self.statement).unwrap().get(1).unwrap().as_str())
     }
 }
 
@@ -132,8 +143,8 @@ impl PlainStatements {
 }
 
 impl Iterator for PlainStatements {
-    type Item = String;
-    fn next(&mut self) -> Option<String> {
+    type Item = SqlStatement;
+    fn next(&mut self) -> Option<SqlStatement> {
         let mut buf: String = String::new();
 
         while {
@@ -144,7 +155,7 @@ impl Iterator for PlainStatements {
         match buf.is_empty() {
             true => None,
             false => {
-                Some(buf)
+                Some(SqlStatement::new(&buf).unwrap())
             }
         }
     }
@@ -194,19 +205,22 @@ impl SqlStatementsWithTable {
         };
     }
 
-    fn capture(&mut self, cur_statement: &str) -> Result<SqlStatement, anyhow::Error> {
-        let mut cur = SqlStatement::new(cur_statement)?;
-        self.capture_table(&cur);
-        self.capture_positions(&cur);
-        if cur.is_table_unlock() {
+    fn capture(&mut self, cur_statement: &mut SqlStatement) -> Result<(), anyhow::Error> {
+        self.capture_table(cur_statement);
+        self.capture_positions(cur_statement);
+        if cur_statement.is_table_unlock() {
             self.unlock_next = true;
         }
-        cur.set_table(&self.cur_table);
-        Ok(cur)
+        cur_statement.set_table(&self.cur_table);
+        Ok(())
     }
 
     fn next_item(&mut self) -> Option<Result<SqlStatement, anyhow::Error>> {
-        self.buf.next().map(|s| self.capture(&s))
+        let mut next = self.buf.next()?;
+        match self.capture(&mut next) {
+            Ok(_) => Some(Ok(next)),
+            Err(e) => Some(Err(e)),
+        }
     }
 }
 
@@ -273,14 +287,16 @@ pub fn gather(working_file_path: &Path, output_path: &Path) -> Result<(), anyhow
     let mut writer = BufWriter::new(output);
 
     for line in input {
-        if line.starts_with("--- INLINE ") {
-            let inline_file = PathBuf::from(line.replace("--- INLINE ", "").replace("\n", ""));
-            let inline_input = PlainStatements::from_file(&inline_file)?;
-            for inline_line in inline_input {
-                writer.write_all(inline_line.as_bytes())?;
+        match line.get_inline_file() {
+            Some(ref inline_file) => {
+                let inline_input = PlainStatements::from_file(inline_file)?;
+                for inline_line in inline_input {
+                    writer.write_all(&inline_line.as_bytes())?;
+                }
+            },
+            None => {
+                writer.write_all(&line.as_bytes())?;
             }
-        } else {
-            writer.write_all(line.as_bytes())?;
         }
     }
     writer.flush()?;
