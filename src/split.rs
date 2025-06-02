@@ -11,10 +11,6 @@ lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
 }
 
-pub fn extract_table(sql_comment: &str) -> String {
-    TABLE_DUMP_RE.captures(sql_comment).unwrap().get(1).unwrap().as_str().to_string()
-}
-
 #[derive(Clone)]
 enum SqlStatementParts {
     Generic(String),
@@ -97,6 +93,13 @@ impl SqlStatement {
     fn get_column_positions(&self) -> HashMap<String, usize> {
         get_columns(&self.statement).iter().enumerate().map(|(idx, c)| (c.to_owned(), idx)).collect()
     }
+
+    fn extract_table(&self) -> Option<&str>{
+        if !self.is_table_data_dump() {
+            return None;
+        }
+        Some(TABLE_DUMP_RE.captures(&self.statement).unwrap().get(1).unwrap().as_str())
+    }
 }
 
 pub struct PlainStatements {
@@ -176,21 +179,19 @@ impl SqlStatementsWithTable {
             self.unlock_next = false;
             self.cur_table = None;
         }
-        if cur_statement.is_table_data_dump() {
-            let table = extract_table(&cur_statement.statement);
+        if let Some(table) = cur_statement.extract_table() {
             println!("reading table {}", &table);
-            self.cur_table = Some(table);
+            self.cur_table = Some(table.to_string());
         }
     }
 
     fn capture_positions(&mut self, cur_statement: &SqlStatement) {
         if !cur_statement.is_insert() { return; };
         let Some(ref table) = self.cur_table else { return; };
-        if self.column_positions.contains_key(table) { return; };
-        self.column_positions.insert(
-            table.clone(),
-            cur_statement.get_column_positions(),
-        );
+
+        if !self.column_positions.contains_key(table) {
+            self.column_positions.insert(table.clone(), cur_statement.get_column_positions());
+        };
     }
 
     fn capture(&mut self, cur_statement: &str) -> Result<SqlStatement, anyhow::Error> {
