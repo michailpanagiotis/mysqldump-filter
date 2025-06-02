@@ -15,27 +15,37 @@ pub fn extract_table(sql_comment: &str) -> String {
     TABLE_DUMP_RE.captures(sql_comment).unwrap().get(1).unwrap().as_str().to_string()
 }
 
+#[derive(Clone)]
 enum SqlStatementParts {
     Generic(String),
+    TableUnlock(String),
+    TableDataDumpComment(String),
     Insert { table: String, columns_part: String, values_part: String },
 }
 
 impl SqlStatementParts {
     fn new(st: &str) -> Result<Self, anyhow::Error> {
-        if !st.starts_with("INSERT") {
-            return Ok(SqlStatementParts::Generic(st.to_string()));
+        if st.starts_with("UNLOCK TABLES;") {
+            return Ok(SqlStatementParts::TableUnlock(st.to_string()));
+        }
+        if st.starts_with("-- Dumping data for table") {
+            return Ok(SqlStatementParts::TableDataDumpComment(st.to_string()));
+        }
+        if st.starts_with("INSERT") {
+            let (table, columns_part, values_part) = parse_insert_parts(st)?;
+
+            return Ok(SqlStatementParts::Insert {
+                table,
+                columns_part,
+                values_part,
+            });
         }
 
-        let (table, columns_part, values_part) = parse_insert_parts(st)?;
-
-        Ok(SqlStatementParts::Insert {
-            table,
-            columns_part,
-            values_part,
-        })
+        Ok(SqlStatementParts::Generic(st.to_string()))
     }
 }
 
+#[derive(Clone)]
 pub struct SqlStatement {
     table: Option<String>,
     statement: String,
@@ -61,12 +71,29 @@ impl SqlStatement {
 
     fn as_bytes(&self) -> Vec<u8> {
         let bytes: Vec<u8> = match &self.parts {
-            SqlStatementParts::Generic(s) => s.to_owned().into_bytes(),
+            SqlStatementParts::Generic(s)
+            | SqlStatementParts::TableUnlock(s)
+            | SqlStatementParts::TableDataDumpComment(s)
+                => s.to_owned().into_bytes(),
             SqlStatementParts::Insert{ table, columns_part, values_part } => {
-                Vec::from(format!("INSERT INTO `{}` ({}) VALUES ({});\n", table, columns_part, values_part).as_bytes())
+                Vec::from(format!("INSERT INTO `{table}` ({columns_part}) VALUES ({values_part});\n").as_bytes())
             },
         };
         bytes
+    }
+
+    fn is_table_data_dump(&self) -> bool {
+        match &self.parts {
+            SqlStatementParts::TableDataDumpComment(_) => true,
+            _ => false,
+        }
+    }
+
+    fn is_table_unlock(&self) -> bool {
+        match &self.parts {
+            SqlStatementParts::TableUnlock(_) => true,
+            _ => false,
+        }
     }
 }
 
@@ -142,12 +169,12 @@ impl SqlStatementsWithTable {
         self.allowed_tables.as_ref().is_none_or(|allowed| table.as_ref().is_none_or(|t| allowed.contains(t)))
     }
 
-    fn capture_table(&mut self, cur_statement: &str) {
+    fn capture_table(&mut self, cur_statement: &SqlStatement) {
         if self.last_statement.as_ref().is_some_and(|x| x.starts_with("UNLOCK TABLES;")) {
             self.cur_table = None;
         }
-        if cur_statement.starts_with("-- Dumping data for table") {
-            let table = extract_table(cur_statement);
+        if cur_statement.statement.starts_with("-- Dumping data for table") {
+            let table = extract_table(&cur_statement.statement);
             println!("reading table {}", &table);
             self.cur_table = Some(table);
         }
@@ -165,7 +192,7 @@ impl SqlStatementsWithTable {
 
     fn capture(&mut self, cur_statement: &str) -> Result<SqlStatement, anyhow::Error> {
         let mut cur = SqlStatement::new(cur_statement)?;
-        self.capture_table(cur_statement);
+        self.capture_table(&cur);
         self.capture_positions(cur_statement);
         self.last_statement = Some(cur_statement.to_string());
         cur.set_table(&self.cur_table);
