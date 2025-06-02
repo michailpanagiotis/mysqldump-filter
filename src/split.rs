@@ -95,6 +95,17 @@ impl SqlStatement {
             _ => false,
         }
     }
+
+    fn is_insert(&self) -> bool {
+        match &self.parts {
+            SqlStatementParts::Insert{ table: _, columns_part: _, values_part: _ } => true,
+            _ => false,
+        }
+    }
+
+    fn get_column_positions(&self) -> HashMap<String, usize> {
+        get_columns(&self.statement).iter().enumerate().map(|(idx, c)| (c.to_owned(), idx)).collect()
+    }
 }
 
 pub struct PlainStatements {
@@ -181,20 +192,20 @@ impl SqlStatementsWithTable {
         }
     }
 
-    fn capture_positions(&mut self, cur_statement: &str) {
-        if !cur_statement.starts_with("INSERT") { return; };
+    fn capture_positions(&mut self, cur_statement: &SqlStatement) {
+        if !cur_statement.is_insert() { return; };
         let Some(ref table) = self.cur_table else { return; };
         if self.column_positions.contains_key(table) { return; };
         self.column_positions.insert(
             table.clone(),
-            get_columns(cur_statement).iter().enumerate().map(|(idx, c)| (c.to_owned(), idx)).collect(),
+            cur_statement.get_column_positions(),
         );
     }
 
     fn capture(&mut self, cur_statement: &str) -> Result<SqlStatement, anyhow::Error> {
         let mut cur = SqlStatement::new(cur_statement)?;
         self.capture_table(&cur);
-        self.capture_positions(cur_statement);
+        self.capture_positions(&cur);
         if cur.is_table_unlock() {
             self.unlock_next = true;
         }
@@ -237,9 +248,6 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
 
     for st in statements {
         let statement = st?;
-        // if line.starts_with("INSERT") {
-        //     parse_insert_parts(&line)?;
-        // }
         match statement.get_table() {
             None => working_file_writer.write_all(&statement.as_bytes())?,
             Some(table) => {
