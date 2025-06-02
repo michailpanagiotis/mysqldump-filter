@@ -5,7 +5,7 @@ use std::fs;
 use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use crate::sql::parse_insert;
+use crate::sql::{get_columns, parse_insert_parts};
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -13,6 +13,11 @@ lazy_static! {
 
 pub fn extract_table(sql_comment: &str) -> String {
     TABLE_DUMP_RE.captures(sql_comment).unwrap().get(1).unwrap().as_str().to_string()
+}
+
+enum SqlStatement {
+    Generic,
+    Insert { table: String, columns_part: String, values_part: String },
 }
 
 pub struct PlainStatements {
@@ -68,6 +73,7 @@ pub struct SqlStatementsWithTable {
     cur_table: Option<String>,
     last_statement: Option<String>,
     allowed_tables: Option<HashSet<String>>,
+    column_positions: HashMap<String, HashMap<String, usize>>,
 }
 
 impl SqlStatementsWithTable {
@@ -78,7 +84,12 @@ impl SqlStatementsWithTable {
             cur_table: curr_table.clone(),
             last_statement: None,
             allowed_tables: allowed_tables.clone(),
+            column_positions: HashMap::new(),
         }
+    }
+
+    fn is_table_allowed(&self, table: &Option<String>) -> bool {
+        self.allowed_tables.as_ref().is_none_or(|allowed| table.as_ref().is_none_or(|t| allowed.contains(t)))
     }
 
     fn capture_table(&mut self, cur_statement: &str) {
@@ -90,28 +101,41 @@ impl SqlStatementsWithTable {
             println!("reading table {}", &table);
             self.cur_table = Some(table);
         }
+    }
+
+    fn capture_positions(&mut self, cur_statement: &str) {
+        if !cur_statement.starts_with("INSERT") { return; };
+        let Some(ref table) = self.cur_table else { return; };
+        if self.column_positions.contains_key(table) { return; };
+        self.column_positions.insert(
+            table.clone(),
+            get_columns(cur_statement).iter().enumerate().map(|(idx, c)| (c.to_owned(), idx)).collect(),
+        );
+    }
+
+    fn capture(&mut self, cur_statement: &str) -> (Option<String>, String) {
+        self.capture_table(cur_statement);
+        self.capture_positions(cur_statement);
         self.last_statement = Some(cur_statement.to_string());
+        (self.cur_table.clone(), cur_statement.to_owned())
     }
 
     fn next_item(&mut self) -> Option<(Option<String>, String)> {
-        match self.buf.next() {
-            None => None,
-            Some(ref s) => {
-                self.capture_table(s);
-                Some((self.cur_table.clone(), s.to_owned()))
-            }
-        }
+        self.buf.next().map(|s| self.capture(&s))
     }
 }
 
 impl Iterator for SqlStatementsWithTable {
     type Item = (Option<String>, String);
     fn next(&mut self) -> Option<(Option<String>, String)> {
-        let (mut table, mut line) = self.next_item()?;
-        while table.as_ref().is_some_and(|t| !self.allowed_tables.as_ref().is_none_or(|at| at.contains(t))) {
-            (table, line) = self.next_item()?;
-        }
-        Some((table, line))
+        let mut next: (Option<String>, String);
+        while {
+            next = self.next_item()?;
+            let (ref table,_) = next;
+            !self.is_table_allowed(table)
+        } {}
+
+        Some(next)
     }
 }
 
@@ -132,7 +156,7 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
 
     for (table_option, line) in statements {
         if line.starts_with("INSERT") {
-            parse_insert(&line);
+            parse_insert_parts(&line)?;
         }
         match table_option {
             None => working_file_writer.write_all(line.as_bytes())?,

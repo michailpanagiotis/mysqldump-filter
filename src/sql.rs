@@ -1,7 +1,8 @@
+use anyhow::anyhow;
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use nom::{
-  branch::alt, bytes::complete::{escaped, is_not, tag, take_till, take_until}, character::complete::{char, none_of, one_of}, combinator::eof, multi::{separated_list0, separated_list1}, sequence::{delimited, preceded, terminated}, IResult, Parser
+  branch::alt, bytes::complete::{escaped, is_not, tag, take_till, take_until}, character::complete::{char, none_of, one_of}, combinator::eof, multi::{separated_list0, separated_list1}, sequence::{delimited, preceded, terminated}, Finish, IResult, Parser
 };
 use regex::Regex;
 use std::{collections::{HashMap, HashSet}, fs::File};
@@ -74,7 +75,7 @@ pub fn parse_insert_fields(insert_statement: &str) -> HashMap<String, usize> {
     )
 }
 
-pub fn parse_insert(insert_statement: &str) {
+pub fn parse_insert_parts(insert_statement: &str) -> Result<(String, String, String), anyhow::Error> {
     let mut parser = (
         // table
         preceded(tag("INSERT INTO `"), take_until("` (")),
@@ -84,6 +85,13 @@ pub fn parse_insert(insert_statement: &str) {
         preceded(tag(") VALUES ("), take_until(");\n"))
     );
     let res: IResult<&str, (&str, &str, &str)> = parser.parse(insert_statement);
+    match res {
+        Ok(r) => {
+            let (_, (table, columns, values)) = r;
+            return Ok((table.to_string(), columns.to_string(), values.to_string()))
+        },
+        Err(_) => return Err(anyhow::anyhow!("cannot parse"))
+    }
 }
 
 pub fn parse_insert_full(insert_statement: &str) {
