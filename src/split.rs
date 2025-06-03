@@ -248,26 +248,6 @@ impl Iterator for PlainStatements {
     }
 }
 
-pub struct SqlStatementsWithTable {
-    iter: PlainStatements,
-}
-
-impl SqlStatementsWithTable {
-    pub fn from_file(sqldump_filepath: &Path, curr_table: &Option<String>) -> Self {
-        let iter = PlainStatements::from_file(sqldump_filepath, &true, curr_table).expect("Cannot open file");
-        SqlStatementsWithTable {
-            iter,
-        }
-    }
-}
-
-impl Iterator for SqlStatementsWithTable {
-    type Item = Result<SqlStatement, anyhow::Error>;
-    fn next(&mut self) -> Option<Result<SqlStatement, anyhow::Error>> {
-        self.iter.next()
-    }
-}
-
 pub fn get_writer(filepath: &Path) -> Result<BufWriter<File>, anyhow::Error> {
     fs::File::create(filepath)?;
     let file = fs::OpenOptions::new()
@@ -281,7 +261,7 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
     let mut table_files: HashMap<String, PathBuf> = HashMap::new();
     let mut working_file_writer = get_writer(working_file_path)?;
 
-    let statements = SqlStatementsWithTable::from_file(sqldump_filepath, &None);
+    let statements = PlainStatements::from_file(sqldump_filepath, &true, &None)?;
 
     for st in statements {
         let statement = st?;
