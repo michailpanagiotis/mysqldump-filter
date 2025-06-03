@@ -250,33 +250,21 @@ impl Iterator for PlainStatements {
 
 pub struct SqlStatementsWithTable {
     iter: PlainStatements,
-    allowed_tables: Option<HashSet<String>>,
 }
 
 impl SqlStatementsWithTable {
-    pub fn from_file(sqldump_filepath: &Path, allowed_tables: &Option<HashSet<String>>, curr_table: &Option<String>) -> Self {
+    pub fn from_file(sqldump_filepath: &Path, curr_table: &Option<String>) -> Self {
         let iter = PlainStatements::from_file(sqldump_filepath, &true, curr_table).expect("Cannot open file");
         SqlStatementsWithTable {
             iter,
-            allowed_tables: allowed_tables.clone(),
         }
-    }
-
-    fn is_table_allowed(&self, table: &Option<String>) -> bool {
-        self.allowed_tables.as_ref().is_none_or(|allowed| table.as_ref().is_none_or(|t| allowed.contains(t)))
     }
 }
 
 impl Iterator for SqlStatementsWithTable {
     type Item = Result<SqlStatement, anyhow::Error>;
     fn next(&mut self) -> Option<Result<SqlStatement, anyhow::Error>> {
-        let mut next: Result<SqlStatement, anyhow::Error>;
-        while {
-            next = self.iter.next()?;
-            !next.as_ref().is_ok_and(|n| self.is_table_allowed(n.get_table()))
-        } {}
-
-        Some(next)
+        self.iter.next()
     }
 }
 
@@ -293,13 +281,18 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
     let mut table_files: HashMap<String, PathBuf> = HashMap::new();
     let mut working_file_writer = get_writer(working_file_path)?;
 
-    let statements = SqlStatementsWithTable::from_file(sqldump_filepath, allowed_tables, &None);
+    let statements = SqlStatementsWithTable::from_file(sqldump_filepath, &None);
 
     for st in statements {
         let statement = st?;
         match statement.get_table() {
             None => working_file_writer.write_all(&statement.as_bytes())?,
             Some(table) => {
+                if let Some(allowed) = allowed_tables {
+                    if !allowed.contains(table) {
+                        continue;
+                    }
+                }
                 let writer = match writers.get_mut(table) {
                     None => {
                         let table_file = std::path::absolute(working_dir_path.join(table).with_extension("sql"))?;
