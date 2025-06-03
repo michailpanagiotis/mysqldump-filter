@@ -49,7 +49,6 @@ impl SqlStatementParts {
                     }
                 }
             }
-            dbg!(&data_types);
             return Ok(SqlStatementParts::CreateTable(st.to_string()));
         }
         if st.starts_with("INSERT") {
@@ -124,6 +123,25 @@ impl SqlStatement {
         }
     }
 
+    fn get_data_types(&self) -> Option<HashMap<String, sqlparser::ast::DataType>> {
+        match &self.parts {
+            SqlStatementParts::CreateTable(st) => {
+                let mut data_types = HashMap::new();
+                let dialect = MySqlDialect {};
+                let ast = SqlParser::parse_sql(&dialect, st).unwrap();
+                for st in ast.into_iter().filter(|x| matches!(x, sqlparser::ast::Statement::CreateTable(_))) {
+                    if let sqlparser::ast::Statement::CreateTable(ct) = st {
+                        for column in ct.columns.into_iter() {
+                            data_types.insert(ct.name.0[0].as_ident().unwrap().value.to_string() + "." + column.name.value.as_str(), column.data_type);
+                        }
+                    }
+                }
+                Some(data_types)
+            },
+            _ => None,
+        }
+    }
+
     fn extract_table(&self) -> Option<&str>{
         match &self.parts {
             SqlStatementParts::TableDataDumpComment(comment) => Some(TABLE_DUMP_RE.captures(comment).unwrap().get(1).unwrap().as_str()),
@@ -180,8 +198,35 @@ impl Iterator for PlainStatements {
     }
 }
 
+pub struct SqlStatementsWithMeta {
+    iter: PlainStatements,
+    data_types: HashMap<String, sqlparser::ast::DataType>,
+}
+
+impl SqlStatementsWithMeta {
+    pub fn from_file(sqldump_filepath: &Path) -> Result<Self, anyhow::Error> {
+        Ok(SqlStatementsWithMeta {
+            iter: PlainStatements::from_file(sqldump_filepath)?,
+            data_types: HashMap::new(),
+        })
+    }
+}
+
+impl Iterator for SqlStatementsWithMeta {
+    type Item = SqlStatement;
+    fn next(&mut self) -> Option<SqlStatement> {
+        let next = self.iter.next()?;
+        if let Some(data_types) = next.get_data_types() {
+            for (key, data_type) in data_types {
+                self.data_types.insert(key, data_type);
+            }
+        }
+        Some(next)
+    }
+}
+
 pub struct SqlStatementsWithTable {
-    buf: PlainStatements,
+    iter: PlainStatements,
     cur_table: Option<String>,
     unlock_next: bool,
     allowed_tables: Option<HashSet<String>>,
@@ -190,9 +235,9 @@ pub struct SqlStatementsWithTable {
 
 impl SqlStatementsWithTable {
     pub fn from_file(sqldump_filepath: &Path, allowed_tables: &Option<HashSet<String>>, curr_table: &Option<String>) -> Self {
-        let buf = PlainStatements::from_file(sqldump_filepath).expect("Cannot open file");
+        let iter = PlainStatements::from_file(sqldump_filepath).expect("Cannot open file");
         SqlStatementsWithTable {
-            buf,
+            iter,
             cur_table: curr_table.clone(),
             unlock_next: false,
             allowed_tables: allowed_tables.clone(),
@@ -235,7 +280,7 @@ impl SqlStatementsWithTable {
     }
 
     fn next_item(&mut self) -> Option<Result<SqlStatement, anyhow::Error>> {
-        let mut next = self.buf.next()?;
+        let mut next = self.iter.next()?;
         match self.capture(&mut next) {
             Ok(_) => Some(Ok(next)),
             Err(e) => Some(Err(e)),
