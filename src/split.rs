@@ -39,16 +39,6 @@ impl SqlStatementParts {
             return Ok(SqlStatementParts::InlineTable(st.to_string()));
         }
         if st.starts_with("CREATE TABLE") {
-            let mut data_types = HashMap::new();
-            let dialect = MySqlDialect {};
-            let ast = SqlParser::parse_sql(&dialect, st).unwrap();
-            for st in ast.into_iter().filter(|x| matches!(x, sqlparser::ast::Statement::CreateTable(_))) {
-                if let sqlparser::ast::Statement::CreateTable(ct) = st {
-                    for column in ct.columns.into_iter() {
-                        data_types.insert(ct.name.0[0].as_ident().unwrap().value.to_string() + "." + column.name.value.as_str(), column.data_type);
-                    }
-                }
-            }
             return Ok(SqlStatementParts::CreateTable(st.to_string()));
         }
         if st.starts_with("INSERT") {
@@ -226,7 +216,7 @@ impl Iterator for SqlStatementsWithMeta {
 }
 
 pub struct SqlStatementsWithTable {
-    iter: PlainStatements,
+    iter: SqlStatementsWithMeta,
     cur_table: Option<String>,
     unlock_next: bool,
     allowed_tables: Option<HashSet<String>>,
@@ -235,7 +225,7 @@ pub struct SqlStatementsWithTable {
 
 impl SqlStatementsWithTable {
     pub fn from_file(sqldump_filepath: &Path, allowed_tables: &Option<HashSet<String>>, curr_table: &Option<String>) -> Self {
-        let iter = PlainStatements::from_file(sqldump_filepath).expect("Cannot open file");
+        let iter = SqlStatementsWithMeta::from_file(sqldump_filepath).expect("Cannot open file");
         SqlStatementsWithTable {
             iter,
             cur_table: curr_table.clone(),
