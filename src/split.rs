@@ -193,6 +193,11 @@ pub struct SqlStatementsWithMeta {
     data_types: HashMap<String, sqlparser::ast::DataType>,
 }
 
+struct TokenIterator<'a> {
+    collection: &'a mut PlainStatements,
+    data_types: &'a HashMap<String, sqlparser::ast::DataType>,
+}
+
 impl SqlStatementsWithMeta {
     pub fn from_file(sqldump_filepath: &Path) -> Result<Self, anyhow::Error> {
         Ok(SqlStatementsWithMeta {
@@ -200,20 +205,44 @@ impl SqlStatementsWithMeta {
             data_types: HashMap::new(),
         })
     }
-}
 
-impl Iterator for SqlStatementsWithMeta {
-    type Item = SqlStatement;
-    fn next(&mut self) -> Option<SqlStatement> {
-        let next = self.iter.next()?;
-        if let Some(data_types) = next.get_data_types() {
-            for (key, data_type) in data_types {
-                self.data_types.insert(key, data_type);
-            }
+    pub fn iter<'a>(&'a mut self) -> TokenIterator<'a> {
+        TokenIterator {
+            collection: &mut self.iter,
+            data_types: &self.data_types,
         }
-        Some(next)
     }
 }
+
+// and we'll implement IntoIterator
+// impl IntoIterator for SqlStatementsWithMeta {
+//     type Item = i32;
+//     type IntoIter = TokenIterator<'a>;
+//
+//     fn into_iter(self) -> Self::IntoIter {
+//         self.0.into_iter()
+//     }
+// }
+
+impl<'a> Iterator for TokenIterator<'a> {
+    type Item = (SqlStatement, &'a HashMap<String, sqlparser::ast::DataType>);
+    fn next(&mut self) -> Option<(SqlStatement, &'a HashMap<String, sqlparser::ast::DataType>)> {
+        self.collection.next().map(|x| (x, self.data_types))
+    }
+}
+
+// impl Iterator for SqlStatementsWithMeta {
+//     type Item = SqlStatement;
+//     fn next(&mut self) -> Option<SqlStatement> {
+//         let next = self.iter.next()?;
+//         if let Some(data_types) = next.get_data_types() {
+//             for (key, data_type) in data_types {
+//                 self.data_types.insert(key, data_type);
+//             }
+//         }
+//         Some(next)
+//     }
+// }
 
 pub struct SqlStatementsWithTable {
     iter: SqlStatementsWithMeta,
@@ -269,9 +298,9 @@ impl SqlStatementsWithTable {
         Ok(())
     }
 
-    fn next_item(&mut self) -> Option<Result<SqlStatement, anyhow::Error>> {
-        let mut next = self.iter.next()?;
-        match self.capture(&mut next) {
+    fn next_item(&mut self) -> Option<Result<(SqlStatement, &HashMap<String, sqlparser::ast::DataType>), anyhow::Error>> {
+        let mut next: (SqlStatement, &HashMap<String, sqlparser::ast::DataType>) = self.iter.iter().next()?;
+        match self.capture(&mut next.0) {
             Ok(_) => Some(Ok(next)),
             Err(e) => Some(Err(e)),
         }
