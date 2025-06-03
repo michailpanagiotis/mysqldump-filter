@@ -140,8 +140,12 @@ impl SqlStatement {
     }
 }
 
+type DataTypes = HashMap<String, sqlparser::ast::DataType>;
+type IteratorItem = Result<SqlStatement, anyhow::Error>;
+
 pub struct PlainStatements {
     buf: io::BufReader<fs::File>,
+    data_types: DataTypes,
 }
 
 impl PlainStatements {
@@ -149,7 +153,22 @@ impl PlainStatements {
         let file = fs::File::open(sqldump_filepath)?;
         Ok(PlainStatements {
             buf: io::BufReader::new(file),
+            data_types: HashMap::new(),
         })
+    }
+
+    pub fn read_statement(&mut self) -> Option<IteratorItem> {
+        let mut buf: String = String::new();
+
+        while {
+            let read_bytes = self.buf.read_line(&mut buf).ok()?;
+            read_bytes > 0 && !PlainStatements::is_full_line(&buf)
+        } {}
+
+        match buf.is_empty() {
+            true => None,
+            false => Some(SqlStatement::new(&buf)),
+        }
     }
 
     pub fn is_full_line(line: &str) -> bool {
@@ -170,53 +189,22 @@ impl PlainStatements {
 }
 
 impl Iterator for PlainStatements {
-    type Item = SqlStatement;
-    fn next(&mut self) -> Option<SqlStatement> {
-        let mut buf: String = String::new();
-
-        while {
-            let read_bytes = self.buf.read_line(&mut buf).ok()?;
-            read_bytes > 0 && !PlainStatements::is_full_line(&buf)
-        } {}
-
-        match buf.is_empty() {
-            true => None,
-            false => {
-                Some(SqlStatement::new(&buf).unwrap())
+    type Item = IteratorItem;
+    fn next(&mut self) -> Option<IteratorItem> {
+        let statement = self.read_statement()?;
+        if let Ok(st) = &statement {
+            if let Some(data_types) = st.get_data_types() {
+                for (key, data_type) in data_types {
+                    self.data_types.insert(key, data_type);
+                }
             }
         }
-    }
-}
-
-pub struct SqlStatementsWithMeta {
-    iter: PlainStatements,
-    data_types: HashMap<String, sqlparser::ast::DataType>,
-}
-
-impl SqlStatementsWithMeta {
-    pub fn from_file(sqldump_filepath: &Path) -> Result<Self, anyhow::Error> {
-        Ok(SqlStatementsWithMeta {
-            iter: PlainStatements::from_file(sqldump_filepath)?,
-            data_types: HashMap::new(),
-        })
-    }
-}
-
-impl Iterator for SqlStatementsWithMeta {
-    type Item = SqlStatement;
-    fn next(&mut self) -> Option<SqlStatement> {
-        let next = self.iter.next()?;
-        if let Some(data_types) = next.get_data_types() {
-            for (key, data_type) in data_types {
-                self.data_types.insert(key, data_type);
-            }
-        }
-        Some(next)
+        Some(statement)
     }
 }
 
 pub struct SqlStatementsWithTable {
-    iter: SqlStatementsWithMeta,
+    iter: PlainStatements,
     cur_table: Option<String>,
     unlock_next: bool,
     allowed_tables: Option<HashSet<String>>,
@@ -225,7 +213,7 @@ pub struct SqlStatementsWithTable {
 
 impl SqlStatementsWithTable {
     pub fn from_file(sqldump_filepath: &Path, allowed_tables: &Option<HashSet<String>>, curr_table: &Option<String>) -> Self {
-        let iter = SqlStatementsWithMeta::from_file(sqldump_filepath).expect("Cannot open file");
+        let iter = PlainStatements::from_file(sqldump_filepath).expect("Cannot open file");
         SqlStatementsWithTable {
             iter,
             cur_table: curr_table.clone(),
@@ -239,42 +227,44 @@ impl SqlStatementsWithTable {
         self.allowed_tables.as_ref().is_none_or(|allowed| table.as_ref().is_none_or(|t| allowed.contains(t)))
     }
 
-    fn capture_table(&mut self, cur_statement: &SqlStatement) {
-        if self.unlock_next {
-            self.unlock_next = false;
-            self.cur_table = None;
-        }
-        if let Some(table) = cur_statement.extract_table() {
-            println!("reading table {}", &table);
-            self.cur_table = Some(table.to_string());
+    fn capture_table(&mut self, cur_statement: &IteratorItem) {
+        if let Ok(st) = cur_statement {
+            if self.unlock_next {
+                self.unlock_next = false;
+                self.cur_table = None;
+            }
+            if let Some(table) = st.extract_table() {
+                println!("reading table {}", &table);
+                self.cur_table = Some(table.to_string());
+            }
         }
     }
 
-    fn capture_positions(&mut self, cur_statement: &SqlStatement) {
-        if !cur_statement.is_insert() { return; };
-        let Some(ref table) = self.cur_table else { return; };
-
-        if !self.column_positions.contains_key(table) {
-            self.column_positions.insert(table.clone(), cur_statement.get_column_positions());
-        };
+    fn capture_positions(&mut self, cur_statement: &IteratorItem) {
+        if let Ok(st) = cur_statement {
+            if let Some(ref table) = self.cur_table {
+                if !self.column_positions.contains_key(table) && st.is_insert() {
+                    self.column_positions.insert(table.clone(), st.get_column_positions());
+                };
+            }
+        }
     }
 
-    fn capture(&mut self, cur_statement: &mut SqlStatement) -> Result<(), anyhow::Error> {
+    fn capture(&mut self, cur_statement: &mut IteratorItem) {
         self.capture_table(cur_statement);
         self.capture_positions(cur_statement);
-        if cur_statement.is_table_unlock() {
-            self.unlock_next = true;
+        if let Ok(st) = cur_statement {
+            if st.is_table_unlock() {
+                self.unlock_next = true;
+            }
+            st.set_table(&self.cur_table);
         }
-        cur_statement.set_table(&self.cur_table);
-        Ok(())
     }
 
-    fn next_item(&mut self) -> Option<Result<SqlStatement, anyhow::Error>> {
+    fn next_item(&mut self) -> Option<IteratorItem> {
         let mut next = self.iter.next()?;
-        match self.capture(&mut next) {
-            Ok(_) => Some(Ok(next)),
-            Err(e) => Some(Err(e)),
-        }
+        self.capture(&mut next);
+        Some(next)
     }
 }
 
@@ -340,16 +330,19 @@ pub fn gather(working_file_path: &Path, output_path: &Path) -> Result<(), anyhow
     let output = File::create(output_path)?;
     let mut writer = BufWriter::new(output);
 
-    for line in input {
-        match line.get_inline_file() {
+    for st in input {
+        let valid_line = st?;
+        let file = valid_line.get_inline_file();
+        let cur_bytes = &valid_line.as_bytes();
+        match file {
             Some(ref inline_file) => {
                 let inline_input = PlainStatements::from_file(inline_file)?;
                 for inline_line in inline_input {
-                    writer.write_all(&inline_line.as_bytes())?;
+                    writer.write_all(&inline_line?.as_bytes())?;
                 }
             },
             None => {
-                writer.write_all(&line.as_bytes())?;
+                writer.write_all(cur_bytes)?;
             }
         }
     }
