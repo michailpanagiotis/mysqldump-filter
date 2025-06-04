@@ -136,14 +136,14 @@ impl SqlStatement {
 type DataTypes = HashMap<String, sqlparser::ast::DataType>;
 type IteratorItem = Result<SqlStatement, anyhow::Error>;
 
-pub struct StatementsAsString {
+pub struct PlainStatements {
     buf: io::BufReader<fs::File>,
 }
 
-impl StatementsAsString {
+impl PlainStatements {
     pub fn from_file(sqldump_filepath: &Path) -> Result<Self, anyhow::Error> {
         let file = fs::File::open(sqldump_filepath)?;
-        Ok(StatementsAsString {
+        Ok(PlainStatements {
             buf: io::BufReader::new(file),
         })
     }
@@ -165,14 +165,14 @@ impl StatementsAsString {
     }
 }
 
-impl Iterator for StatementsAsString {
+impl Iterator for PlainStatements {
     type Item = String;
     fn next(&mut self) -> Option<String> {
         let mut buf: String = String::new();
 
         while {
             let read_bytes = self.buf.read_line(&mut buf).ok()?;
-            read_bytes > 0 && !StatementsAsString::is_full_line(&buf)
+            read_bytes > 0 && !PlainStatements::is_full_line(&buf)
         } {}
 
         match buf.is_empty() {
@@ -183,8 +183,8 @@ impl Iterator for StatementsAsString {
 }
 
 
-pub struct PlainStatements {
-    buf: io::BufReader<fs::File>,
+pub struct TrackedStatements {
+    iter: PlainStatements,
     tracking: bool,
     data_types: DataTypes,
     cur_table: Option<String>,
@@ -192,11 +192,10 @@ pub struct PlainStatements {
     column_positions: HashMap<String, HashMap<String, usize>>,
 }
 
-impl PlainStatements {
+impl TrackedStatements {
     pub fn from_file(sqldump_filepath: &Path, tracking: &bool, curr_table: &Option<String>) -> Result<Self, anyhow::Error> {
-        let file = fs::File::open(sqldump_filepath)?;
-        Ok(PlainStatements {
-            buf: io::BufReader::new(file),
+        Ok(TrackedStatements {
+            iter: PlainStatements::from_file(sqldump_filepath)?,
             tracking: tracking.to_owned(),
             data_types: HashMap::new(),
             cur_table: curr_table.to_owned(),
@@ -206,33 +205,8 @@ impl PlainStatements {
     }
 
     pub fn read_statement(&mut self) -> Option<IteratorItem> {
-        let mut buf: String = String::new();
-
-        while {
-            let read_bytes = self.buf.read_line(&mut buf).ok()?;
-            read_bytes > 0 && !PlainStatements::is_full_line(&buf)
-        } {}
-
-        match buf.is_empty() {
-            true => None,
-            false => Some(SqlStatement::new(&buf)),
-        }
-    }
-
-    pub fn is_full_line(line: &str) -> bool {
-        if line.ends_with(";\n") {
-            return true;
-        }
-
-        if line.starts_with("\n") {
-            return true;
-        }
-
-        if line.starts_with("--") {
-            return true;
-        }
-
-        false
+        let next = self.iter.next()?;
+        Some(SqlStatement::new(&next))
     }
 
     fn capture_table(&mut self, cur_statement: &IteratorItem) {
@@ -270,7 +244,7 @@ impl PlainStatements {
     }
 }
 
-impl Iterator for PlainStatements {
+impl Iterator for TrackedStatements {
     type Item = IteratorItem;
     fn next(&mut self) -> Option<IteratorItem> {
         let mut statement = self.read_statement()?;
@@ -301,7 +275,7 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
     let mut table_files: HashMap<String, PathBuf> = HashMap::new();
     let mut working_file_writer = get_writer(working_file_path)?;
 
-    let statements = PlainStatements::from_file(sqldump_filepath, &true, &None)?;
+    let statements = TrackedStatements::from_file(sqldump_filepath, &true, &None)?;
 
     for st in statements {
         let statement = st?;
@@ -338,14 +312,14 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
 }
 
 pub fn gather(working_file_path: &Path, output_path: &Path) -> Result<(), anyhow::Error> {
-    let input = StatementsAsString::from_file(working_file_path)?;
+    let input = PlainStatements::from_file(working_file_path)?;
     let output = File::create(output_path)?;
     let mut writer = BufWriter::new(output);
 
     for statement in input {
         if statement.starts_with("--- INLINE ") {
             let file = PathBuf::from(statement.replace("--- INLINE ", "").replace("\n", ""));
-            let inline_input = StatementsAsString::from_file(&file)?;
+            let inline_input = PlainStatements::from_file(&file)?;
             for inline_line in inline_input {
                 writer.write_all(inline_line.as_bytes())?;
             }
