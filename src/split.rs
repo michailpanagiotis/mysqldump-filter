@@ -142,10 +142,7 @@ pub struct StatementsAsString {
 
 impl StatementsAsString {
     pub fn from_file(sqldump_filepath: &Path) -> Result<Self, anyhow::Error> {
-        println!("Opening {}", sqldump_filepath.display());
-
-        let file = fs::File::open(sqldump_filepath).expect(&format!("Cannot open file {}", sqldump_filepath.display()));
-        println!("Opened {}", sqldump_filepath.display());
+        let file = fs::File::open(sqldump_filepath)?;
         Ok(StatementsAsString {
             buf: io::BufReader::new(file),
         })
