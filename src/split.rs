@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use sqlparser::dialect::MySqlDialect;
 use sqlparser::parser::Parser as SqlParser;
 
-use crate::sql::{get_columns, parse_insert_parts};
+use crate::sql::{get_columns, parse_insert_parts, SqlStatementsWithTable};
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -349,12 +349,11 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
 }
 
 pub fn gather(working_file_path: &Path, output_path: &Path) -> Result<(), anyhow::Error> {
-    let input = PlainStatements::from_file(working_file_path, &false, &None)?;
+    let input = StatementsAsString::from_file(working_file_path)?;
     let output = File::create(output_path)?;
     let mut writer = BufWriter::new(output);
 
-    for st in input {
-        let statement = st?.statement;
+    for statement in input {
         if statement.starts_with("--- INLINE ") {
             let file = PathBuf::from(statement.replace("--- INLINE ", "").replace("\n", ""));
             let inline_input = StatementsAsString::from_file(&file)?;
