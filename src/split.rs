@@ -269,6 +269,10 @@ impl<'a> TrackedStatements<'a> {
             st.set_table(&self.cur_table);
         }
     }
+
+    fn as_bytes(it: IteratorItem) -> Result<Vec<u8>, anyhow::Error> {
+        Ok(it?.as_bytes())
+    }
 }
 
 impl Iterator for TrackedStatements<'_> {
@@ -349,7 +353,7 @@ pub fn gather(working_file_path: &Path, output_path: &Path) -> Result<(), anyhow
         if statement.starts_with("--- INLINE ") {
             let file = PathBuf::from(statement.replace("--- INLINE ", "").replace("\n", ""));
             for inline_line in read_table_file(&file)? {
-                writer.write_all(&inline_line?.as_bytes())?;
+                writer.write_all(&TrackedStatements::as_bytes(inline_line)?)?;
             }
         } else {
             writer.write_all(statement.as_bytes())?;
