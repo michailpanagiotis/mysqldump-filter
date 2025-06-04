@@ -10,6 +10,10 @@ use sqlparser::parser::Parser as SqlParser;
 
 use crate::sql::{get_columns, parse_insert_parts};
 
+type DataTypes = HashMap<String, HashMap<String, sqlparser::ast::DataType>>;
+type ColumnPositions = HashMap<String, HashMap<String, usize>>;
+type IteratorItem = Result<SqlStatement, anyhow::Error>;
+
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
 }
@@ -102,28 +106,26 @@ impl SqlStatement {
         matches!(&self.parts, SqlStatementParts::TableUnlock(_))
     }
 
-    fn is_create_table(&self) -> bool {
-        matches!(&self.parts, SqlStatementParts::CreateTable(_))
-    }
-
     fn is_insert(&self) -> bool {
         matches!(&self.parts, SqlStatementParts::Insert{ table: _, columns_part: _, values_part: _ })
     }
 
-    fn get_data_types(&self) -> Option<HashMap<String, sqlparser::ast::DataType>> {
+    fn get_data_types(&self) -> Option<DataTypes> {
         match &self.parts {
             SqlStatementParts::CreateTable(st) => {
-                let mut data_types = HashMap::new();
                 let dialect = MySqlDialect {};
                 let ast = SqlParser::parse_sql(&dialect, st).unwrap();
                 for st in ast.into_iter().filter(|x| matches!(x, sqlparser::ast::Statement::CreateTable(_))) {
                     if let sqlparser::ast::Statement::CreateTable(ct) = st {
+                        let table = ct.name.0[0].as_ident().unwrap().value.to_string();
+                        let mut data_types: DataTypes = HashMap::from([(table.to_owned(), HashMap::new())]);
                         for column in ct.columns.into_iter() {
-                            data_types.insert(ct.name.0[0].as_ident().unwrap().value.to_string() + "." + column.name.value.as_str(), column.data_type);
+                            data_types.get_mut(&table)?.insert(column.name.value.to_string(), column.data_type);
                         }
+                        return Some(data_types);
                     }
                 }
-                Some(data_types)
+                None
             },
             _ => None,
         }
@@ -136,10 +138,6 @@ impl SqlStatement {
         }
     }
 }
-
-type DataTypes = HashMap<String, sqlparser::ast::DataType>;
-type ColumnPositions = HashMap<String, HashMap<String, usize>>;
-type IteratorItem = Result<SqlStatement, anyhow::Error>;
 
 pub struct PlainStatements {
     buf: io::BufReader<fs::File>,
@@ -333,8 +331,6 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
     for w in writers.values_mut() {
         w.flush()?
     }
-
-    dbg!(&tracker);
 
     Ok(table_files)
 }
