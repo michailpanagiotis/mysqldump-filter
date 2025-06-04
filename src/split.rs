@@ -139,19 +139,19 @@ impl SqlStatement {
     }
 }
 
-pub struct PlainStatements {
+struct PlainStatements {
     buf: io::BufReader<fs::File>,
 }
 
 impl PlainStatements {
-    pub fn from_file(sqldump_filepath: &Path) -> Result<Self, anyhow::Error> {
+    fn from_file(sqldump_filepath: &Path) -> Result<Self, anyhow::Error> {
         let file = fs::File::open(sqldump_filepath)?;
         Ok(PlainStatements {
             buf: io::BufReader::new(file),
         })
     }
 
-    pub fn is_full_line(line: &str) -> bool {
+    fn is_full_line(line: &str) -> bool {
         if line.ends_with(";\n") {
             return true;
         }
@@ -192,7 +192,7 @@ struct Tracker {
 }
 
 impl Tracker {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Tracker {
             data_types: HashMap::new(),
             column_positions: HashMap::new(),
@@ -214,7 +214,7 @@ impl Tracker {
     }
 }
 
-pub struct TrackedStatements<'a> {
+struct TrackedStatements<'a> {
     iter: PlainStatements,
     tracking: bool,
     cur_table: Option<String>,
@@ -223,7 +223,7 @@ pub struct TrackedStatements<'a> {
 }
 
 impl<'a> TrackedStatements<'a> {
-    pub fn from_file(sqldump_filepath: &Path, tracker: &'a mut Tracker, tracking: &bool, curr_table: &Option<String>) -> Result<Self, anyhow::Error> {
+    fn from_file(sqldump_filepath: &Path, tracker: &'a mut Tracker, tracking: &bool, curr_table: &Option<String>) -> Result<Self, anyhow::Error> {
         Ok(TrackedStatements {
             iter: PlainStatements::from_file(sqldump_filepath)?,
             tracking: tracking.to_owned(),
@@ -233,7 +233,7 @@ impl<'a> TrackedStatements<'a> {
         })
     }
 
-    pub fn read_statement(&mut self) -> Option<IteratorItem> {
+    fn read_statement(&mut self) -> Option<IteratorItem> {
         let next = self.iter.next()?;
         Some(SqlStatement::new(&next))
     }
@@ -285,7 +285,7 @@ impl Iterator for TrackedStatements<'_> {
     }
 }
 
-pub fn get_writer(filepath: &Path) -> Result<BufWriter<File>, anyhow::Error> {
+fn get_writer(filepath: &Path) -> Result<BufWriter<File>, anyhow::Error> {
     fs::File::create(filepath)?;
     let file = fs::OpenOptions::new()
         .append(true)
@@ -335,6 +335,11 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
     Ok(table_files)
 }
 
+pub fn read_table_file(file: &Path) -> Result<impl Iterator<Item=IteratorItem>, anyhow::Error> {
+    let lines = PlainStatements::from_file(file)?;
+    Ok(lines.map(|s| SqlStatement::new(&s)))
+}
+
 pub fn gather(working_file_path: &Path, output_path: &Path) -> Result<(), anyhow::Error> {
     let input = PlainStatements::from_file(working_file_path)?;
     let output = File::create(output_path)?;
@@ -343,9 +348,8 @@ pub fn gather(working_file_path: &Path, output_path: &Path) -> Result<(), anyhow
     for statement in input {
         if statement.starts_with("--- INLINE ") {
             let file = PathBuf::from(statement.replace("--- INLINE ", "").replace("\n", ""));
-            let inline_input = PlainStatements::from_file(&file)?;
-            for inline_line in inline_input {
-                writer.write_all(inline_line.as_bytes())?;
+            for inline_line in read_table_file(&file)? {
+                writer.write_all(&inline_line?.as_bytes())?;
             }
         } else {
             writer.write_all(statement.as_bytes())?;
