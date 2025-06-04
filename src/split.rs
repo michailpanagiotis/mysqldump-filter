@@ -143,6 +143,56 @@ impl SqlStatement {
 type DataTypes = HashMap<String, sqlparser::ast::DataType>;
 type IteratorItem = Result<SqlStatement, anyhow::Error>;
 
+pub struct StatementsAsString {
+    buf: io::BufReader<fs::File>,
+}
+
+impl StatementsAsString {
+    pub fn from_file(sqldump_filepath: &Path) -> Result<Self, anyhow::Error> {
+        println!("Opening {}", sqldump_filepath.display());
+
+        let file = fs::File::open(sqldump_filepath).expect(&format!("Cannot open file {}", sqldump_filepath.display()));
+        println!("Opened {}", sqldump_filepath.display());
+        Ok(StatementsAsString {
+            buf: io::BufReader::new(file),
+        })
+    }
+
+    pub fn is_full_line(line: &str) -> bool {
+        if line.ends_with(";\n") {
+            return true;
+        }
+
+        if line.starts_with("\n") {
+            return true;
+        }
+
+        if line.starts_with("--") {
+            return true;
+        }
+
+        false
+    }
+}
+
+impl Iterator for StatementsAsString {
+    type Item = String;
+    fn next(&mut self) -> Option<String> {
+        let mut buf: String = String::new();
+
+        while {
+            let read_bytes = self.buf.read_line(&mut buf).ok()?;
+            read_bytes > 0 && !StatementsAsString::is_full_line(&buf)
+        } {}
+
+        match buf.is_empty() {
+            true => None,
+            false => Some(buf),
+        }
+    }
+}
+
+
 pub struct PlainStatements {
     buf: io::BufReader<fs::File>,
     tracking: bool,
@@ -308,9 +358,9 @@ pub fn gather(working_file_path: &Path, output_path: &Path) -> Result<(), anyhow
         let cur_bytes = &valid_line.as_bytes();
         match file {
             Some(ref inline_file) => {
-                let inline_input = PlainStatements::from_file(inline_file, &false,  &None)?;
+                let inline_input = StatementsAsString::from_file(inline_file)?;
                 for inline_line in inline_input {
-                    writer.write_all(&inline_line?.as_bytes())?;
+                    writer.write_all(inline_line.as_bytes())?;
                 }
             },
             None => {
