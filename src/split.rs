@@ -356,7 +356,7 @@ pub fn gather(working_file_path: &Path, output_path: &Path) -> Result<(), anyhow
     for st in input {
         let statement = st?.statement;
         if statement.starts_with("--- INLINE ") {
-            let file = SqlStatement::get_inline_file(&statement).unwrap();
+            let file = PathBuf::from(statement.replace("--- INLINE ", "").replace("\n", ""));
             let inline_input = StatementsAsString::from_file(&file)?;
             for inline_line in inline_input {
                 writer.write_all(inline_line.as_bytes())?;
