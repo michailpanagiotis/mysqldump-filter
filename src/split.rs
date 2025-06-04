@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use sqlparser::dialect::MySqlDialect;
 use sqlparser::parser::Parser as SqlParser;
 
-use crate::sql::{get_columns, parse_insert_parts, SqlStatementsWithTable};
+use crate::sql::{get_columns, parse_insert_parts};
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -104,14 +104,6 @@ impl SqlStatement {
 
     fn is_insert(&self) -> bool {
         matches!(&self.parts, SqlStatementParts::Insert{ table: _, columns_part: _, values_part: _ })
-    }
-
-    fn get_inline_file(line: &str) -> Option<PathBuf> {
-        if line.starts_with("--- INLINE ") {
-            return Some(PathBuf::from(line.replace("--- INLINE ", "").replace("\n", "")));
-        } else {
-            return None;
-        }
     }
 
     fn get_data_types(&self) -> Option<HashMap<String, sqlparser::ast::DataType>> {
