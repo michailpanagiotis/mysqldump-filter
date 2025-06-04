@@ -102,6 +102,10 @@ impl SqlStatement {
         matches!(&self.parts, SqlStatementParts::TableUnlock(_))
     }
 
+    fn is_create_table(&self) -> bool {
+        matches!(&self.parts, SqlStatementParts::CreateTable(_))
+    }
+
     fn is_insert(&self) -> bool {
         matches!(&self.parts, SqlStatementParts::Insert{ table: _, columns_part: _, values_part: _ })
     }
@@ -134,6 +138,7 @@ impl SqlStatement {
 }
 
 type DataTypes = HashMap<String, sqlparser::ast::DataType>;
+type ColumnPositions = HashMap<String, HashMap<String, usize>>;
 type IteratorItem = Result<SqlStatement, anyhow::Error>;
 
 pub struct PlainStatements {
@@ -182,25 +187,51 @@ impl Iterator for PlainStatements {
     }
 }
 
-
-pub struct TrackedStatements {
-    iter: PlainStatements,
-    tracking: bool,
+#[derive(Debug)]
+struct Tracker {
     data_types: DataTypes,
-    cur_table: Option<String>,
-    unlock_next: bool,
-    column_positions: HashMap<String, HashMap<String, usize>>,
+    column_positions: ColumnPositions,
 }
 
-impl TrackedStatements {
-    pub fn from_file(sqldump_filepath: &Path, tracking: &bool, curr_table: &Option<String>) -> Result<Self, anyhow::Error> {
+impl Tracker {
+    pub fn new() -> Self {
+        Tracker {
+            data_types: HashMap::new(),
+            column_positions: HashMap::new(),
+        }
+    }
+
+    fn capture_positions(&mut self, table: &str, statement: &SqlStatement) {
+        if !self.column_positions.contains_key(table) && statement.is_insert() {
+            self.column_positions.insert(table.to_string(), statement.get_column_positions());
+        };
+    }
+
+    fn capture_data_types(&mut self, statement: &SqlStatement) {
+        if let Some(data_types) = statement.get_data_types() {
+            for (key, data_type) in data_types {
+                self.data_types.insert(key, data_type);
+            }
+        }
+    }
+}
+
+pub struct TrackedStatements<'a> {
+    iter: PlainStatements,
+    tracking: bool,
+    cur_table: Option<String>,
+    unlock_next: bool,
+    tracker: &'a mut Tracker,
+}
+
+impl<'a> TrackedStatements<'a> {
+    pub fn from_file(sqldump_filepath: &Path, tracker: &'a mut Tracker, tracking: &bool, curr_table: &Option<String>) -> Result<Self, anyhow::Error> {
         Ok(TrackedStatements {
             iter: PlainStatements::from_file(sqldump_filepath)?,
             tracking: tracking.to_owned(),
-            data_types: HashMap::new(),
             cur_table: curr_table.to_owned(),
             unlock_next: false,
-            column_positions: HashMap::new(),
+            tracker,
         })
     }
 
@@ -225,9 +256,7 @@ impl TrackedStatements {
     fn capture_positions(&mut self, cur_statement: &IteratorItem) {
         if let Ok(st) = cur_statement {
             if let Some(ref table) = self.cur_table {
-                if !self.column_positions.contains_key(table) && st.is_insert() {
-                    self.column_positions.insert(table.clone(), st.get_column_positions());
-                };
+                self.tracker.capture_positions(table, st);
             }
         }
     }
@@ -244,7 +273,7 @@ impl TrackedStatements {
     }
 }
 
-impl Iterator for TrackedStatements {
+impl Iterator for TrackedStatements<'_> {
     type Item = IteratorItem;
     fn next(&mut self) -> Option<IteratorItem> {
         let mut statement = self.read_statement()?;
@@ -252,11 +281,7 @@ impl Iterator for TrackedStatements {
             self.capture(&mut statement);
         }
         if let Ok(st) = &statement {
-            if let Some(data_types) = st.get_data_types() {
-                for (key, data_type) in data_types {
-                    self.data_types.insert(key, data_type);
-                }
-            }
+            self.tracker.capture_data_types(st);
         }
         Some(statement)
     }
@@ -274,8 +299,9 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
     let mut writers: HashMap<String, BufWriter<File>> = HashMap::new();
     let mut table_files: HashMap<String, PathBuf> = HashMap::new();
     let mut working_file_writer = get_writer(working_file_path)?;
+    let mut tracker = Tracker::new();
 
-    let statements = TrackedStatements::from_file(sqldump_filepath, &true, &None)?;
+    let statements = TrackedStatements::from_file(sqldump_filepath, &mut tracker, &true, &None)?;
 
     for st in statements {
         let statement = st?;
@@ -307,6 +333,8 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
     for w in writers.values_mut() {
         w.flush()?
     }
+
+    dbg!(&tracker);
 
     Ok(table_files)
 }
