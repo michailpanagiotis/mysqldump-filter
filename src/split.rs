@@ -106,10 +106,11 @@ impl SqlStatement {
         matches!(&self.parts, SqlStatementParts::Insert{ table: _, columns_part: _, values_part: _ })
     }
 
-    fn get_inline_file(&self) -> Option<PathBuf> {
-        match &self.parts {
-            SqlStatementParts::InlineTable(line) => Some(PathBuf::from(line.replace("--- INLINE ", "").replace("\n", ""))),
-            _ => None,
+    fn get_inline_file(line: &str) -> Option<PathBuf> {
+        if line.starts_with("--- INLINE ") {
+            return Some(PathBuf::from(line.replace("--- INLINE ", "").replace("\n", "")));
+        } else {
+            return None;
         }
     }
 
@@ -353,19 +354,15 @@ pub fn gather(working_file_path: &Path, output_path: &Path) -> Result<(), anyhow
     let mut writer = BufWriter::new(output);
 
     for st in input {
-        let valid_line = st?;
-        let file = valid_line.get_inline_file();
-        let cur_bytes = &valid_line.as_bytes();
-        match file {
-            Some(ref inline_file) => {
-                let inline_input = StatementsAsString::from_file(inline_file)?;
-                for inline_line in inline_input {
-                    writer.write_all(inline_line.as_bytes())?;
-                }
-            },
-            None => {
-                writer.write_all(cur_bytes)?;
+        let statement = st?.statement;
+        if statement.starts_with("--- INLINE ") {
+            let file = SqlStatement::get_inline_file(&statement).unwrap();
+            let inline_input = StatementsAsString::from_file(&file)?;
+            for inline_line in inline_input {
+                writer.write_all(inline_line.as_bytes())?;
             }
+        } else {
+            writer.write_all(statement.as_bytes())?;
         }
     }
     writer.flush()?;
