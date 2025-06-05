@@ -14,7 +14,7 @@ type Files = HashMap<String, PathBuf>;
 type DataTypes = HashMap<String, HashMap<String, sqlparser::ast::DataType>>;
 type ColumnPositions = HashMap<String, HashMap<String, usize>>;
 type SqlStatementResult = Result<SqlStatement, anyhow::Error>;
-type IteratorItem = (SqlStatementResult, Option<String>);
+type IteratorItem = (SqlStatementResult, Option<String>, Option<HashMap<String, sqlparser::ast::DataType>>, Option<HashMap<String, usize>>);
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -286,7 +286,21 @@ impl Iterator for TrackedStatements<'_> {
             self.tracker.capture_data_types(st);
         }
 
-        Some((statement, self.cur_table.clone()))
+        let positions = match &self.cur_table {
+            None => None,
+            Some(table) => {
+                self.tracker.column_positions.get(table).cloned()
+            }
+        };
+
+        let data_types = match &self.cur_table {
+            None => None,
+            Some(table) => {
+                self.tracker.data_types.get(table).cloned()
+            }
+        };
+
+        Some((statement, self.cur_table.clone(), data_types, positions))
     }
 }
 
@@ -348,7 +362,7 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
 pub fn read_table_file(file: &Path, table: &str) -> Result<impl Iterator<Item=IteratorItem>, anyhow::Error> {
     let lines = PlainStatements::from_file(file)?;
     Ok(lines.map(|s| {
-        (SqlStatement::new(&s), Some(table.to_string()))
+        (SqlStatement::new(&s), Some(table.to_string()), None, None)
     }))
 }
 
