@@ -12,7 +12,8 @@ use crate::sql::{get_columns, parse_insert_parts};
 
 type DataTypes = HashMap<String, HashMap<String, sqlparser::ast::DataType>>;
 type ColumnPositions = HashMap<String, HashMap<String, usize>>;
-type IteratorItem = Result<SqlStatement, anyhow::Error>;
+type SqlStatementResult = Result<SqlStatement, anyhow::Error>;
+type IteratorItem = Result<(SqlStatement, Option<String>), anyhow::Error>;
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -233,12 +234,12 @@ impl<'a> TrackedStatements<'a> {
         })
     }
 
-    fn read_statement(&mut self) -> Option<IteratorItem> {
+    fn read_statement(&mut self) -> Option<SqlStatementResult> {
         let next = self.iter.next()?;
         Some(SqlStatement::new(&next))
     }
 
-    fn capture_table(&mut self, cur_statement: &IteratorItem) {
+    fn capture_table(&mut self, cur_statement: &SqlStatementResult) {
         if let Ok(st) = cur_statement {
             if self.unlock_next {
                 self.unlock_next = false;
@@ -251,7 +252,7 @@ impl<'a> TrackedStatements<'a> {
         }
     }
 
-    fn capture_positions(&mut self, cur_statement: &IteratorItem) {
+    fn capture_positions(&mut self, cur_statement: &SqlStatementResult) {
         if let Ok(st) = cur_statement {
             if let Some(ref table) = self.cur_table {
                 self.tracker.capture_positions(table, st);
@@ -259,7 +260,7 @@ impl<'a> TrackedStatements<'a> {
         }
     }
 
-    fn capture(&mut self, cur_statement: &mut IteratorItem) {
+    fn capture(&mut self, cur_statement: &mut SqlStatementResult) {
         self.capture_table(cur_statement);
         self.capture_positions(cur_statement);
         if let Ok(st) = cur_statement {
@@ -268,10 +269,6 @@ impl<'a> TrackedStatements<'a> {
             }
             st.set_table(&self.cur_table);
         }
-    }
-
-    fn as_bytes(it: IteratorItem) -> Result<Vec<u8>, anyhow::Error> {
-        Ok(it?.as_bytes())
     }
 }
 
@@ -285,7 +282,13 @@ impl Iterator for TrackedStatements<'_> {
         if let Ok(st) = &statement {
             self.tracker.capture_data_types(st);
         }
-        Some(statement)
+
+        Some(statement.map(|st| {
+            if let Some(ref table) = self.cur_table {
+                return (st, self.cur_table.clone());
+            }
+            return (st, self.cur_table.clone());
+        }))
     }
 }
 
@@ -307,8 +310,8 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
 
     for st in statements {
         let statement = st?;
-        match statement.get_table() {
-            None => working_file_writer.write_all(&statement.as_bytes())?,
+        match statement.0.get_table() {
+            None => working_file_writer.write_all(&statement.0.as_bytes())?,
             Some(table) => {
                 if let Some(allowed) = allowed_tables {
                     if !allowed.contains(table) {
@@ -326,7 +329,7 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
                     Some(w) => w,
                 };
 
-                writer.write_all(&statement.as_bytes())?
+                writer.write_all(&statement.0.as_bytes())?
             }
         }
     };
@@ -339,7 +342,7 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
     Ok(table_files)
 }
 
-pub fn read_table_file(file: &Path) -> Result<impl Iterator<Item=IteratorItem>, anyhow::Error> {
+pub fn read_table_file(file: &Path) -> Result<impl Iterator<Item=SqlStatementResult>, anyhow::Error> {
     let lines = PlainStatements::from_file(file)?;
     Ok(lines.map(|s| SqlStatement::new(&s)))
 }
@@ -353,7 +356,7 @@ pub fn gather(working_file_path: &Path, output_path: &Path) -> Result<(), anyhow
         if statement.starts_with("--- INLINE ") {
             let file = PathBuf::from(statement.replace("--- INLINE ", "").replace("\n", ""));
             for inline_line in read_table_file(&file)? {
-                writer.write_all(&TrackedStatements::as_bytes(inline_line)?)?;
+                writer.write_all(&inline_line?.as_bytes());
             }
         } else {
             writer.write_all(statement.as_bytes())?;
