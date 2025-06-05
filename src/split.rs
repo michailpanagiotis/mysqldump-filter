@@ -10,6 +10,7 @@ use sqlparser::parser::Parser as SqlParser;
 
 use crate::sql::{get_columns, parse_insert_parts};
 
+type Files = HashMap<String, PathBuf>;
 type DataTypes = HashMap<String, HashMap<String, sqlparser::ast::DataType>>;
 type ColumnPositions = HashMap<String, HashMap<String, usize>>;
 type SqlStatementResult = Result<SqlStatement, anyhow::Error>;
@@ -188,6 +189,7 @@ impl Iterator for PlainStatements {
 
 #[derive(Debug)]
 struct Tracker {
+    files: Files,
     data_types: DataTypes,
     column_positions: ColumnPositions,
 }
@@ -195,6 +197,7 @@ struct Tracker {
 impl Tracker {
     fn new() -> Self {
         Tracker {
+            files: HashMap::new(),
             data_types: HashMap::new(),
             column_positions: HashMap::new(),
         }
@@ -322,7 +325,7 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
                     None => {
                         let table_file = std::path::absolute(working_dir_path.join(table).with_extension("sql"))?;
                         table_files.insert(table.to_owned(), table_file.to_owned());
-                        working_file_writer.write_all(format!("--- INLINE {}\n", table_file.display()).as_bytes())?;
+                        working_file_writer.write_all(format!("--- INLINE {} {}\n", table_file.display(), table).as_bytes())?;
                         writers.insert(table.to_owned(), get_writer(&table_file)?);
                         writers.get_mut(table).unwrap()
                     },
@@ -334,10 +337,15 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
         }
     };
 
+    for (table, file) in &table_files {
+        tracker.files.insert(table.clone(), file.clone());
+    }
+
     working_file_writer.flush()?;
     for w in writers.values_mut() {
         w.flush()?
     }
+
 
     Ok(table_files)
 }
@@ -354,7 +362,11 @@ pub fn gather(working_file_path: &Path, output_path: &Path) -> Result<(), anyhow
 
     for statement in input {
         if statement.starts_with("--- INLINE ") {
-            let file = PathBuf::from(statement.replace("--- INLINE ", "").replace("\n", ""));
+            let st = statement.replace("--- INLINE ", "").to_string();
+            let mut split = st.split(" ");
+            let filename = split.next().ok_or(anyhow::anyhow!("cannot parse filename"))?;
+            let table = split.next().ok_or(anyhow::anyhow!("cannot parse table"))?;
+            let file = PathBuf::from(filename);
             for inline_line in read_table_file(&file)? {
                 writer.write_all(&inline_line?.as_bytes());
             }
