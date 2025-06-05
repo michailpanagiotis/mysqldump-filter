@@ -14,7 +14,7 @@ type Files = HashMap<String, PathBuf>;
 type DataTypes = HashMap<String, HashMap<String, sqlparser::ast::DataType>>;
 type ColumnPositions = HashMap<String, HashMap<String, usize>>;
 type SqlStatementResult = Result<SqlStatement, anyhow::Error>;
-type IteratorItem = Result<(SqlStatement, Option<String>), anyhow::Error>;
+type IteratorItem = (SqlStatementResult, Option<String>);
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -286,12 +286,7 @@ impl Iterator for TrackedStatements<'_> {
             self.tracker.capture_data_types(st);
         }
 
-        Some(statement.map(|st| {
-            if let Some(ref table) = self.cur_table {
-                return (st, self.cur_table.clone());
-            }
-            return (st, self.cur_table.clone());
-        }))
+        Some((statement, self.cur_table.clone()))
     }
 }
 
@@ -312,9 +307,9 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
     let statements = TrackedStatements::from_file(sqldump_filepath, &mut tracker, &true, &None)?;
 
     for st in statements {
-        let statement = st?;
-        match statement.0.get_table() {
-            None => working_file_writer.write_all(&statement.0.as_bytes())?,
+        let statement = st.0?;
+        match statement.get_table() {
+            None => working_file_writer.write_all(&statement.as_bytes())?,
             Some(table) => {
                 if let Some(allowed) = allowed_tables {
                     if !allowed.contains(table) {
@@ -332,7 +327,7 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
                     Some(w) => w,
                 };
 
-                writer.write_all(&statement.0.as_bytes())?
+                writer.write_all(&statement.as_bytes())?
             }
         }
     };
@@ -350,9 +345,11 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
     Ok(table_files)
 }
 
-pub fn read_table_file(file: &Path) -> Result<impl Iterator<Item=SqlStatementResult>, anyhow::Error> {
+pub fn read_table_file(file: &Path, table: &str) -> Result<impl Iterator<Item=IteratorItem>, anyhow::Error> {
     let lines = PlainStatements::from_file(file)?;
-    Ok(lines.map(|s| SqlStatement::new(&s)))
+    Ok(lines.map(|s| {
+        (SqlStatement::new(&s), Some(table.to_string()))
+    }))
 }
 
 pub fn gather(working_file_path: &Path, output_path: &Path) -> Result<(), anyhow::Error> {
@@ -367,8 +364,8 @@ pub fn gather(working_file_path: &Path, output_path: &Path) -> Result<(), anyhow
             let filename = split.next().ok_or(anyhow::anyhow!("cannot parse filename"))?;
             let table = split.next().ok_or(anyhow::anyhow!("cannot parse table"))?;
             let file = PathBuf::from(filename);
-            for inline_line in read_table_file(&file)? {
-                writer.write_all(&inline_line?.as_bytes());
+            for inline_line in read_table_file(&file, table)? {
+                writer.write_all(&inline_line.0?.as_bytes())?;
             }
         } else {
             writer.write_all(statement.as_bytes())?;
