@@ -17,6 +17,7 @@ type DataTypes = HashMap<String, HashMap<String, sqlparser::ast::DataType>>;
 type ColumnPositions = HashMap<String, HashMap<String, usize>>;
 type SqlStatementResult = Result<SqlStatement, anyhow::Error>;
 type IteratorItem = (SqlStatementResult, Option<Rc<RefCell<Tracker>>>);
+type OptionalTracker<'a> = Option<&'a Rc<RefCell<Tracker>>>;
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -256,7 +257,7 @@ struct TrackedStatements {
 }
 
 impl TrackedStatements {
-    fn from_file(sqldump_filepath: &Path, tracker: &Option<&Rc<RefCell<Tracker>>>) -> Result<Self, anyhow::Error> {
+    fn from_file(sqldump_filepath: &Path, tracker: &OptionalTracker<'_>) -> Result<Self, anyhow::Error> {
         Ok(TrackedStatements {
             iter: PlainStatements::from_file(sqldump_filepath)?,
             unlock_next: false,
@@ -348,30 +349,35 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
     Ok((*tracker.borrow()).clone())
 }
 
-pub fn read_table_file(file: &Path, table: &str, tracker: &Tracker) -> Result<impl Iterator<Item=IteratorItem>, anyhow::Error> {
-    let tracker = Rc::new(RefCell::new(tracker.clone()));
-    tracker.borrow_mut().capture_table(Some(table.to_string()));
-    let statements = TrackedStatements::from_file(file, &None)?;
+pub fn read_table_file(file: &Path, table: &str, tracker: &OptionalTracker<'_>) -> Result<impl Iterator<Item=IteratorItem>, anyhow::Error> {
+    if let Some(t) = tracker {
+        t.borrow_mut().capture_table(Some(table.to_string()));
+    }
+    let statements = TrackedStatements::from_file(file, tracker)?;
     Ok(statements)
 }
 
-pub fn gather(working_file_path: &Path, output_path: &Path, tracker: &Tracker) -> Result<(), anyhow::Error> {
-    let input = PlainStatements::from_file(working_file_path)?;
+pub fn gather(working_file_path: &Path, output_path: &Path) -> Result<(), anyhow::Error> {
     let output = File::create(output_path)?;
     let mut writer = BufWriter::new(output);
 
-    for statement in input {
-        if statement.starts_with("--- INLINE ") {
-            let st = statement.replace("--- INLINE ", "").to_string();
+    let file = File::open(working_file_path)?;
+
+    for res in io::BufReader::new(file).lines() {
+        let line = res?;
+        if line.starts_with("--- INLINE ") {
+            let st = line.replace("--- INLINE ", "").to_string();
             let mut split = st.split(" ");
             let filename = split.next().ok_or(anyhow::anyhow!("cannot parse filename"))?;
-            let table = split.next().ok_or(anyhow::anyhow!("cannot parse table"))?;
-            let file = PathBuf::from(filename);
-            for inline_line in read_table_file(&file, table, tracker)? {
-                writer.write_all(&inline_line.0?.as_bytes())?;
+            println!("INLINING {filename}");
+            let inline_file = File::open(PathBuf::from(filename))?;
+            for inline_line in io::BufReader::new(inline_file).lines() {
+                writer.write_all(inline_line?.as_bytes())?;
+                writer.write_all(b"\n")?;
             }
         } else {
-            writer.write_all(statement.as_bytes())?;
+            writer.write_all(line.as_bytes())?;
+            writer.write_all(b"\n")?;
         }
     }
     writer.flush()?;
