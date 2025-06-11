@@ -24,7 +24,9 @@ lazy_static! {
 }
 
 #[derive(Clone)]
+#[derive(Debug)]
 struct InsertStatement {
+    statement: String,
     table: String,
     columns_part: String,
     values_part: String,
@@ -35,7 +37,11 @@ impl InsertStatement {
     fn new(statement: &str) -> Result<Self, anyhow::Error> {
         let (table, columns_part, values_part) = parse_insert_parts(statement)?;
         let values = values_part.split(',').map(|x| x.to_string()).collect();
-        Ok(Self { table, columns_part, values_part, values })
+        Ok(Self { statement: statement.to_string(), table, columns_part, values_part, values })
+    }
+
+    fn get_column_positions(&self) -> HashMap<String, usize> {
+        get_columns(&self.statement).iter().enumerate().map(|(idx, c)| (c.to_owned(), idx)).collect()
     }
 
     fn as_bytes(&self) -> Vec<u8> {
@@ -48,6 +54,7 @@ impl InsertStatement {
 }
 
 #[derive(Clone)]
+#[derive(Debug)]
 enum SqlStatementParts {
     Generic(String),
     TableUnlock(String),
@@ -83,16 +90,17 @@ impl SqlStatementParts {
 }
 
 #[derive(Clone)]
+#[derive(Debug)]
 pub struct SqlStatement {
-    statement: String,
     parts: SqlStatementParts,
+    table: Option<String>,
 }
 
 impl SqlStatement {
-    fn new(statement: &str) -> Result<Self, anyhow::Error> {
+    fn new(statement: &str, table: &Option<String>) -> Result<Self, anyhow::Error> {
         Ok(SqlStatement {
-            statement: statement.to_owned(),
             parts: SqlStatementParts::new(statement)?,
+            table: table.clone(),
         })
     }
 
@@ -109,8 +117,15 @@ impl SqlStatement {
         bytes
     }
 
-    fn get_column_positions(&self) -> HashMap<String, usize> {
-        get_columns(&self.statement).iter().enumerate().map(|(idx, c)| (c.to_owned(), idx)).collect()
+    fn get_table(&self) -> &Option<String> {
+        &self.table
+    }
+
+    fn get_column_positions(&self) -> Option<HashMap<String, usize>> {
+        match &self.parts {
+            SqlStatementParts::Insert(insert_statement) => Some(insert_statement.get_column_positions()),
+            _ => None,
+        }
     }
 
     fn is_table_unlock(&self) -> bool {
@@ -202,7 +217,6 @@ pub struct Tracker {
     files: Files,
     data_types: DataTypes,
     column_positions: ColumnPositions,
-    current_table: Option<String>,
 }
 
 impl Tracker {
@@ -211,21 +225,15 @@ impl Tracker {
             files: HashMap::new(),
             data_types: HashMap::new(),
             column_positions: HashMap::new(),
-            current_table: None,
         }
     }
 
-    fn capture_table(&mut self, table: Option<String>) {
-        if let Some(t) = &table {
-            println!("reading table {}", &t);
-        }
-        self.current_table = table;
-    }
-
-    fn capture_positions(&mut self, statement: &SqlStatement) {
-        if let Some(ref table) = self.current_table {
-            if !self.column_positions.contains_key(table) && statement.is_insert() {
-                self.column_positions.insert(table.to_string(), statement.get_column_positions());
+    fn capture_positions(&mut self, statement: &SqlStatement, current_table: &Option<String>) {
+        if let Some(table) = current_table {
+            if !self.column_positions.contains_key(table) {
+                if let Some(pos) = statement.get_column_positions() {
+                    self.column_positions.insert(table.to_string(), pos);
+                }
             };
         }
     }
@@ -238,20 +246,15 @@ impl Tracker {
         }
     }
 
-    fn capture(&mut self, statement: &SqlStatement, unlock_table: bool) {
-        self.capture_positions(statement);
+    fn capture(&mut self, statement: &SqlStatement, current_table: &Option<String>) {
+        self.capture_positions(statement, current_table);
         self.capture_data_types(statement);
-
-        if unlock_table {
-            self.capture_table(None);
-        } else if let Some(table) = statement.extract_table() {
-            self.capture_table(Some(table.to_string()));
-        }
     }
 }
 
 struct TrackedStatements {
     iter: PlainStatements,
+    current_table: Option<String>,
     unlock_next: bool,
     tracker: Option<Rc<RefCell<Tracker>>>,
 }
@@ -260,14 +263,22 @@ impl TrackedStatements {
     fn from_file(sqldump_filepath: &Path, tracker: &OptionalTracker<'_>) -> Result<Self, anyhow::Error> {
         Ok(TrackedStatements {
             iter: PlainStatements::from_file(sqldump_filepath)?,
+            current_table: None,
             unlock_next: false,
             tracker: tracker.map(Rc::clone),
         })
     }
 
+    fn capture_table(&mut self, table: Option<String>) {
+        if let Some(t) = &table {
+            println!("reading table {}", &t);
+        }
+        self.current_table = table;
+    }
+
     fn read_statement(&mut self) -> Option<SqlStatementResult> {
         let next = self.iter.next()?;
-        Some(SqlStatement::new(&next))
+        Some(SqlStatement::new(&next, &self.current_table))
     }
 }
 
@@ -275,19 +286,24 @@ impl Iterator for TrackedStatements {
     type Item = IteratorItem;
     fn next(&mut self) -> Option<IteratorItem> {
         let statement = self.read_statement()?;
-        if let Some(tracker) = &self.tracker {
-            if let Ok(st) = &statement {
-                tracker.borrow_mut().capture(st, self.unlock_next);
 
-                if self.unlock_next {
-                    self.unlock_next = false;
-                }
+        if let Ok(st) = &statement {
+            if self.unlock_next {
+                self.capture_table(None);
+                self.unlock_next = false;
+            } else if let Some(table) = st.extract_table() {
+                self.capture_table(Some(table.to_string()));
+            }
 
-                if st.is_table_unlock() {
-                    self.unlock_next = true;
-                }
+            if st.is_table_unlock() {
+                self.unlock_next = true;
+            }
+
+            if let Some(tracker) = &self.tracker {
+                tracker.borrow_mut().capture(st, &self.current_table);
             }
         }
+
         Some((statement, self.tracker.as_ref().map(Rc::clone)))
     }
 }
@@ -310,8 +326,7 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
 
     for (st, tr) in statements {
         let statement = st?;
-        let current_table = tr.unwrap().borrow().current_table.clone();
-        match &current_table {
+        match statement.get_table() {
             None => working_file_writer.write_all(&statement.as_bytes())?,
             Some(table) => {
                 if let Some(allowed) = allowed_tables {
@@ -349,10 +364,7 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
     Ok((*tracker.borrow()).clone())
 }
 
-pub fn read_table_file(file: &Path, table: &str, tracker: &OptionalTracker<'_>) -> Result<impl Iterator<Item=IteratorItem>, anyhow::Error> {
-    if let Some(t) = tracker {
-        t.borrow_mut().capture_table(Some(table.to_string()));
-    }
+pub fn read_table_file(file: &Path, tracker: &OptionalTracker<'_>) -> Result<impl Iterator<Item=IteratorItem>, anyhow::Error> {
     let statements = TrackedStatements::from_file(file, tracker)?;
     Ok(statements)
 }

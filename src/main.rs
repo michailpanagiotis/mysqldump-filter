@@ -13,7 +13,7 @@ mod traits;
 
 use table::CheckCollection;
 use sql::get_data_types;
-use split::{explode_to_files, gather};
+use split::{explode_to_files, gather, read_table_file};
 
 #[derive(Debug)]
 #[derive(Deserialize)]
@@ -65,10 +65,13 @@ fn main() -> Result<(), anyhow::Error> {
     //
     // let mut collection = CheckCollection::new(config.filters.iter().chain(&config.cascades), &data_types)?;
     //
-    // let tracker = explode_to_files(working_file_path.as_path(), working_dir_path.as_path(), input_file.as_path(), &config.allow_data_on_tables).unwrap_or_else(|e| {
-    //     panic!("Problem exploding to files: {e:?}");
-    // });
+    let tracker = explode_to_files(working_file_path.as_path(), working_dir_path.as_path(), input_file.as_path(), &config.allow_data_on_tables).unwrap_or_else(|e| {
+        panic!("Problem exploding to files: {e:?}");
+    });
 
+    for it in read_table_file(&PathBuf::from("here/v1/admins.sql"), &None)? {
+        dbg!(it);
+    }
     gather(&working_file_path, &output_file)?;
     //
     // collection.process(&table_files)?;
