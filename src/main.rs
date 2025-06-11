@@ -65,11 +65,11 @@ fn main() -> Result<(), anyhow::Error> {
     //
     // let mut collection = CheckCollection::new(config.filters.iter().chain(&config.cascades), &data_types)?;
     //
-    let table_files = explode_to_files(working_file_path.as_path(), working_dir_path.as_path(), input_file.as_path(), &config.allow_data_on_tables).unwrap_or_else(|e| {
+    let tracker = explode_to_files(working_file_path.as_path(), working_dir_path.as_path(), input_file.as_path(), &config.allow_data_on_tables).unwrap_or_else(|e| {
         panic!("Problem exploding to files: {e:?}");
     });
 
-    gather(&working_file_path, &output_file)?;
+    // gather(&working_file_path, &output_file, &tracker)?;
     //
     // collection.process(&table_files)?;
 

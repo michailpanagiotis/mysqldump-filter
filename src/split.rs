@@ -16,7 +16,7 @@ type Files = HashMap<String, PathBuf>;
 type DataTypes = HashMap<String, HashMap<String, sqlparser::ast::DataType>>;
 type ColumnPositions = HashMap<String, HashMap<String, usize>>;
 type SqlStatementResult = Result<SqlStatement, anyhow::Error>;
-type IteratorItem = (SqlStatementResult, Option<String>, Option<Rc<RefCell<Tracker>>>);
+type IteratorItem = (SqlStatementResult, Option<Rc<RefCell<Tracker>>>);
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -65,7 +65,6 @@ impl SqlStatementParts {
 
 #[derive(Clone)]
 pub struct SqlStatement {
-    table: Option<String>,
     statement: String,
     parts: SqlStatementParts,
 }
@@ -73,18 +72,9 @@ pub struct SqlStatement {
 impl SqlStatement {
     fn new(statement: &str) -> Result<Self, anyhow::Error> {
         Ok(SqlStatement {
-            table: None,
             statement: statement.to_owned(),
             parts: SqlStatementParts::new(statement)?,
         })
-    }
-
-    fn set_table(&mut self, table: &Option<String>) {
-        self.table = table.to_owned();
-    }
-
-    fn get_table(&self) -> &Option<String> {
-        &self.table
     }
 
     fn as_bytes(&self) -> Vec<u8> {
@@ -190,10 +180,12 @@ impl Iterator for PlainStatements {
 }
 
 #[derive(Debug)]
-struct Tracker {
+#[derive(Clone)]
+pub struct Tracker {
     files: Files,
     data_types: DataTypes,
     column_positions: ColumnPositions,
+    current_table: Option<String>,
 }
 
 impl Tracker {
@@ -202,13 +194,23 @@ impl Tracker {
             files: HashMap::new(),
             data_types: HashMap::new(),
             column_positions: HashMap::new(),
+            current_table: None,
         }
     }
 
-    fn capture_positions(&mut self, table: &str, statement: &SqlStatement) {
-        if !self.column_positions.contains_key(table) && statement.is_insert() {
-            self.column_positions.insert(table.to_string(), statement.get_column_positions());
-        };
+    fn capture_table(&mut self, table: Option<String>) {
+        if let Some(t) = &table {
+            println!("reading table {}", &t);
+        }
+        self.current_table = table;
+    }
+
+    fn capture_positions(&mut self, statement: &SqlStatement) {
+        if let Some(ref table) = self.current_table {
+            if !self.column_positions.contains_key(table) && statement.is_insert() {
+                self.column_positions.insert(table.to_string(), statement.get_column_positions());
+            };
+        }
     }
 
     fn capture_data_types(&mut self, statement: &SqlStatement) {
@@ -218,22 +220,32 @@ impl Tracker {
             }
         }
     }
+
+    fn capture(&mut self, statement: &SqlStatement, unlock_table: bool) {
+        self.capture_positions(statement);
+        self.capture_data_types(statement);
+
+        if unlock_table {
+            self.capture_table(None);
+        }
+        if let Some(table) = statement.extract_table() {
+            self.capture_table(Some(table.to_string()));
+        }
+    }
 }
 
 struct TrackedStatements {
     iter: PlainStatements,
     tracking: bool,
-    cur_table: Option<String>,
     unlock_next: bool,
     tracker: Rc<RefCell<Tracker>>,
 }
 
 impl TrackedStatements {
-    fn from_file(sqldump_filepath: &Path, tracker: &Rc<RefCell<Tracker>>, tracking: &bool, curr_table: &Option<String>) -> Result<Self, anyhow::Error> {
+    fn from_file(sqldump_filepath: &Path, tracker: &Rc<RefCell<Tracker>>, tracking: &bool) -> Result<Self, anyhow::Error> {
         Ok(TrackedStatements {
             iter: PlainStatements::from_file(sqldump_filepath)?,
             tracking: tracking.to_owned(),
-            cur_table: curr_table.to_owned(),
             unlock_next: false,
             tracker: Rc::clone(tracker),
         })
@@ -244,35 +256,17 @@ impl TrackedStatements {
         Some(SqlStatement::new(&next))
     }
 
-    fn capture_table(&mut self, cur_statement: &SqlStatementResult) {
+    fn capture(&mut self, cur_statement: &mut SqlStatementResult) {
         if let Ok(st) = cur_statement {
+            self.tracker.borrow_mut().capture(st, self.unlock_next);
+
             if self.unlock_next {
                 self.unlock_next = false;
-                self.cur_table = None;
             }
-            if let Some(table) = st.extract_table() {
-                println!("reading table {}", &table);
-                self.cur_table = Some(table.to_string());
-            }
-        }
-    }
 
-    fn capture_positions(&mut self, cur_statement: &SqlStatementResult) {
-        if let Ok(st) = cur_statement {
-            if let Some(ref table) = self.cur_table {
-                self.tracker.borrow_mut().capture_positions(table, st);
-            }
-        }
-    }
-
-    fn capture(&mut self, cur_statement: &mut SqlStatementResult) {
-        self.capture_table(cur_statement);
-        self.capture_positions(cur_statement);
-        if let Ok(st) = cur_statement {
             if st.is_table_unlock() {
                 self.unlock_next = true;
             }
-            st.set_table(&self.cur_table);
         }
     }
 }
@@ -284,25 +278,7 @@ impl Iterator for TrackedStatements {
         if self.tracking {
             self.capture(&mut statement);
         }
-        if let Ok(st) = &statement {
-            self.tracker.borrow_mut().capture_data_types(st);
-        }
-
-        // let positions = match &self.cur_table {
-        //     None => None,
-        //     Some(table) => {
-        //         self.tracker.borrow_mut().column_positions.get(table).cloned()
-        //     }
-        // };
-        //
-        // let data_types = match &self.cur_table {
-        //     None => None,
-        //     Some(table) => {
-        //         self.tracker.borrow_mut().data_types.get(table).cloned()
-        //     }
-        // };
-
-        Some((statement, self.cur_table.clone(), Some(Rc::clone(&self.tracker))))
+        Some((statement, Some(Rc::clone(&self.tracker))))
     }
 }
 
@@ -314,17 +290,18 @@ fn get_writer(filepath: &Path) -> Result<BufWriter<File>, anyhow::Error> {
     Ok(BufWriter::new(file))
 }
 
-pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldump_filepath: &Path, allowed_tables: &Option<HashSet<String>>) -> Result<HashMap<String, PathBuf>, anyhow::Error> {
+pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldump_filepath: &Path, allowed_tables: &Option<HashSet<String>>) -> Result<Tracker, anyhow::Error> {
     let mut writers: HashMap<String, BufWriter<File>> = HashMap::new();
     let mut table_files: HashMap<String, PathBuf> = HashMap::new();
     let mut working_file_writer = get_writer(working_file_path)?;
     let tracker = Rc::new(RefCell::new(Tracker::new()));
 
-    let statements = TrackedStatements::from_file(sqldump_filepath, &tracker, &true, &None)?;
+    let statements = TrackedStatements::from_file(sqldump_filepath, &tracker, &true)?;
 
-    for st in statements {
-        let statement = st.0?;
-        match statement.get_table() {
+    for (st, tr) in statements {
+        let statement = st?;
+        let current_table = tr.unwrap().borrow().current_table.clone();
+        match &current_table {
             None => working_file_writer.write_all(&statement.as_bytes())?,
             Some(table) => {
                 if let Some(allowed) = allowed_tables {
@@ -357,19 +334,19 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
         w.flush()?
     }
 
-    // dbg!(&tracker);
+    dbg!(&tracker);
 
-    Ok(table_files)
+    Ok((*tracker.borrow()).clone())
 }
 
-pub fn read_table_file(file: &Path, table: &str) -> Result<impl Iterator<Item=IteratorItem>, anyhow::Error> {
-    let lines = PlainStatements::from_file(file)?;
-    Ok(lines.map(|s| {
-        (SqlStatement::new(&s), Some(table.to_string()), None)
-    }))
+pub fn read_table_file(file: &Path, table: &str, tracker: &Tracker) -> Result<impl Iterator<Item=IteratorItem>, anyhow::Error> {
+    let tracker = Rc::new(RefCell::new(tracker.clone()));
+    tracker.borrow_mut().capture_table(Some(table.to_string()));
+    let statements = TrackedStatements::from_file(file, &tracker, &true)?;
+    Ok(statements)
 }
 
-pub fn gather(working_file_path: &Path, output_path: &Path) -> Result<(), anyhow::Error> {
+pub fn gather(working_file_path: &Path, output_path: &Path, tracker: &Tracker) -> Result<(), anyhow::Error> {
     let input = PlainStatements::from_file(working_file_path)?;
     let output = File::create(output_path)?;
     let mut writer = BufWriter::new(output);
@@ -381,7 +358,7 @@ pub fn gather(working_file_path: &Path, output_path: &Path) -> Result<(), anyhow
             let filename = split.next().ok_or(anyhow::anyhow!("cannot parse filename"))?;
             let table = split.next().ok_or(anyhow::anyhow!("cannot parse table"))?;
             let file = PathBuf::from(filename);
-            for inline_line in read_table_file(&file, table)? {
+            for inline_line in read_table_file(&file, table, tracker)? {
                 writer.write_all(&inline_line.0?.as_bytes())?;
             }
         } else {
