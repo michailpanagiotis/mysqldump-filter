@@ -23,13 +23,33 @@ lazy_static! {
 }
 
 #[derive(Clone)]
+struct InsertStatement {
+    table: String,
+    columns_part: String,
+    values_part: String,
+    values: Vec<String>,
+}
+
+impl InsertStatement {
+    fn new(statement: &str) -> Result<Self, anyhow::Error> {
+        let (table, columns_part, values_part) = parse_insert_parts(statement)?;
+        let values = values_part.split(',').map(|x| x.to_string()).collect();
+        Ok(Self { table, columns_part, values_part, values })
+    }
+
+    fn as_bytes(&self) -> Vec<u8> {
+        Vec::from(format!("INSERT INTO `{}` ({}) VALUES ({});\n", self.table, self.columns_part, self.values.join(",")).as_bytes())
+    }
+}
+
+#[derive(Clone)]
 enum SqlStatementParts {
     Generic(String),
     TableUnlock(String),
     TableDataDumpComment(String),
     InlineTable(String),
     CreateTable(String),
-    Insert { table: String, columns_part: String, values_part: String },
+    Insert(InsertStatement),
 }
 
 impl SqlStatementParts {
@@ -50,13 +70,7 @@ impl SqlStatementParts {
             return Ok(SqlStatementParts::CreateTable(st.to_string()));
         }
         if st.starts_with("INSERT") {
-            let (table, columns_part, values_part) = parse_insert_parts(st)?;
-
-            return Ok(SqlStatementParts::Insert {
-                table,
-                columns_part,
-                values_part,
-            });
+            return Ok(SqlStatementParts::Insert(InsertStatement::new(st)?));
         }
 
         Ok(SqlStatementParts::Generic(st.to_string()))
@@ -85,9 +99,7 @@ impl SqlStatement {
             | SqlStatementParts::TableDataDumpComment(s)
             | SqlStatementParts::InlineTable(s)
                 => s.to_owned().into_bytes(),
-            SqlStatementParts::Insert{ table, columns_part, values_part } => {
-                Vec::from(format!("INSERT INTO `{table}` ({columns_part}) VALUES ({values_part});\n").as_bytes())
-            },
+            SqlStatementParts::Insert(s) => s.as_bytes(),
         };
         bytes
     }
@@ -101,7 +113,7 @@ impl SqlStatement {
     }
 
     fn is_insert(&self) -> bool {
-        matches!(&self.parts, SqlStatementParts::Insert{ table: _, columns_part: _, values_part: _ })
+        matches!(&self.parts, SqlStatementParts::Insert(_))
     }
 
     fn get_data_types(&self) -> Option<DataTypes> {
@@ -227,8 +239,7 @@ impl Tracker {
 
         if unlock_table {
             self.capture_table(None);
-        }
-        if let Some(table) = statement.extract_table() {
+        } else if let Some(table) = statement.extract_table() {
             self.capture_table(Some(table.to_string()));
         }
     }

@@ -69,7 +69,7 @@ fn main() -> Result<(), anyhow::Error> {
         panic!("Problem exploding to files: {e:?}");
     });
 
-    // gather(&working_file_path, &output_file, &tracker)?;
+    gather(&working_file_path, &output_file, &tracker)?;
     //
     // collection.process(&table_files)?;
 
