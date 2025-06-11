@@ -38,7 +38,11 @@ impl InsertStatement {
     }
 
     fn as_bytes(&self) -> Vec<u8> {
-        Vec::from(format!("INSERT INTO `{}` ({}) VALUES ({});\n", self.table, self.columns_part, self.values.join(",")).as_bytes())
+        if self.values.is_empty() {
+            Vec::from(format!("INSERT INTO `{}` ({}) VALUES ({});\n", self.table, self.columns_part, self.values_part).as_bytes())
+        } else {
+            Vec::from(format!("INSERT INTO `{}` ({}) VALUES ({});\n", self.table, self.columns_part, self.values.join(",")).as_bytes())
+        }
     }
 }
 
@@ -247,18 +251,16 @@ impl Tracker {
 
 struct TrackedStatements {
     iter: PlainStatements,
-    tracking: bool,
     unlock_next: bool,
-    tracker: Rc<RefCell<Tracker>>,
+    tracker: Option<Rc<RefCell<Tracker>>>,
 }
 
 impl TrackedStatements {
-    fn from_file(sqldump_filepath: &Path, tracker: &Rc<RefCell<Tracker>>, tracking: &bool) -> Result<Self, anyhow::Error> {
+    fn from_file(sqldump_filepath: &Path, tracker: &Option<&Rc<RefCell<Tracker>>>) -> Result<Self, anyhow::Error> {
         Ok(TrackedStatements {
             iter: PlainStatements::from_file(sqldump_filepath)?,
-            tracking: tracking.to_owned(),
             unlock_next: false,
-            tracker: Rc::clone(tracker),
+            tracker: tracker.map(Rc::clone),
         })
     }
 
@@ -266,30 +268,26 @@ impl TrackedStatements {
         let next = self.iter.next()?;
         Some(SqlStatement::new(&next))
     }
-
-    fn capture(&mut self, cur_statement: &mut SqlStatementResult) {
-        if let Ok(st) = cur_statement {
-            self.tracker.borrow_mut().capture(st, self.unlock_next);
-
-            if self.unlock_next {
-                self.unlock_next = false;
-            }
-
-            if st.is_table_unlock() {
-                self.unlock_next = true;
-            }
-        }
-    }
 }
 
 impl Iterator for TrackedStatements {
     type Item = IteratorItem;
     fn next(&mut self) -> Option<IteratorItem> {
-        let mut statement = self.read_statement()?;
-        if self.tracking {
-            self.capture(&mut statement);
+        let statement = self.read_statement()?;
+        if let Some(tracker) = &self.tracker {
+            if let Ok(st) = &statement {
+                tracker.borrow_mut().capture(st, self.unlock_next);
+
+                if self.unlock_next {
+                    self.unlock_next = false;
+                }
+
+                if st.is_table_unlock() {
+                    self.unlock_next = true;
+                }
+            }
         }
-        Some((statement, Some(Rc::clone(&self.tracker))))
+        Some((statement, self.tracker.as_ref().map(Rc::clone)))
     }
 }
 
@@ -307,7 +305,7 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
     let mut working_file_writer = get_writer(working_file_path)?;
     let tracker = Rc::new(RefCell::new(Tracker::new()));
 
-    let statements = TrackedStatements::from_file(sqldump_filepath, &tracker, &true)?;
+    let statements = TrackedStatements::from_file(sqldump_filepath, &Some(&tracker))?;
 
     for (st, tr) in statements {
         let statement = st?;
@@ -353,7 +351,7 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
 pub fn read_table_file(file: &Path, table: &str, tracker: &Tracker) -> Result<impl Iterator<Item=IteratorItem>, anyhow::Error> {
     let tracker = Rc::new(RefCell::new(tracker.clone()));
     tracker.borrow_mut().capture_table(Some(table.to_string()));
-    let statements = TrackedStatements::from_file(file, &tracker, &true)?;
+    let statements = TrackedStatements::from_file(file, &None)?;
     Ok(statements)
 }
 
