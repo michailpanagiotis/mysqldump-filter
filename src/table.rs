@@ -11,6 +11,7 @@ use crate::traits::{ColumnPositions, ReferenceTracker, Dependency};
 use crate::column::ColumnMeta;
 use crate::sql::{get_values, read_table_data_file};
 use crate::checks::{PlainCheckType, new_plain_test, parse_test_definition};
+use crate::split::Tracker;
 
 type ColumnType = ColumnMeta;
 pub type TrackedColumnType = ColumnMeta;
@@ -130,6 +131,7 @@ impl TableMeta {
         sql_statement: &str,
         lookup_table: &HashMap<String, HashSet<String>>,
         data_types: &HashMap<String, sqlparser::ast::DataType>,
+        tracker: &Tracker,
     ) -> Result<bool, anyhow::Error> {
         if !sql_statement.starts_with("INSERT") {
             return Ok(true);
@@ -177,6 +179,7 @@ impl TableMeta {
         file: &Path,
         lookup_table: &HashMap<String, HashSet<String>>,
         data_types: &HashMap<String, sqlparser::ast::DataType>,
+        tracker: &Tracker,
     ) -> Result<(), anyhow::Error> {
         if !self.has_fulfilled_dependencies() {
             println!("Skipping table {} since it still has dependencies", &self.table);
@@ -203,7 +206,7 @@ impl TableMeta {
             }
 
 
-            let passed = self.test(current_pass, &sql_statement, lookup_table, data_types)?;
+            let passed = self.test(current_pass, &sql_statement, lookup_table, data_types, tracker)?;
             if passed {
                 writer.write_all(sql_statement.as_bytes())?;
             }
@@ -278,6 +281,7 @@ impl CheckCollection {
         &mut self,
         table_files: &HashMap<String, PathBuf>,
         data_types: &HashMap<String, sqlparser::ast::DataType>,
+        tracker: &Tracker,
     ) -> Result<(), anyhow::Error> {
         let mut current_pass = 1;
         while !self.get_pending_tables().is_empty() {
@@ -288,7 +292,7 @@ impl CheckCollection {
             dbg!(&lookup_table);
             for table_meta in self.table_meta.values_mut().filter(|t| pending.iter().any(|p| p == &t.borrow().table)) {
                 let file = table_files[&table_meta.borrow().table].to_path_buf();
-                table_meta.borrow_mut().process_data_file(&current_pass, &file, &lookup_table, data_types)?;
+                table_meta.borrow_mut().process_data_file(&current_pass, &file, &lookup_table, data_types, tracker)?;
             }
             current_pass += 1;
         }
