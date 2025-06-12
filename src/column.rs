@@ -3,7 +3,6 @@ use std::fmt::Debug;
 
 pub trait DBColumn {
     fn get_column_name(&self) -> &str;
-    fn get_data_type(&self) -> &sqlparser::ast::DataType;
 }
 
 #[derive(Clone)]
@@ -13,7 +12,6 @@ pub struct ColumnMeta {
     key: String,
     table: String,
     column: String,
-    data_type: sqlparser::ast::DataType,
     foreign_keys: Vec<String>,
     position: Option<usize>,
     is_referenced: bool,
@@ -24,10 +22,6 @@ pub struct ColumnMeta {
 impl DBColumn for ColumnMeta {
     fn get_column_name(&self) -> &str {
         &self.column
-    }
-
-    fn get_data_type(&self) -> &sqlparser::ast::DataType {
-        &self.data_type
     }
 }
 
@@ -48,15 +42,12 @@ impl ColumnMeta {
         table: &str,
         column: &str,
         foreign_keys: &[String],
-        data_types: &HashMap<String, sqlparser::ast::DataType>,
     ) -> Result<Self, anyhow::Error> {
         let key = ColumnMeta::get_key_from_components(table, column);
-        let Some(data_type) = data_types.get(&key) else { return Err(anyhow::anyhow!("No data type: {}", key)) };
         Ok(Self {
             key,
             table: table.to_owned(),
             column: column.to_string(),
-            data_type: data_type.to_owned(),
             is_referenced: false,
             foreign_keys: foreign_keys.iter().map(|x| x.to_string()).collect(),
             checks: Vec::new(),
@@ -65,9 +56,9 @@ impl ColumnMeta {
         })
     }
 
-    pub fn from_foreign_key(key: &str, data_types: &HashMap<String, sqlparser::ast::DataType>) -> Result<Self, anyhow::Error> {
+    pub fn from_foreign_key(key: &str) -> Result<Self, anyhow::Error> {
         let (target_table, target_column) = ColumnMeta::get_components_from_key(key)?;
-        let mut target_column_meta = ColumnMeta::new(&target_table, &target_column, &Vec::new(), data_types)?;
+        let mut target_column_meta = ColumnMeta::new(&target_table, &target_column, &Vec::new())?;
         target_column_meta.set_referenced();
         Ok(target_column_meta)
     }
@@ -82,10 +73,6 @@ impl ColumnMeta {
 
     pub fn get_column_key(&self) -> &str {
         &self.key
-    }
-
-    pub fn get_data_type(&self) -> &sqlparser::ast::DataType {
-        &self.data_type
     }
 
     pub fn capture_position(&mut self, positions: &HashMap<String, usize>) {

@@ -124,7 +124,13 @@ impl TableMeta {
         self.checks.iter()
     }
 
-    pub fn test(&mut self, pass: &usize, sql_statement: &str, lookup_table: &HashMap<String, HashSet<String>>) -> Result<bool, anyhow::Error> {
+    pub fn test(
+        &mut self,
+        pass: &usize,
+        sql_statement: &str,
+        lookup_table: &HashMap<String, HashSet<String>>,
+        data_types: &HashMap<String, sqlparser::ast::DataType>,
+    ) -> Result<bool, anyhow::Error> {
         if !sql_statement.starts_with("INSERT") {
             return Ok(true);
         }
@@ -145,7 +151,12 @@ impl TableMeta {
 
         let all_checks_passed = self.get_checks().all(|t| {
             let column_meta = &self.columns[t.get_column_name()];
-            t.test(column_meta, value_per_field[column_meta.get_column_name()], lookup_table)
+            t.test(
+                column_meta,
+                value_per_field[column_meta.get_column_name()],
+                lookup_table,
+                &data_types[column_meta.get_column_name()],
+            )
         });
 
         if all_checks_passed {
@@ -160,7 +171,13 @@ impl TableMeta {
         Ok(all_checks_passed)
     }
 
-    pub fn process_data_file(&mut self, current_pass: &usize, file: &Path, lookup_table: &HashMap<String, HashSet<String>>) -> Result<(), anyhow::Error> {
+    pub fn process_data_file(
+        &mut self,
+        current_pass: &usize,
+        file: &Path,
+        lookup_table: &HashMap<String, HashSet<String>>,
+        data_types: &HashMap<String, sqlparser::ast::DataType>,
+    ) -> Result<(), anyhow::Error> {
         if !self.has_fulfilled_dependencies() {
             println!("Skipping table {} since it still has dependencies", &self.table);
             return Ok(());
@@ -185,7 +202,8 @@ impl TableMeta {
                 return Err(anyhow::anyhow!("wrong table {} != {}", current_table, table));
             }
 
-            let passed = self.test(current_pass, &sql_statement, lookup_table)?;
+
+            let passed = self.test(current_pass, &sql_statement, lookup_table, data_types)?;
             if passed {
                 writer.write_all(sql_statement.as_bytes())?;
             }
@@ -205,7 +223,6 @@ pub struct CheckCollection {
 impl CheckCollection {
     pub fn new<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
         conditions: I,
-        data_types: &HashMap<String, sqlparser::ast::DataType>,
     ) -> Result<Self, anyhow::Error> {
         let definitions: Vec<(String, String)> = conditions.flat_map(|(table, conds)| {
             conds.iter().map(|c| (table.to_owned(), c.to_owned()))
@@ -215,13 +232,13 @@ impl CheckCollection {
 
         for (table, definition) in definitions.iter() {
             let (column_name, deps) = parse_test_definition(definition)?;
-            let mut column_meta = ColumnMeta::new(table, &column_name, &deps, data_types)?;
+            let mut column_meta = ColumnMeta::new(table, &column_name, &deps)?;
             column_meta.add_check(definition);
             tracked_cols.push(column_meta);
 
             // track target columns
             for key in deps.iter() {
-                tracked_cols.push(ColumnMeta::from_foreign_key(key, data_types)?);
+                tracked_cols.push(ColumnMeta::from_foreign_key(key)?);
             }
         }
         let grouped: HashMap<String, Rc<RefCell<TableMeta>>> = tracked_cols
@@ -257,7 +274,11 @@ impl CheckCollection {
         lookup_table
     }
 
-    pub fn process(&mut self, table_files: &HashMap<String, PathBuf>) -> Result<(), anyhow::Error> {
+    pub fn process(
+        &mut self,
+        table_files: &HashMap<String, PathBuf>,
+        data_types: &HashMap<String, sqlparser::ast::DataType>,
+    ) -> Result<(), anyhow::Error> {
         let mut current_pass = 1;
         while !self.get_pending_tables().is_empty() {
             let pending = self.get_pending_tables();
@@ -267,7 +288,7 @@ impl CheckCollection {
             dbg!(&lookup_table);
             for table_meta in self.table_meta.values_mut().filter(|t| pending.iter().any(|p| p == &t.borrow().table)) {
                 let file = table_files[&table_meta.borrow().table].to_path_buf();
-                table_meta.borrow_mut().process_data_file(&current_pass, &file, &lookup_table)?;
+                table_meta.borrow_mut().process_data_file(&current_pass, &file, &lookup_table, data_types)?;
             }
             current_pass += 1;
         }
