@@ -65,7 +65,22 @@ fn main() -> Result<(), anyhow::Error> {
     //
     // let mut collection = CheckCollection::new(config.filters.iter().chain(&config.cascades), &data_types)?;
     //
-    let tracker = explode_to_files(working_file_path.as_path(), working_dir_path.as_path(), input_file.as_path(), &config.allow_data_on_tables).unwrap_or_else(|e| {
+    let tracker = explode_to_files(
+        working_file_path.as_path(),
+        working_dir_path.as_path(),
+        input_file.as_path(),
+        &config.allow_data_on_tables,
+        |statement| {
+            if let Some(table) = statement.get_table() {
+                if let Some(allowed) = &config.allow_data_on_tables {
+                    if !allowed.contains(table) {
+                        return None;
+                    }
+                }
+            }
+            Some(statement.clone())
+        }
+    ).unwrap_or_else(|e| {
         panic!("Problem exploding to files: {e:?}");
     });
 

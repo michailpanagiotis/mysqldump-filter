@@ -117,7 +117,7 @@ impl SqlStatement {
         bytes
     }
 
-    fn get_table(&self) -> &Option<String> {
+    pub fn get_table(&self) -> &Option<String> {
         &self.table
     }
 
@@ -316,7 +316,19 @@ fn get_writer(filepath: &Path) -> Result<BufWriter<File>, anyhow::Error> {
     Ok(BufWriter::new(file))
 }
 
-pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldump_filepath: &Path, allowed_tables: &Option<HashSet<String>>) -> Result<Tracker, anyhow::Error> {
+pub trait Transformer {
+    fn transform(&self, statement: &IteratorItem) -> Option<SqlStatement>;
+}
+
+pub fn explode_to_files<F>(
+    working_file_path: &Path,
+    working_dir_path: &Path,
+    sqldump_filepath: &Path,
+    allowed_tables: &Option<HashSet<String>>,
+    transform: F,
+) -> Result<Tracker, anyhow::Error>
+  where F: Fn(&SqlStatement) -> Option<SqlStatement>
+{
     let mut writers: HashMap<String, BufWriter<File>> = HashMap::new();
     let mut table_files: HashMap<String, PathBuf> = HashMap::new();
     let mut working_file_writer = get_writer(working_file_path)?;
@@ -325,27 +337,24 @@ pub fn explode_to_files(working_file_path: &Path, working_dir_path: &Path, sqldu
     let statements = TrackedStatements::from_file(sqldump_filepath, &Some(&tracker))?;
 
     for (st, tr) in statements {
-        let statement = st?;
-        match statement.get_table() {
-            None => working_file_writer.write_all(&statement.as_bytes())?,
-            Some(table) => {
-                if let Some(allowed) = allowed_tables {
-                    if !allowed.contains(table) {
-                        continue;
-                    }
-                }
-                let writer = match writers.get_mut(table) {
-                    None => {
-                        let table_file = std::path::absolute(working_dir_path.join(table).with_extension("sql"))?;
-                        table_files.insert(table.to_owned(), table_file.to_owned());
-                        working_file_writer.write_all(format!("--- INLINE {} {}\n", table_file.display(), table).as_bytes())?;
-                        writers.insert(table.to_owned(), get_writer(&table_file)?);
-                        writers.get_mut(table).unwrap()
-                    },
-                    Some(w) => w,
-                };
+        let transformed = transform(&st?);
+        if let Some(statement) = transformed {
+            match statement.get_table() {
+                None => working_file_writer.write_all(&statement.as_bytes())?,
+                Some(table) => {
+                    let writer = match writers.get_mut(table) {
+                        None => {
+                            let table_file = std::path::absolute(working_dir_path.join(table).with_extension("sql"))?;
+                            table_files.insert(table.to_owned(), table_file.to_owned());
+                            working_file_writer.write_all(format!("--- INLINE {} {}\n", table_file.display(), table).as_bytes())?;
+                            writers.insert(table.to_owned(), get_writer(&table_file)?);
+                            writers.get_mut(table).unwrap()
+                        },
+                        Some(w) => w,
+                    };
 
-                writer.write_all(&statement.as_bytes())?
+                    writer.write_all(&statement.as_bytes())?
+                }
             }
         }
     };
