@@ -1,7 +1,7 @@
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::cell::RefCell;
-use std::{collections::{HashMap, HashSet}, fs::File};
+use std::{collections::HashMap, fs::File};
 use std::fs;
 use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -130,10 +130,6 @@ impl SqlStatement {
 
     fn is_table_unlock(&self) -> bool {
         matches!(&self.parts, SqlStatementParts::TableUnlock(_))
-    }
-
-    fn is_insert(&self) -> bool {
-        matches!(&self.parts, SqlStatementParts::Insert(_))
     }
 
     fn get_data_types(&self) -> Option<DataTypes> {
@@ -316,18 +312,13 @@ fn get_writer(filepath: &Path) -> Result<BufWriter<File>, anyhow::Error> {
     Ok(BufWriter::new(file))
 }
 
-pub trait Transformer {
-    fn transform(&self, statement: &IteratorItem) -> Option<SqlStatement>;
-}
-
 pub fn explode_to_files<F>(
     working_file_path: &Path,
     working_dir_path: &Path,
     sqldump_filepath: &Path,
-    allowed_tables: &Option<HashSet<String>>,
     transform: F,
 ) -> Result<Tracker, anyhow::Error>
-  where F: Fn(&SqlStatement) -> Option<SqlStatement>
+  where F: Fn(&SqlStatement, &Tracker) -> Option<SqlStatement>
 {
     let mut writers: HashMap<String, BufWriter<File>> = HashMap::new();
     let mut table_files: HashMap<String, PathBuf> = HashMap::new();
@@ -336,8 +327,8 @@ pub fn explode_to_files<F>(
 
     let statements = TrackedStatements::from_file(sqldump_filepath, &Some(&tracker))?;
 
-    for (st, tr) in statements {
-        let transformed = transform(&st?);
+    for (st, _) in statements {
+        let transformed = transform(&st?, &tracker.borrow());
         if let Some(statement) = transformed {
             match statement.get_table() {
                 None => working_file_writer.write_all(&statement.as_bytes())?,
