@@ -10,6 +10,51 @@ use crate::column::ColumnMeta;
 use crate::checks::{PlainCheckType, new_plain_test, parse_test_definition};
 use crate::split::process_table_inserts;
 
+
+fn process_inserts<'a, C: Iterator<Item=&'a PlainCheckType>, TC: Iterator<Item=&'a str>>(
+    working_file_path: &Path,
+    checks: C,
+    tracked_columns: TC,
+    lookup_table: &HashMap<String, HashSet<String>>,
+) -> Result<HashMap<String, HashSet<String>>, anyhow::Error> {
+    let checks: Vec<&PlainCheckType> = checks.collect();
+    if checks.is_empty() {
+        return Err(anyhow::anyhow!("no checks"));
+    }
+    let mut tables: Vec<&str> = checks.iter().map(|c| c.get_table_name()).collect();
+    tables.dedup();
+    if tables.len() != 1 {
+        return Err(anyhow::anyhow!("checks for multiple tables"));
+    }
+    let table = tables[0];
+
+    let mut column_per_key: HashMap<String, String> = HashMap::new();
+    let mut captured: HashMap<String, HashSet<String>> = HashMap::new();
+    for key in tracked_columns {
+        captured.insert(key.to_owned(), HashSet::new());
+        let (_, column) = ColumnMeta::get_components_from_key(key).unwrap();
+        column_per_key.insert(key.to_owned(), column);
+    }
+
+    process_table_inserts(working_file_path, table, |statement, value_per_field| {
+        if checks.iter().all(|t| {
+            let col_name = t.get_column_name();
+            t.test(col_name, &value_per_field[col_name], lookup_table)
+        }) {
+            for (key, column) in &column_per_key {
+                let value = &value_per_field[column];
+                if let Some(set) = captured.get_mut(key) {
+                    set.insert(value.as_string().to_owned());
+                }
+            }
+            return Ok(Some(statement.to_owned()));
+        }
+
+        Ok(None)
+    })?;
+    Ok(captured)
+}
+
 type ColumnType = ColumnMeta;
 pub type TrackedColumnType = ColumnMeta;
 type DependencyType = Weak<RefCell<dyn Dependency>>;
@@ -111,49 +156,6 @@ impl TableMeta {
         self.get_references().keys().map(|k| k.as_str())
     }
 
-    fn process_inserts<'a, C: Iterator<Item=&'a PlainCheckType>, TC: Iterator<Item=&'a str>>(
-        working_file_path: &Path,
-        checks: C,
-        tracked_columns: TC,
-        lookup_table: &HashMap<String, HashSet<String>>,
-    ) -> Result<HashMap<String, HashSet<String>>, anyhow::Error> {
-        let checks: Vec<&PlainCheckType> = checks.collect();
-        if checks.is_empty() {
-            return Err(anyhow::anyhow!("no checks"));
-        }
-        let mut tables: Vec<&str> = checks.iter().map(|c| c.get_table_name()).collect();
-        tables.dedup();
-        if tables.len() != 1 {
-            return Err(anyhow::anyhow!("checks for multiple tables"));
-        }
-        let table = tables[0];
-
-        let mut column_per_key: HashMap<String, String> = HashMap::new();
-        let mut captured: HashMap<String, HashSet<String>> = HashMap::new();
-        for key in tracked_columns {
-            captured.insert(key.to_owned(), HashSet::new());
-            let (_, column) = ColumnMeta::get_components_from_key(key).unwrap();
-            column_per_key.insert(key.to_owned(), column);
-        }
-
-        process_table_inserts(working_file_path, table, |statement, value_per_field| {
-            if checks.iter().all(|t| {
-                let col_name = t.get_column_name();
-                t.test(col_name, &value_per_field[col_name], lookup_table)
-            }) {
-                for (key, column) in &column_per_key {
-                    let value = &value_per_field[column];
-                    if let Some(set) = captured.get_mut(key) {
-                        set.insert(value.as_string().to_owned());
-                    }
-                }
-                return Ok(Some(statement.to_owned()));
-            }
-
-            Ok(None)
-        })?;
-        Ok(captured)
-    }
 
     pub fn process_data_file(
         &mut self,
@@ -166,7 +168,7 @@ impl TableMeta {
             return Ok(());
         }
 
-        self.references = TableMeta::process_inserts(working_file_path, self.get_checks(), self.get_tracked_columns(), lookup_table)?;
+        self.references = process_inserts(working_file_path, self.get_checks(), self.get_tracked_columns(), lookup_table)?;
 
         self.fulfill_dependency(current_pass);
 
