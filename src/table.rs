@@ -7,7 +7,6 @@ use std::rc::{Rc, Weak};
 
 use crate::traits::{ReferenceTracker, Dependency};
 use crate::column::ColumnMeta;
-use crate::sql::get_values;
 use crate::checks::{PlainCheckType, new_plain_test, parse_test_definition};
 use crate::split::{process_table_file, SqlStatement, Tracker};
 
@@ -129,13 +128,10 @@ impl TableMeta {
             return Ok(true);
         };
 
-        let data_types = tracker.get_table_data_types(&self.table);
-
         let all_checks_passed = self.get_checks().all(|t| {
-            let column_meta = &self.columns[t.get_column_name()];
             t.test(
-                column_meta,
-                &value_per_field[column_meta.get_column_name()],
+                t.get_column_name(),
+                &value_per_field[t.get_column_name()],
                 lookup_table,
             )
         });

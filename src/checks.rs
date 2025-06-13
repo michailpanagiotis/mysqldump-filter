@@ -3,7 +3,6 @@ use chrono::NaiveDateTime;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::column::ColumnMeta;
 use crate::split::Value;
 
 pub trait PlainColumnCheck {
@@ -11,7 +10,7 @@ pub trait PlainColumnCheck {
 
     fn test(
         &self,
-        column_meta: &ColumnMeta,
+        column_name: &str,
         value: &Value,
         lookup_table: &HashMap<String, HashSet<String>>,
     ) -> bool;
@@ -57,15 +56,13 @@ impl PlainCelTest {
             .timestamp()
     }
 
-    fn build_context(&self, column_meta: &ColumnMeta, other_value: &Value) -> Context {
+    fn build_context(&self, column_name: &str, value: &Value) -> Context {
         let mut context = Context::default();
         context.add_function("timestamp", |d: Arc<String>| {
             PlainCelTest::parse_date(&d)
         });
 
-        let column_name = column_meta.get_column_name();
-
-        match other_value {
+        match value {
             Value::Int { parsed, .. } => context.add_variable(column_name, parsed),
             Value::Date { parsed, .. } => context.add_variable(column_name, parsed),
             Value::String { parsed, .. } => context.add_variable(column_name, parsed),
@@ -92,11 +89,11 @@ impl PlainColumnCheck for PlainCelTest {
 
     fn test(
         &self,
-        column_meta: &ColumnMeta,
+        column_name: &str,
         value: &Value,
         _lookup_table: &HashMap<String, HashSet<String>>,
     ) -> bool {
-        let context = self.build_context(column_meta, value);
+        let context = self.build_context(column_name, value);
         match self.program.execute(&context).unwrap() {
             cel_interpreter::objects::Value::Bool(v) => {
                 // println!("testing {}.{} {} -> {}", self.table, self.column, &other_value, &v);
@@ -154,7 +151,7 @@ impl PlainColumnCheck for PlainLookupTest {
 
     fn test(
         &self,
-        _column_meta: &ColumnMeta,
+        _column_name: &str,
         value: &Value,
         lookup_table: &HashMap<String, HashSet<String>>,
     ) -> bool {
