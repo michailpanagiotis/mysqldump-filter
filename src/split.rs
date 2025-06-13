@@ -414,6 +414,35 @@ pub fn explode_to_files<F>(
     Ok((*tracker.borrow()).clone())
 }
 
+pub fn process_table_file<F>(
+    working_file_path: &Path,
+    table: &str,
+    transform: F,
+) -> Result<(), anyhow::Error>
+  where F: Fn(&SqlStatement, &Tracker) -> Option<SqlStatement>
+{
+    let tracker = Rc::new(RefCell::new(Tracker::from_working_file_path(working_file_path)?));
+
+    let binding = tracker.borrow();
+    let table_file = binding.get_table_file(table);
+    let output_file = &table_file.with_extension("proc");
+    let mut writer = get_writer(output_file)?;
+
+    let statements = TrackedStatements::from_file(table_file, &Some(&tracker))?;
+
+
+    for (st, _) in statements {
+        let transformed = transform(&st?, &tracker.borrow());
+        if let Some(statement) = transformed {
+            writer.write_all(&statement.as_bytes())?;
+        }
+    };
+
+    fs::rename(output_file, table_file).expect("cannot rename");
+
+    Ok(())
+}
+
 pub fn read_table_file(working_file_path: &Path, table: &str) -> Result<impl Iterator<Item=IteratorItem>, anyhow::Error> {
     let tracker = Rc::new(RefCell::new(Tracker::from_working_file_path(working_file_path)?));
 
