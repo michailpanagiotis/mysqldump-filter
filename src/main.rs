@@ -78,7 +78,7 @@ fn main() -> Result<(), anyhow::Error> {
 
     let mut collection = CheckCollection::new(config.filters.iter().chain(&config.cascades))?;
     let table_files = get_table_files(working_file_path.as_path())?;
-    collection.process(&table_files, working_file_path.as_path())?;
+    collection.process(working_file_path.as_path())?;
 
     // for it in read_table_file(&PathBuf::from("here/v1/admins.sql"), &None)? {
     //     dbg!(it);

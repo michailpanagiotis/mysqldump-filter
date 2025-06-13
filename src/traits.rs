@@ -7,25 +7,7 @@ use std::cell::RefCell;
 use crate::column::ColumnMeta;
 use crate::sql::get_column_positions;
 
-pub trait ColumnPositions {
-    fn get_column_positions(&self) -> &Option<HashMap<String, usize>>;
-
-    fn set_column_positions(&mut self, positions: HashMap<String, usize>);
-
-    fn resolve_column_positions(&mut self, insert_statement: &str) -> &Option<HashMap<String, usize>> {
-        if !self.has_resolved_positions() {
-            self.set_column_positions(get_column_positions(insert_statement));
-            assert!(self.has_resolved_positions());
-        }
-        self.get_column_positions()
-    }
-
-    fn has_resolved_positions(&self) -> bool {
-        self.get_column_positions().is_some()
-    }
-}
-
-pub trait ReferenceTracker: ColumnPositions {
+pub trait ReferenceTracker {
     fn get_references(&self) -> &HashMap<String, HashSet<String>>;
     fn get_references_mut(&mut self) -> &mut HashMap<String, HashSet<String>>;
 

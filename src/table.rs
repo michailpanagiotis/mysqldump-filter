@@ -2,16 +2,14 @@ use itertools::Itertools;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
-use std::fs;
-use std::io::{BufWriter, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::rc::{Rc, Weak};
 
-use crate::traits::{ColumnPositions, ReferenceTracker, Dependency};
+use crate::traits::{ReferenceTracker, Dependency};
 use crate::column::ColumnMeta;
-use crate::sql::{get_values, read_table_data_file};
+use crate::sql::get_values;
 use crate::checks::{PlainCheckType, new_plain_test, parse_test_definition};
-use crate::split::{Tracker, read_table_file, process_table_file};
+use crate::split::{process_table_file, Tracker};
 
 type ColumnType = ColumnMeta;
 pub type TrackedColumnType = ColumnMeta;
@@ -28,25 +26,10 @@ impl From<&ColumnMeta> for ColumnType {
 pub struct TableMeta {
     pub table: String,
     pub columns: HashMap<String, ColumnMeta>,
-    // trait ColumnPositions
-    column_positions: Option<HashMap<String, usize>>,
     // trait ReferenceTracker
     references: HashMap<String, HashSet<String>>,
     checks: Vec<PlainCheckType>,
     dependencies: Vec<DependencyType>,
-}
-
-impl ColumnPositions for TableMeta {
-    fn get_column_positions(&self) -> &Option<HashMap<String, usize>> {
-        &self.column_positions
-    }
-
-    fn set_column_positions(&mut self, positions: HashMap<String, usize>) {
-        self.column_positions = Some(positions.to_owned());
-        for col in self.columns.values_mut() {
-            col.capture_position(&positions);
-        }
-    }
 }
 
 impl ReferenceTracker for TableMeta {
@@ -128,10 +111,9 @@ impl TableMeta {
     pub fn test(
         &mut self,
         pass: &usize,
-        table: &str,
         sql_statement: &str,
+        tracker: &Tracker,
         lookup_table: &HashMap<String, HashSet<String>>,
-        data_types: &HashMap<String, sqlparser::ast::DataType>
     ) -> Result<bool, anyhow::Error> {
         if !sql_statement.starts_with("INSERT") {
             return Ok(true);
@@ -143,8 +125,8 @@ impl TableMeta {
 
         self.fulfill_dependency(pass);
 
-        let Some(positions) = self.resolve_column_positions(sql_statement) else { return Err(anyhow::anyhow!("unknown positions")) };
-
+        let data_types = tracker.get_table_data_types(&self.table);
+        let positions = tracker.get_table_column_positions(&self.table);
         let values = get_values(sql_statement);
         let value_per_field: HashMap<String, &str> = positions.iter().map(|(column_name, position)| (column_name.to_owned(), values[*position])).collect();
 
@@ -173,7 +155,6 @@ impl TableMeta {
     pub fn process_data_file(
         &mut self,
         current_pass: &usize,
-        file: &Path,
         lookup_table: &HashMap<String, HashSet<String>>,
         working_file_path: &Path,
     ) -> Result<(), anyhow::Error> {
@@ -184,7 +165,6 @@ impl TableMeta {
         println!("Processing table {}", self.table);
         let current_table = &self.table.clone();
         process_table_file(working_file_path, current_table, |statement, tracker| {
-            let data_types = tracker.get_table_data_types(current_table);
             let copied = Some(statement.to_owned());
             let Some(table) = statement.get_table() else {
                 return Ok(copied);
@@ -193,12 +173,17 @@ impl TableMeta {
                 return Ok(copied);
             }
 
-            let passed = self.test(current_pass, table, &statement.as_string(), lookup_table, &data_types)?;
+            let passed = self.test(
+                current_pass,
+                &statement.as_string(),
+                &tracker,
+                lookup_table,
+            )?;
             if !passed {
                 return Ok(None);
             }
             Ok(copied)
-        });
+        })?;
 
         Ok(())
     }
@@ -265,7 +250,6 @@ impl CheckCollection {
 
     pub fn process(
         &mut self,
-        table_files: &HashMap<String, PathBuf>,
         working_file_path: &Path,
     ) -> Result<(), anyhow::Error> {
         let mut current_pass = 1;
@@ -276,10 +260,8 @@ impl CheckCollection {
             dbg!(&pending);
             dbg!(&lookup_table);
             for table_meta in self.table_meta.values_mut().filter(|t| pending.iter().any(|p| p == &t.borrow().table)) {
-                let file = table_files[&table_meta.borrow().table].to_path_buf();
                 table_meta.borrow_mut().process_data_file(
                     &current_pass,
-                    &file,
                     &lookup_table,
                     working_file_path,
                 )?;

@@ -428,10 +428,10 @@ pub fn process_table_file<F>(
 
     let statements = TrackedStatements::from_file(table_file, &Some(&Rc::new(RefCell::new(tracker.clone()))))?;
 
-
     for (st, tr_option) in statements {
         let tr = tr_option.ok_or(anyhow::anyhow!("unknown tracker"))?;
-        let transformed = transform(&st?, &tr.borrow())?;
+        let input_statement = st?;
+        let transformed = transform(&input_statement, &tr.borrow())?;
         if let Some(statement) = transformed {
             writer.write_all(&statement.as_bytes())?;
         }
