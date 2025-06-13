@@ -8,7 +8,7 @@ use std::rc::{Rc, Weak};
 use crate::traits::{ReferenceTracker, Dependency};
 use crate::column::ColumnMeta;
 use crate::checks::{PlainCheckType, new_plain_test, parse_test_definition};
-use crate::split::process_table_file;
+use crate::split::process_table_inserts;
 
 type ColumnType = ColumnMeta;
 pub type TrackedColumnType = ColumnMeta;
@@ -121,7 +121,7 @@ impl TableMeta {
         let current_table = &self.table.clone();
         let tracked_columns: Vec<String> = self.get_references().keys().map(|k| k.to_owned()).collect();
         if self.get_checks().count() > 0 {
-            process_table_file(working_file_path, current_table, |statement, value_per_field| {
+            process_table_inserts(working_file_path, current_table, |statement, value_per_field| {
                 if self.get_checks().all(|t| {
                     t.test(
                         t.get_column_name(),

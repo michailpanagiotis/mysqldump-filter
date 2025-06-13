@@ -502,7 +502,7 @@ pub fn explode_to_files<F>(
     Ok((*tracker.borrow()).clone())
 }
 
-pub fn process_table_file<F>(
+pub fn process_table_inserts<F>(
     working_file_path: &Path,
     table: &str,
     mut transform: F,
