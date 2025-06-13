@@ -417,22 +417,21 @@ pub fn explode_to_files<F>(
 pub fn process_table_file<F>(
     working_file_path: &Path,
     table: &str,
-    transform: F,
+    mut transform: F,
 ) -> Result<(), anyhow::Error>
-  where F: Fn(&SqlStatement, &Tracker) -> Option<SqlStatement>
+  where F: FnMut(&SqlStatement, &Tracker) -> Result<Option<SqlStatement>, anyhow::Error>
 {
-    let tracker = Rc::new(RefCell::new(Tracker::from_working_file_path(working_file_path)?));
-
-    let binding = tracker.borrow();
-    let table_file = binding.get_table_file(table);
+    let tracker = Tracker::from_working_file_path(working_file_path)?;
+    let table_file = tracker.get_table_file(table);
     let output_file = &table_file.with_extension("proc");
     let mut writer = get_writer(output_file)?;
 
-    let statements = TrackedStatements::from_file(table_file, &Some(&tracker))?;
+    let statements = TrackedStatements::from_file(table_file, &Some(&Rc::new(RefCell::new(tracker.clone()))))?;
 
 
-    for (st, _) in statements {
-        let transformed = transform(&st?, &tracker.borrow());
+    for (st, tr_option) in statements {
+        let tr = tr_option.ok_or(anyhow::anyhow!("unknown tracker"))?;
+        let transformed = transform(&st?, &tr.borrow())?;
         if let Some(statement) = transformed {
             writer.write_all(&statement.as_bytes())?;
         }

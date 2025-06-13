@@ -11,7 +11,7 @@ use crate::traits::{ColumnPositions, ReferenceTracker, Dependency};
 use crate::column::ColumnMeta;
 use crate::sql::{get_values, read_table_data_file};
 use crate::checks::{PlainCheckType, new_plain_test, parse_test_definition};
-use crate::split::{Tracker, read_table_file};
+use crate::split::{Tracker, read_table_file, process_table_file};
 
 type ColumnType = ColumnMeta;
 pub type TrackedColumnType = ColumnMeta;
@@ -131,7 +131,7 @@ impl TableMeta {
         table: &str,
         sql_statement: &str,
         lookup_table: &HashMap<String, HashSet<String>>,
-        tracker: &Tracker,
+        data_types: &HashMap<String, sqlparser::ast::DataType>
     ) -> Result<bool, anyhow::Error> {
         if !sql_statement.starts_with("INSERT") {
             return Ok(true);
@@ -142,8 +142,6 @@ impl TableMeta {
         }
 
         self.fulfill_dependency(pass);
-
-        let data_types = tracker.get_table_data_types(table);
 
         let Some(positions) = self.resolve_column_positions(sql_statement) else { return Err(anyhow::anyhow!("unknown positions")) };
 
@@ -185,34 +183,22 @@ impl TableMeta {
         }
         println!("Processing table {}", self.table);
         let current_table = &self.table.clone();
-        let table_file = file.to_path_buf();
-        let output_file = &table_file.with_extension("proc");
-        fs::File::create(output_file)?;
-
-        let mut writer = BufWriter::new(
-            fs::OpenOptions::new()
-            .append(true)
-            .open(output_file)?
-        );
-
-        let statements = read_table_file(working_file_path, current_table)?;
-        for (st, tracker_option) in statements {
-            let sql_statement = st?;
-
-            let Some(table) = sql_statement.get_table() else { return Err(anyhow::anyhow!("unknown table")) };
-            let Some(ref tracker) = tracker_option else { return Err(anyhow::anyhow!("unknown tracker")) };
+        process_table_file(working_file_path, current_table, |statement, tracker| {
+            let data_types = tracker.get_table_data_types(current_table);
+            let copied = Some(statement.to_owned());
+            let Some(table) = statement.get_table() else {
+                return Ok(copied);
+            };
             if current_table != table {
-                return Err(anyhow::anyhow!("wrong table {} != {}", current_table, table));
+                return Ok(copied);
             }
 
-            let passed = self.test(current_pass, table, &sql_statement.as_string(), lookup_table, &tracker.borrow())?;
-            if passed {
-                writer.write_all(&sql_statement.as_bytes())?;
+            let passed = self.test(current_pass, table, &statement.as_string(), lookup_table, &data_types)?;
+            if !passed {
+                return Ok(None);
             }
-        }
-
-        writer.flush()?;
-        // fs::rename(output_file, &table_file).expect("cannot rename");
+            Ok(copied)
+        });
 
         Ok(())
     }
