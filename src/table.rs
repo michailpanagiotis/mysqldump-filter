@@ -8,7 +8,7 @@ use std::rc::{Rc, Weak};
 use crate::traits::{ReferenceTracker, Dependency};
 use crate::column::ColumnMeta;
 use crate::checks::{PlainCheckType, new_plain_test, parse_test_definition};
-use crate::split::{process_table_file, SqlStatement, Tracker};
+use crate::split::process_table_file;
 
 type ColumnType = ColumnMeta;
 pub type TrackedColumnType = ColumnMeta;
@@ -107,40 +107,6 @@ impl TableMeta {
         self.checks.iter()
     }
 
-    pub fn test(
-        &mut self,
-        sql_statement: &SqlStatement,
-        tracker: &Tracker,
-        tracked_columns: &Vec<String>,
-        lookup_table: &HashMap<String, HashSet<String>>,
-    ) -> Result<bool, anyhow::Error> {
-        if !sql_statement.is_insert() {
-            return Ok(true);
-        }
-
-        let Some(value_per_field) = tracker.get_values(sql_statement) else {
-            return Ok(true);
-        };
-
-        let all_checks_passed = self.get_checks().all(|t| {
-            t.test(
-                t.get_column_name(),
-                &value_per_field[t.get_column_name()],
-                lookup_table,
-            )
-        });
-
-        if all_checks_passed {
-            for key in tracked_columns {
-                let (_, column) = ColumnMeta::get_components_from_key(key)?;
-                let value = &value_per_field[&column];
-                self.capture_reference(key, value.as_string())?;
-            }
-        }
-
-        Ok(all_checks_passed)
-    }
-
     pub fn process_data_file(
         &mut self,
         current_pass: &usize,
@@ -154,26 +120,26 @@ impl TableMeta {
         println!("Processing table {}", self.table);
         let current_table = &self.table.clone();
         let tracked_columns: Vec<String> = self.get_references().keys().map(|k| k.to_owned()).collect();
-        process_table_file(working_file_path, current_table, |statement, tracker| {
-            let copied = Some(statement.to_owned());
-            let Some(table) = statement.get_table() else {
-                return Ok(copied);
-            };
-            if current_table != table {
-                return Ok(copied);
-            }
+        if self.get_checks().count() > 0 {
+            process_table_file(working_file_path, current_table, |statement, value_per_field| {
+                if self.get_checks().all(|t| {
+                    t.test(
+                        t.get_column_name(),
+                        &value_per_field[t.get_column_name()],
+                        lookup_table,
+                    )
+                }) {
+                    for key in &tracked_columns {
+                        let (_, column) = ColumnMeta::get_components_from_key(key)?;
+                        let value = &value_per_field[&column];
+                        self.capture_reference(key, value.as_string())?;
+                    }
+                    return Ok(Some(statement.to_owned()));
+                }
 
-            let passed = self.test(
-                statement,
-                tracker,
-                &tracked_columns,
-                lookup_table,
-            )?;
-            if !passed {
-                return Ok(None);
-            }
-            Ok(copied)
-        })?;
+                Ok(None)
+            })?;
+        }
 
         self.fulfill_dependency(current_pass);
 

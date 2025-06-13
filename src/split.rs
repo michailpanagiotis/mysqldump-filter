@@ -507,7 +507,7 @@ pub fn process_table_file<F>(
     table: &str,
     mut transform: F,
 ) -> Result<(), anyhow::Error>
-  where F: FnMut(&SqlStatement, &Tracker) -> Result<Option<SqlStatement>, anyhow::Error>
+  where F: FnMut(&SqlStatement, HashMap<String, Value<'_>>) -> Result<Option<SqlStatement>, anyhow::Error>
 {
     let tracker = Tracker::from_working_file_path(working_file_path)?;
     let table_file = tracker.get_table_file(table);
@@ -517,11 +517,22 @@ pub fn process_table_file<F>(
     let statements = TrackedStatements::from_file(table_file, &Some(&Rc::new(RefCell::new(tracker.clone()))))?;
 
     for (st, tr_option) in statements {
-        let tr = tr_option.ok_or(anyhow::anyhow!("unknown tracker"))?;
         let input_statement = st?;
-        let transformed = transform(&input_statement, &tr.borrow())?;
-        if let Some(statement) = transformed {
-            writer.write_all(&statement.as_bytes())?;
+        let tr = tr_option.ok_or(anyhow::anyhow!("unknown tracker"))?;
+        if input_statement.get_table().as_ref().is_none_or(|t| t != table) {
+            return Err(anyhow::anyhow!("wrong table"));
+        }
+        // filter inserts
+        if input_statement.is_insert() {
+            let borrowed = tr.borrow();
+            let Some(value_per_field) = borrowed.get_values(&input_statement) else {
+                return Err(anyhow::anyhow!("cannot get values"));
+            };
+            if let Some(statement) = transform(&input_statement, value_per_field)? {
+                writer.write_all(&statement.as_bytes())?;
+            }
+        } else {
+            writer.write_all(&input_statement.as_bytes())?;
         }
     };
 
