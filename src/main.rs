@@ -12,8 +12,7 @@ mod sql;
 mod traits;
 
 use table::CheckCollection;
-use sql::get_data_types;
-use split::{explode_to_files, gather, read_table_file};
+use split::{explode_to_files, gather, get_table_files, read_table_file};
 
 #[derive(Debug)]
 #[derive(Deserialize)]
@@ -59,12 +58,6 @@ fn main() -> Result<(), anyhow::Error> {
     };
     let working_file_path = working_dir_path.join("INTERIM").with_extension("sql");
 
-    // let data_types = get_data_types(input_file.as_path());
-    //
-    // println!("Read data types!");
-    //
-    // let mut collection = CheckCollection::new(config.filters.iter().chain(&config.cascades), &data_types)?;
-    //
     explode_to_files(
         working_file_path.as_path(),
         working_dir_path.as_path(),
@@ -83,12 +76,15 @@ fn main() -> Result<(), anyhow::Error> {
         panic!("Problem exploding to files: {e:?}");
     });
 
+    // let mut collection = CheckCollection::new(config.filters.iter().chain(&config.cascades))?;
+    // let table_files = get_table_files(working_file_path.as_path())?;
+    // collection.process(&table_files)?;
+
     // for it in read_table_file(&PathBuf::from("here/v1/admins.sql"), &None)? {
     //     dbg!(it);
     // }
     gather(&working_file_path, &output_file)?;
     //
-    // collection.process(&table_files)?;
 
     if let Some(dir) = temp_dir {
        let _ = dir.close();

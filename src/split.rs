@@ -46,11 +46,11 @@ impl InsertStatement {
         get_columns(&self.statement).iter().enumerate().map(|(idx, c)| (c.to_owned(), idx)).collect()
     }
 
-    fn as_bytes(&self) -> Vec<u8> {
+    fn as_string(&self) -> String {
         if self.values.is_empty() {
-            Vec::from(format!("INSERT INTO `{}` ({}) VALUES ({});\n", self.table, self.columns_part, self.values_part).as_bytes())
+            format!("INSERT INTO `{}` ({}) VALUES ({});\n", self.table, self.columns_part, self.values_part)
         } else {
-            Vec::from(format!("INSERT INTO `{}` ({}) VALUES ({});\n", self.table, self.columns_part, self.values.join(",")).as_bytes())
+            format!("INSERT INTO `{}` ({}) VALUES ({});\n", self.table, self.columns_part, self.values.join(","))
         }
     }
 }
@@ -106,17 +106,20 @@ impl SqlStatement {
         })
     }
 
-    fn as_bytes(&self) -> Vec<u8> {
-        let bytes: Vec<u8> = match &self.parts {
+    pub fn as_string(&self) -> String {
+        match &self.parts {
             SqlStatementParts::Generic(s)
             | SqlStatementParts::CreateTable(s)
             | SqlStatementParts::TableUnlock(s)
             | SqlStatementParts::TableDataDumpComment(s)
             | SqlStatementParts::InlineTable(s)
-                => s.to_owned().into_bytes(),
-            SqlStatementParts::Insert(s) => s.as_bytes(),
-        };
-        bytes
+                => s.to_owned(),
+            SqlStatementParts::Insert(s) => s.as_string(),
+        }
+    }
+
+    pub fn as_bytes(&self) -> Vec<u8> {
+        Vec::from(self.as_string().as_bytes())
     }
 
     pub fn get_table(&self) -> &Option<String> {
@@ -155,9 +158,13 @@ impl SqlStatement {
         }
     }
 
-    fn extract_table(&self) -> Option<&str>{
+    fn extract_table(&mut self) -> Option<&str>{
         match &self.parts {
-            SqlStatementParts::TableDataDumpComment(comment) => Some(TABLE_DUMP_RE.captures(comment).unwrap().get(1).unwrap().as_str()),
+            SqlStatementParts::TableDataDumpComment(comment) => {
+                let table = TABLE_DUMP_RE.captures(comment).unwrap().get(1).unwrap().as_str();
+                self.table = Some(table.to_string());
+                Some(table)
+            },
             _ => None,
         }
     }
@@ -218,7 +225,7 @@ pub struct Tracker {
 }
 
 impl Tracker {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Tracker {
             files: HashMap::new(),
             data_types: HashMap::new(),
@@ -291,9 +298,9 @@ impl TrackedStatements {
 impl Iterator for TrackedStatements {
     type Item = IteratorItem;
     fn next(&mut self) -> Option<IteratorItem> {
-        let statement = self.read_statement()?;
+        let mut statement = self.read_statement()?;
 
-        if let Ok(st) = &statement {
+        if let Ok(st) = &mut statement {
             if self.unlock_next {
                 self.capture_table(None);
                 self.unlock_next = false;
@@ -377,6 +384,22 @@ pub fn explode_to_files<F>(
 pub fn read_table_file(file: &Path, tracker: &OptionalTracker<'_>) -> Result<impl Iterator<Item=IteratorItem>, anyhow::Error> {
     let statements = TrackedStatements::from_file(file, tracker)?;
     Ok(statements)
+}
+
+pub fn get_table_files(working_file_path: &Path) -> Result<HashMap<String, PathBuf>, anyhow::Error> {
+    let mut table_files: HashMap<String, PathBuf> = HashMap::new();
+    let file = File::open(working_file_path)?;
+    for res in io::BufReader::new(file).lines() {
+        let line = res?;
+        if line.starts_with("--- INLINE ") {
+            let st = line.replace("--- INLINE ", "").to_string();
+            let mut split = st.split(" ");
+            let filename = split.next().ok_or(anyhow::anyhow!("cannot parse filename"))?;
+            let table = split.next().ok_or(anyhow::anyhow!("cannot parse table"))?;
+            table_files.insert(table.to_string(), PathBuf::from(filename));
+        }
+    }
+    Ok(table_files)
 }
 
 pub fn gather(working_file_path: &Path, output_path: &Path) -> Result<(), anyhow::Error> {

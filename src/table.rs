@@ -11,7 +11,7 @@ use crate::traits::{ColumnPositions, ReferenceTracker, Dependency};
 use crate::column::ColumnMeta;
 use crate::sql::{get_values, read_table_data_file};
 use crate::checks::{PlainCheckType, new_plain_test, parse_test_definition};
-use crate::split::Tracker;
+use crate::split::{Tracker, read_table_file};
 
 type ColumnType = ColumnMeta;
 pub type TrackedColumnType = ColumnMeta;
@@ -180,7 +180,6 @@ impl TableMeta {
         current_pass: &usize,
         file: &Path,
         lookup_table: &HashMap<String, HashSet<String>>,
-        tracker: &Tracker,
     ) -> Result<(), anyhow::Error> {
         if !self.has_fulfilled_dependencies() {
             println!("Skipping table {} since it still has dependencies", &self.table);
@@ -189,30 +188,33 @@ impl TableMeta {
         println!("Processing table {}", self.table);
         let current_table = &self.table.clone();
         let table_file = file.to_path_buf();
-        let input_file = &table_file.with_extension("proc");
-        fs::rename(&table_file, input_file).expect("cannot rename");
-        fs::File::create(&table_file)?;
+        let output_file = &table_file.with_extension("proc");
+        fs::File::create(output_file)?;
 
         let mut writer = BufWriter::new(
             fs::OpenOptions::new()
             .append(true)
-            .open(&table_file)?
+            .open(output_file)?
         );
 
-        let statements = read_table_data_file(current_table, input_file);
-        for (table_option, sql_statement) in statements {
-            let Some(ref table) = table_option else { return Err(anyhow::anyhow!("unknown table")) };
+        let statements = read_table_file(&table_file, &None)?;
+        for (st, tracker_option) in statements {
+            let sql_statement = st?;
+
+            let Some(table) = sql_statement.get_table() else { return Err(anyhow::anyhow!("unknown table")) };
+            let Some(ref tracker) = tracker_option else { return Err(anyhow::anyhow!("unknown tracker")) };
             if current_table != table {
                 return Err(anyhow::anyhow!("wrong table {} != {}", current_table, table));
             }
 
-            let passed = self.test(current_pass, table, &sql_statement, lookup_table, tracker)?;
+            let passed = self.test(current_pass, table, &sql_statement.as_string(), lookup_table, &tracker.borrow())?;
             if passed {
-                writer.write_all(sql_statement.as_bytes())?;
+                writer.write_all(&sql_statement.as_bytes())?;
             }
         }
 
         writer.flush()?;
+        // fs::rename(output_file, &table_file).expect("cannot rename");
 
         Ok(())
     }
@@ -280,7 +282,6 @@ impl CheckCollection {
     pub fn process(
         &mut self,
         table_files: &HashMap<String, PathBuf>,
-        tracker: &Tracker,
     ) -> Result<(), anyhow::Error> {
         let mut current_pass = 1;
         while !self.get_pending_tables().is_empty() {
@@ -291,7 +292,7 @@ impl CheckCollection {
             dbg!(&lookup_table);
             for table_meta in self.table_meta.values_mut().filter(|t| pending.iter().any(|p| p == &t.borrow().table)) {
                 let file = table_files[&table_meta.borrow().table].to_path_buf();
-                table_meta.borrow_mut().process_data_file(&current_pass, &file, &lookup_table, tracker)?;
+                table_meta.borrow_mut().process_data_file(&current_pass, &file, &lookup_table)?;
             }
             current_pass += 1;
         }
