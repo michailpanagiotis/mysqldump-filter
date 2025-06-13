@@ -509,6 +509,7 @@ pub fn process_table_inserts<F>(
 ) -> Result<(), anyhow::Error>
   where F: FnMut(&SqlStatement, HashMap<String, Value<'_>>) -> Result<Option<SqlStatement>, anyhow::Error>
 {
+    println!("Processing table {table}");
     let tracker = Tracker::from_working_file_path(working_file_path)?;
     let table_file = tracker.get_table_file(table);
     let output_file = &table_file.with_extension("proc");

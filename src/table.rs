@@ -107,6 +107,10 @@ impl TableMeta {
         self.checks.iter()
     }
 
+    fn get_tracked_columns(&self) -> impl Iterator<Item=&str> {
+        self.get_references().keys().map(|k| k.as_str())
+    }
+
     fn process_inserts<'a, C: IntoIterator<Item=&'a PlainCheckType>, TC: IntoIterator<Item=&'a str>>(
         working_file_path: &Path,
         checks: C,
@@ -158,13 +162,8 @@ impl TableMeta {
             println!("Skipping table {} since it still has dependencies", &self.table);
             return Ok(());
         }
-        println!("Processing table {}", self.table);
 
-
-        let tracked_columns: Vec<&str> = self.get_references().keys().map(|k| k.as_str()).collect();
-        let captured = TableMeta::process_inserts(working_file_path, self.get_checks(), tracked_columns, lookup_table)?;
-
-        self.references = captured;
+        self.references = TableMeta::process_inserts(working_file_path, self.get_checks(), self.get_tracked_columns(), lookup_table)?;
 
         self.fulfill_dependency(current_pass);
 
