@@ -44,10 +44,6 @@ impl PlainCelTest {
         Ok((column_name.to_owned(), Vec::new()))
     }
 
-    fn parse_int(s: &str) -> i64 {
-        s.parse().unwrap_or_else(|_| panic!("cannot parse int {s}"))
-    }
-
     fn parse_date(s: &str) -> i64 {
         let to_parse = if s.len() == 10 { s.to_owned() + " 00:00:00" } else { s.to_owned() };
         NaiveDateTime::parse_from_str(&to_parse, "%Y-%m-%d %H:%M:%S")
