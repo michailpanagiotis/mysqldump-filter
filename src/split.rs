@@ -313,6 +313,8 @@ pub struct Tracker {
     files: Files,
     data_types: DataTypes,
     column_positions: ColumnPositions,
+    captured_values: HashMap<String, HashSet<String>>,
+    column_per_key: HashMap<String, String>,
 }
 
 impl Tracker {
@@ -321,6 +323,8 @@ impl Tracker {
             files: HashMap::new(),
             data_types: HashMap::new(),
             column_positions: HashMap::new(),
+            captured_values: HashMap::new(),
+            column_per_key: HashMap::new(),
         }
     }
 
@@ -384,6 +388,31 @@ impl Tracker {
         let positions = self.get_table_column_positions(table);
         let values = insert_statement.get_values().unwrap();
         Some(positions.iter().map(|(column_name, position)| (column_name.to_owned(), Value::parse(values[*position], &data_types[column_name]))).collect())
+    }
+
+    fn track_columns(&mut self, tracked_columns: &[&str]) -> Result<(), anyhow::Error> {
+        for key in tracked_columns {
+            self.captured_values.insert(key.to_string(), HashSet::new());
+            let mut split = key.split('.');
+            let (Some(_), Some(column), None) = (split.next(), split.next(), split.next()) else {
+                return Err(anyhow::anyhow!("malformed key {}", key));
+            };
+            self.column_per_key.insert(key.to_string(), column.to_owned());
+        }
+        Ok(())
+    }
+
+    fn capture_values(&mut self, value_per_field: HashMap<String, Value<'_>>) {
+        for (key, column) in &self.column_per_key {
+            let value = &value_per_field[column];
+            if let Some(set) = self.captured_values.get_mut(key) {
+                set.insert(value.as_string().to_owned());
+            }
+        }
+    }
+
+    fn get_captured_values(&self) -> &HashMap<String, HashSet<String>> {
+        &self.captured_values
     }
 }
 
@@ -503,20 +532,6 @@ pub fn explode_to_files<F>(
     Ok((*tracker.borrow()).clone())
 }
 
-fn prepare_tracking_hashmap(tracked_columns: &[&str]) -> Result<(HashMap<String, String>, HashMap<String, HashSet<String>>), anyhow::Error> {
-    let mut captured: HashMap<String, HashSet<String>> = HashMap::new();
-    let mut column_per_key: HashMap<String, String> = HashMap::new();
-    for key in tracked_columns {
-        captured.insert(key.to_string(), HashSet::new());
-        let mut split = key.split('.');
-        let (Some(table), Some(column), None) = (split.next(), split.next(), split.next()) else {
-            return Err(anyhow::anyhow!("malformed key {}", key));
-        };
-        column_per_key.insert(key.to_string(), column.to_owned());
-    }
-    Ok((column_per_key, captured))
-}
-
 pub fn process_table_inserts<F>(
     working_file_path: &Path,
     table: &str,
@@ -526,14 +541,14 @@ pub fn process_table_inserts<F>(
   where F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlStatement>, anyhow::Error>
 {
     println!("Processing table {table}");
-    let tracker = Tracker::from_working_file_path(working_file_path)?;
+    let mut tracker = Tracker::from_working_file_path(working_file_path)?;
+    tracker.track_columns(tracked_columns)?;
+
     let table_file = tracker.get_table_file(table);
     let output_file = &table_file.with_extension("proc");
     let mut writer = get_writer(output_file)?;
 
     let statements = TrackedStatements::from_file(table_file, &Some(&Rc::new(RefCell::new(tracker.clone()))))?;
-
-    let (column_per_key, mut captured) = prepare_tracking_hashmap(tracked_columns)?;
 
     for (st, tr_option) in statements {
         let input_statement = st?;
@@ -549,13 +564,7 @@ pub fn process_table_inserts<F>(
             };
             if let Some(statement) = transform(&input_statement, &value_per_field)? {
                 // capture values
-                for (key, column) in &column_per_key {
-                    let value = &value_per_field[column];
-                    if let Some(set) = captured.get_mut(key) {
-                        set.insert(value.as_string().to_owned());
-                    }
-                }
-
+                tracker.capture_values(value_per_field);
                 writer.write_all(&statement.as_bytes())?;
             }
         } else {
@@ -565,7 +574,7 @@ pub fn process_table_inserts<F>(
 
     //fs::rename(output_file, table_file).expect("cannot rename");
 
-    Ok(captured)
+    Ok(tracker.get_captured_values().clone())
 }
 
 pub fn read_table_file(working_file_path: &Path, table: &str) -> Result<impl Iterator<Item=IteratorItem>, anyhow::Error> {
