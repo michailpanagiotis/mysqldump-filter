@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use nom::{
-  branch::alt, bytes::complete::{escaped, is_not, tag, take_till, take_until}, character::complete::{char, none_of, one_of}, combinator::eof, multi::{separated_list0, separated_list1}, sequence::{delimited, preceded, terminated}, Finish, IResult, Parser
+  branch::alt, bytes::complete::{escaped, is_not, tag, take_till, take_until}, character::complete::{char, none_of, one_of}, combinator::{recognize, eof}, multi::{separated_list0, separated_list1}, sequence::{delimited, preceded, terminated}, Finish, IResult, Parser
 };
 use regex::Regex;
 use std::{collections::{HashMap, HashSet}, fs::File};
@@ -98,8 +98,20 @@ pub fn parse_insert_values(values_part: &str) -> Vec<&str> {
     let mut parser = separated_list1(
         one_of(",)"),
         alt((
+            // JSON object value
+            recognize(delimited(
+                tag("'{"),
+                take_until("}'"),
+                tag("}'")
+            )),
+            // JSON array value
+            recognize(delimited(
+                tag("'["),
+                take_until("]'"),
+                tag("]'")
+            )),
             // quoted value
-            delimited(
+            recognize(delimited(
                 tag("'"),
                 // escaped or empty
                 alt((
@@ -107,7 +119,7 @@ pub fn parse_insert_values(values_part: &str) -> Vec<&str> {
                     tag("")
                 )),
                 tag("'")
-            ),
+            )),
             // unquoted value
             take_till(|c| c == ','),
         )),

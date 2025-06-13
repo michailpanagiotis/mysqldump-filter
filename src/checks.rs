@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::column::ColumnMeta;
+use crate::split::Value;
 
 pub trait PlainColumnCheck {
     fn new(definition: &str, table: &str) -> Result<impl PlainColumnCheck + 'static, anyhow::Error> where Self: Sized;
@@ -11,9 +12,8 @@ pub trait PlainColumnCheck {
     fn test(
         &self,
         column_meta: &ColumnMeta,
-        value:&str,
+        value: &Value,
         lookup_table: &HashMap<String, HashSet<String>>,
-        data_type: &sqlparser::ast::DataType,
     ) -> bool;
 
     fn get_table_name(&self) -> &str;
@@ -57,7 +57,7 @@ impl PlainCelTest {
             .timestamp()
     }
 
-    fn build_context(&self, column_meta: &ColumnMeta, other_value: &str, data_type: &sqlparser::ast::DataType) -> Context {
+    fn build_context(&self, column_meta: &ColumnMeta, other_value: &Value) -> Context {
         let mut context = Context::default();
         context.add_function("timestamp", |d: Arc<String>| {
             PlainCelTest::parse_date(&d)
@@ -65,22 +65,11 @@ impl PlainCelTest {
 
         let column_name = column_meta.get_column_name();
 
-        if other_value == "NULL" {
-            context.add_variable(column_name.to_owned(), false).unwrap();
-            return context;
-        }
-
-        let _ = match data_type {
-            sqlparser::ast::DataType::TinyInt(_) | sqlparser::ast::DataType::Int(_) => {
-                context.add_variable(column_name, PlainCelTest::parse_int(other_value))
-            },
-            sqlparser::ast::DataType::Datetime(_) | sqlparser::ast::DataType::Date => {
-                context.add_variable(column_name, PlainCelTest::parse_date(other_value))
-            },
-            sqlparser::ast::DataType::Enum(_, _) => {
-                context.add_variable(column_name, other_value)
-            },
-            _ => panic!("{}", format!("cannot parse {other_value} for {data_type}"))
+        match other_value {
+            Value::Int { parsed, .. } => context.add_variable(column_name, parsed),
+            Value::Date { parsed, .. } => context.add_variable(column_name, parsed),
+            Value::String { parsed, .. } => context.add_variable(column_name, parsed),
+            Value::Null { .. } => context.add_variable(column_name, false),
         };
 
         context
@@ -104,11 +93,10 @@ impl PlainColumnCheck for PlainCelTest {
     fn test(
         &self,
         column_meta: &ColumnMeta,
-        value:&str,
+        value: &Value,
         _lookup_table: &HashMap<String, HashSet<String>>,
-        data_type: &sqlparser::ast::DataType,
     ) -> bool {
-        let context = self.build_context(column_meta, value, data_type);
+        let context = self.build_context(column_meta, value);
         match self.program.execute(&context).unwrap() {
             cel_interpreter::objects::Value::Bool(v) => {
                 // println!("testing {}.{} {} -> {}", self.table, self.column, &other_value, &v);
@@ -167,12 +155,11 @@ impl PlainColumnCheck for PlainLookupTest {
     fn test(
         &self,
         _column_meta: &ColumnMeta,
-        value:&str,
+        value: &Value,
         lookup_table: &HashMap<String, HashSet<String>>,
-        _data_type: &sqlparser::ast::DataType,
     ) -> bool {
         let Some(set) = lookup_table.get(&self.target_column_key) else { return true };
-        set.contains(value)
+        set.contains(value.as_string())
     }
 
     fn get_definition(&self) -> &str {

@@ -135,9 +135,8 @@ impl TableMeta {
             let column_meta = &self.columns[t.get_column_name()];
             t.test(
                 column_meta,
-                value_per_field[column_meta.get_column_name()],
+                &value_per_field[column_meta.get_column_name()],
                 lookup_table,
-                &data_types[column_meta.get_column_name()],
             )
         });
 
@@ -145,8 +144,8 @@ impl TableMeta {
             let keys: Vec<String> = self.get_references().keys().map(|k| k.to_owned()).collect();
             for key in keys {
                 let (_, column) = ColumnMeta::get_components_from_key(&key)?;
-                let value = value_per_field[&column];
-                self.capture_reference(&key, value)?;
+                let value = &value_per_field[&column];
+                self.capture_reference(&key, value.as_string())?;
             }
         }
 

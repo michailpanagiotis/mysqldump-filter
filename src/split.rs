@@ -26,19 +26,45 @@ lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
 }
 
-enum Value<'a> {
-    Int(i64),
-    Date(i64),
-    String(&'a str),
+pub enum Value<'a> {
+    Int {
+        string: &'a str,
+        parsed: i64
+    },
+    Date {
+        string: &'a str,
+        parsed: i64
+    },
+    String {
+        string: &'a str,
+        parsed: String,
+    },
+    Null {
+        string: &'a str,
+    }
 }
 
 impl<'a> Value<'a> {
+    pub fn as_string(&'a self) -> &'a str {
+        match self {
+            Value::Int{ string, .. } => string,
+            Value::Date{ string, .. } => string,
+            Value::String{ string, .. } => string,
+            Value::Null{ string, .. } => string,
+        }
+    }
+
     fn parse_int(s: &'a str) -> i64 {
         s.parse().unwrap_or_else(|_| panic!("cannot parse int {s}"))
     }
 
+    fn parse_string(s: &'a str) -> String {
+        s.replace("'", "")
+    }
+
     fn parse_date(s: &'a str) -> i64 {
-        let to_parse = if s.len() == 10 { s.to_owned() + " 00:00:00" } else { s.to_owned() };
+        let date = Value::parse_string(s);
+        let to_parse = if date.len() == 10 { date.to_owned() + " 00:00:00" } else { date.to_owned() };
         NaiveDateTime::parse_from_str(&to_parse, "%Y-%m-%d %H:%M:%S")
             .unwrap_or_else(|_| panic!("cannot parse timestamp {s}"))
             .and_utc()
@@ -46,14 +72,17 @@ impl<'a> Value<'a> {
     }
 
     fn parse(value: &'a str, data_type: &'a sqlparser::ast::DataType) -> Self {
+        if value == "NULL" {
+            return Value::Null { string: value };
+        }
         match data_type {
             sqlparser::ast::DataType::TinyInt(_) | sqlparser::ast::DataType::Int(_) => {
-                Value::Int(Value::parse_int(value))
+                Value::Int{ string: value, parsed: Value::parse_int(value) }
             },
             sqlparser::ast::DataType::Datetime(_) | sqlparser::ast::DataType::Date => {
-                Value::Date(Value::parse_date(value))
+                Value::Date{ string: value, parsed: Value::parse_date(value) }
             },
-            _ => Value::String(value)
+            _ => Value::String{ string: value, parsed: Value::parse_string(value) }
         }
     }
 }
@@ -345,7 +374,7 @@ impl Tracker {
         &self.column_positions[table]
     }
 
-    pub fn get_values<'a>(&self, insert_statement: &'a SqlStatement) -> Option<HashMap<String, &'a str>> {
+    pub fn get_values<'a>(&'a self, insert_statement: &'a SqlStatement) -> Option<HashMap<String, Value<'a>>> {
         let Some(table) = insert_statement.get_table() else {
             return None;
         };
@@ -353,7 +382,7 @@ impl Tracker {
         let data_types = self.get_table_data_types(table);
         let positions = self.get_table_column_positions(table);
         let values = insert_statement.get_values().unwrap();
-        Some(positions.iter().map(|(column_name, position)| (column_name.to_owned(), values[*position])).collect())
+        Some(positions.iter().map(|(column_name, position)| (column_name.to_owned(), Value::parse(values[*position], &data_types[column_name]))).collect())
     }
 }
 
