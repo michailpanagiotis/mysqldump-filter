@@ -1,3 +1,4 @@
+use chrono::NaiveDateTime;
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::cell::RefCell;
@@ -10,7 +11,7 @@ use std::rc::Rc;
 use sqlparser::dialect::MySqlDialect;
 use sqlparser::parser::Parser as SqlParser;
 
-use crate::sql::{get_columns, parse_insert_parts};
+use crate::sql::{get_columns, parse_insert_parts, parse_insert_values};
 
 type Files = HashMap<String, PathBuf>;
 type TableDataTypes = HashMap<String, sqlparser::ast::DataType>;
@@ -23,6 +24,38 @@ type OptionalTracker<'a> = Option<&'a Rc<RefCell<Tracker>>>;
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
+}
+
+enum Value<'a> {
+    Int(i64),
+    Date(i64),
+    String(&'a str),
+}
+
+impl<'a> Value<'a> {
+    fn parse_int(s: &'a str) -> i64 {
+        s.parse().unwrap_or_else(|_| panic!("cannot parse int {s}"))
+    }
+
+    fn parse_date(s: &'a str) -> i64 {
+        let to_parse = if s.len() == 10 { s.to_owned() + " 00:00:00" } else { s.to_owned() };
+        NaiveDateTime::parse_from_str(&to_parse, "%Y-%m-%d %H:%M:%S")
+            .unwrap_or_else(|_| panic!("cannot parse timestamp {s}"))
+            .and_utc()
+            .timestamp()
+    }
+
+    fn parse(value: &'a str, data_type: &'a sqlparser::ast::DataType) -> Self {
+        match data_type {
+            sqlparser::ast::DataType::TinyInt(_) | sqlparser::ast::DataType::Int(_) => {
+                Value::Int(Value::parse_int(value))
+            },
+            sqlparser::ast::DataType::Datetime(_) | sqlparser::ast::DataType::Date => {
+                Value::Date(Value::parse_date(value))
+            },
+            _ => Value::String(value)
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -52,6 +85,10 @@ impl InsertStatement {
         } else {
             format!("INSERT INTO `{}` ({}) VALUES ({});\n", self.table, self.columns_part, self.values.join(","))
         }
+    }
+
+    pub fn get_values(&self) -> Vec<&str> {
+        parse_insert_values(&self.values_part)
     }
 }
 
@@ -133,6 +170,13 @@ impl SqlStatement {
         }
     }
 
+    pub fn get_values(&self) -> Option<Vec<&str>> {
+        match &self.parts {
+            SqlStatementParts::Insert(insert_statement) => Some(insert_statement.get_values()),
+            _ => None,
+        }
+    }
+
     fn parse_inline_file(&self) -> Result<Option<(String, PathBuf)>, anyhow::Error> {
         match &self.parts {
             SqlStatementParts::InlineTable(line) => {
@@ -144,6 +188,10 @@ impl SqlStatement {
             }
             _ => Ok(None),
         }
+    }
+
+    pub fn is_insert(&self) -> bool {
+        matches!(&self.parts, SqlStatementParts::Insert(_))
     }
 
     fn is_table_unlock(&self) -> bool {
@@ -296,6 +344,17 @@ impl Tracker {
     pub fn get_table_column_positions(&self, table: &str) -> &TableColumnPositions {
         &self.column_positions[table]
     }
+
+    pub fn get_values<'a>(&self, insert_statement: &'a SqlStatement) -> Option<HashMap<String, &'a str>> {
+        let Some(table) = insert_statement.get_table() else {
+            return None;
+        };
+
+        let data_types = self.get_table_data_types(table);
+        let positions = self.get_table_column_positions(table);
+        let values = insert_statement.get_values().unwrap();
+        Some(positions.iter().map(|(column_name, position)| (column_name.to_owned(), values[*position])).collect())
+    }
 }
 
 struct TrackedStatements {
@@ -437,7 +496,7 @@ pub fn process_table_file<F>(
         }
     };
 
-    fs::rename(output_file, table_file).expect("cannot rename");
+    //fs::rename(output_file, table_file).expect("cannot rename");
 
     Ok(())
 }

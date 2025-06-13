@@ -9,7 +9,7 @@ use crate::traits::{ReferenceTracker, Dependency};
 use crate::column::ColumnMeta;
 use crate::sql::get_values;
 use crate::checks::{PlainCheckType, new_plain_test, parse_test_definition};
-use crate::split::{process_table_file, Tracker};
+use crate::split::{process_table_file, SqlStatement, Tracker};
 
 type ColumnType = ColumnMeta;
 pub type TrackedColumnType = ColumnMeta;
@@ -111,11 +111,11 @@ impl TableMeta {
     pub fn test(
         &mut self,
         pass: &usize,
-        sql_statement: &str,
+        sql_statement: &SqlStatement,
         tracker: &Tracker,
         lookup_table: &HashMap<String, HashSet<String>>,
     ) -> Result<bool, anyhow::Error> {
-        if !sql_statement.starts_with("INSERT") {
+        if !sql_statement.is_insert() {
             return Ok(true);
         }
 
@@ -125,10 +125,11 @@ impl TableMeta {
 
         self.fulfill_dependency(pass);
 
+        let Some(value_per_field) = tracker.get_values(sql_statement) else {
+            return Ok(true);
+        };
+
         let data_types = tracker.get_table_data_types(&self.table);
-        let positions = tracker.get_table_column_positions(&self.table);
-        let values = get_values(sql_statement);
-        let value_per_field: HashMap<String, &str> = positions.iter().map(|(column_name, position)| (column_name.to_owned(), values[*position])).collect();
 
         let all_checks_passed = self.get_checks().all(|t| {
             let column_meta = &self.columns[t.get_column_name()];
@@ -175,8 +176,8 @@ impl TableMeta {
 
             let passed = self.test(
                 current_pass,
-                &statement.as_string(),
-                &tracker,
+                statement,
+                tracker,
                 lookup_table,
             )?;
             if !passed {

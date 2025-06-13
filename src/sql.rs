@@ -94,6 +94,29 @@ pub fn parse_insert_parts(insert_statement: &str) -> Result<(String, String, Str
     }
 }
 
+pub fn parse_insert_values(values_part: &str) -> Vec<&str> {
+    let mut parser = separated_list1(
+        one_of(",)"),
+        alt((
+            // quoted value
+            delimited(
+                tag("'"),
+                // escaped or empty
+                alt((
+                    escaped(none_of("\\\'"), '\\', tag("'")),
+                    tag("")
+                )),
+                tag("'")
+            ),
+            // unquoted value
+            take_till(|c| c == ','),
+        )),
+    );
+    let res: IResult<&str, Vec<&str>> = parser.parse(values_part);
+    let (_, values) = res.unwrap_or_else(|_| panic!("cannot parse values for {}", &values_part));
+    values
+}
+
 pub fn parse_insert_full(insert_statement: &str) {
     let mut parser = (
         // table
