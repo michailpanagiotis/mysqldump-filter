@@ -15,7 +15,8 @@ use crate::sql::{get_columns, parse_insert_parts};
 type Files = HashMap<String, PathBuf>;
 type TableDataTypes = HashMap<String, sqlparser::ast::DataType>;
 type DataTypes = HashMap<String, TableDataTypes>;
-type ColumnPositions = HashMap<String, HashMap<String, usize>>;
+type TableColumnPositions = HashMap<String, usize>;
+type ColumnPositions = HashMap<String, TableColumnPositions>;
 type SqlStatementResult = Result<SqlStatement, anyhow::Error>;
 type IteratorItem = (SqlStatementResult, Option<Rc<RefCell<Tracker>>>);
 type OptionalTracker<'a> = Option<&'a Rc<RefCell<Tracker>>>;
@@ -250,6 +251,10 @@ impl Tracker {
 
     pub fn get_table_data_types(&self, table: &str) -> &TableDataTypes {
         &self.data_types[table]
+    }
+
+    pub fn get_table_column_positions(&self, table: &str) -> &TableColumnPositions {
+        &self.column_positions[table]
     }
 }
 

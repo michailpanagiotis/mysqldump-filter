@@ -83,9 +83,9 @@ fn main() -> Result<(), anyhow::Error> {
         panic!("Problem exploding to files: {e:?}");
     });
 
-    for it in read_table_file(&PathBuf::from("here/v1/admins.sql"), &None)? {
-        dbg!(it);
-    }
+    // for it in read_table_file(&PathBuf::from("here/v1/admins.sql"), &None)? {
+    //     dbg!(it);
+    // }
     gather(&working_file_path, &output_file)?;
     //
     // collection.process(&table_files)?;
