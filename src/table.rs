@@ -111,7 +111,7 @@ impl TableMeta {
         self.get_references().keys().map(|k| k.as_str())
     }
 
-    fn process_inserts<'a, C: IntoIterator<Item=&'a PlainCheckType>, TC: IntoIterator<Item=&'a str>>(
+    fn process_inserts<'a, C: Iterator<Item=&'a PlainCheckType>, TC: IntoIterator<Item=&'a str>>(
         working_file_path: &Path,
         checks: C,
         tracked_columns: TC,
