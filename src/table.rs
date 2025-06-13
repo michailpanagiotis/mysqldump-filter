@@ -148,9 +148,6 @@ impl TableMeta {
         let Some(positions) = self.resolve_column_positions(sql_statement) else { return Err(anyhow::anyhow!("unknown positions")) };
 
         let values = get_values(sql_statement);
-        dbg!(&sql_statement);
-        // dbg!(&positions);
-        // dbg!(&values);
         let value_per_field: HashMap<String, &str> = positions.iter().map(|(column_name, position)| (column_name.to_owned(), values[*position])).collect();
 
         let all_checks_passed = self.get_checks().all(|t| {
@@ -180,6 +177,7 @@ impl TableMeta {
         current_pass: &usize,
         file: &Path,
         lookup_table: &HashMap<String, HashSet<String>>,
+        working_file_path: &Path,
     ) -> Result<(), anyhow::Error> {
         if !self.has_fulfilled_dependencies() {
             println!("Skipping table {} since it still has dependencies", &self.table);
@@ -197,7 +195,7 @@ impl TableMeta {
             .open(output_file)?
         );
 
-        let statements = read_table_file(&table_file, &None)?;
+        let statements = read_table_file(working_file_path, current_table)?;
         for (st, tracker_option) in statements {
             let sql_statement = st?;
 
@@ -282,6 +280,7 @@ impl CheckCollection {
     pub fn process(
         &mut self,
         table_files: &HashMap<String, PathBuf>,
+        working_file_path: &Path,
     ) -> Result<(), anyhow::Error> {
         let mut current_pass = 1;
         while !self.get_pending_tables().is_empty() {
@@ -292,7 +291,12 @@ impl CheckCollection {
             dbg!(&lookup_table);
             for table_meta in self.table_meta.values_mut().filter(|t| pending.iter().any(|p| p == &t.borrow().table)) {
                 let file = table_files[&table_meta.borrow().table].to_path_buf();
-                table_meta.borrow_mut().process_data_file(&current_pass, &file, &lookup_table)?;
+                table_meta.borrow_mut().process_data_file(
+                    &current_pass,
+                    &file,
+                    &lookup_table,
+                    working_file_path,
+                )?;
             }
             current_pass += 1;
         }

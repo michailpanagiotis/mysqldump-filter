@@ -133,6 +133,19 @@ impl SqlStatement {
         }
     }
 
+    fn parse_inline_file(&self) -> Result<Option<(String, PathBuf)>, anyhow::Error> {
+        match &self.parts {
+            SqlStatementParts::InlineTable(line) => {
+                let st = line.replace("--- INLINE ", "").replace("\n", "").to_string();
+                let mut split = st.split(" ");
+                let filename = split.next().ok_or(anyhow::anyhow!("cannot parse filename"))?;
+                let table = split.next().ok_or(anyhow::anyhow!("cannot parse table"))?;
+                Ok(Some((table.to_string(), PathBuf::from(filename))))
+            }
+            _ => Ok(None),
+        }
+    }
+
     fn is_table_unlock(&self) -> bool {
         matches!(&self.parts, SqlStatementParts::TableUnlock(_))
     }
@@ -233,6 +246,13 @@ impl Tracker {
         }
     }
 
+    pub fn from_working_file_path(filepath: &Path) -> Result<Self, anyhow::Error> {
+        let tracker = Rc::new(RefCell::new(Tracker::new()));
+        let statements = TrackedStatements::from_file(filepath, &Some(&tracker))?;
+        for (_, _) in statements {}
+        Ok((*tracker.borrow()).clone())
+    }
+
     fn capture_positions(&mut self, statement: &SqlStatement, current_table: &Option<String>) {
         if let Some(table) = current_table {
             if !self.column_positions.contains_key(table) {
@@ -251,9 +271,22 @@ impl Tracker {
         }
     }
 
-    fn capture(&mut self, statement: &SqlStatement, current_table: &Option<String>) {
+    fn capture_inline_files(&mut self, statement: &SqlStatement) -> Result<(), anyhow::Error> {
+        if let Some((table, file)) = statement.parse_inline_file()? {
+            self.files.insert(table, file);
+        }
+        Ok(())
+    }
+
+    fn capture(&mut self, statement: &SqlStatement, current_table: &Option<String>) -> Result<(), anyhow::Error> {
         self.capture_positions(statement, current_table);
         self.capture_data_types(statement);
+        self.capture_inline_files(statement)?;
+        Ok(())
+    }
+
+    pub fn get_table_file(&self, table: &str) -> &PathBuf {
+        &self.files[table]
     }
 
     pub fn get_table_data_types(&self, table: &str) -> &TableDataTypes {
@@ -381,8 +414,12 @@ pub fn explode_to_files<F>(
     Ok((*tracker.borrow()).clone())
 }
 
-pub fn read_table_file(file: &Path, tracker: &OptionalTracker<'_>) -> Result<impl Iterator<Item=IteratorItem>, anyhow::Error> {
-    let statements = TrackedStatements::from_file(file, tracker)?;
+pub fn read_table_file(working_file_path: &Path, table: &str) -> Result<impl Iterator<Item=IteratorItem>, anyhow::Error> {
+    let tracker = Rc::new(RefCell::new(Tracker::from_working_file_path(working_file_path)?));
+
+    let binding = tracker.borrow();
+    let table_file = binding.get_table_file(table);
+    let statements = TrackedStatements::from_file(table_file, &Some(&tracker))?;
     Ok(statements)
 }
 
