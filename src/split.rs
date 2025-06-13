@@ -2,6 +2,7 @@ use chrono::NaiveDateTime;
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::{collections::HashMap, fs::File};
 use std::fs;
 use std::io::{self, BufRead, BufWriter, Write};
@@ -502,12 +503,27 @@ pub fn explode_to_files<F>(
     Ok((*tracker.borrow()).clone())
 }
 
+fn prepare_tracking_hashmap(tracked_columns: &[&str]) -> Result<(HashMap<String, String>, HashMap<String, HashSet<String>>), anyhow::Error> {
+    let mut captured: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut column_per_key: HashMap<String, String> = HashMap::new();
+    for key in tracked_columns {
+        captured.insert(key.to_string(), HashSet::new());
+        let mut split = key.split('.');
+        let (Some(table), Some(column), None) = (split.next(), split.next(), split.next()) else {
+            return Err(anyhow::anyhow!("malformed key {}", key));
+        };
+        column_per_key.insert(key.to_string(), column.to_owned());
+    }
+    Ok((column_per_key, captured))
+}
+
 pub fn process_table_inserts<F>(
     working_file_path: &Path,
     table: &str,
+    tracked_columns: &[&str],
     mut transform: F,
-) -> Result<(), anyhow::Error>
-  where F: FnMut(&SqlStatement, HashMap<String, Value<'_>>) -> Result<Option<SqlStatement>, anyhow::Error>
+) -> Result<HashMap<String, HashSet<String>>, anyhow::Error>
+  where F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlStatement>, anyhow::Error>
 {
     println!("Processing table {table}");
     let tracker = Tracker::from_working_file_path(working_file_path)?;
@@ -516,6 +532,8 @@ pub fn process_table_inserts<F>(
     let mut writer = get_writer(output_file)?;
 
     let statements = TrackedStatements::from_file(table_file, &Some(&Rc::new(RefCell::new(tracker.clone()))))?;
+
+    let (column_per_key, mut captured) = prepare_tracking_hashmap(tracked_columns)?;
 
     for (st, tr_option) in statements {
         let input_statement = st?;
@@ -529,7 +547,15 @@ pub fn process_table_inserts<F>(
             let Some(value_per_field) = borrowed.get_values(&input_statement) else {
                 return Err(anyhow::anyhow!("cannot get values"));
             };
-            if let Some(statement) = transform(&input_statement, value_per_field)? {
+            if let Some(statement) = transform(&input_statement, &value_per_field)? {
+                // capture values
+                for (key, column) in &column_per_key {
+                    let value = &value_per_field[column];
+                    if let Some(set) = captured.get_mut(key) {
+                        set.insert(value.as_string().to_owned());
+                    }
+                }
+
                 writer.write_all(&statement.as_bytes())?;
             }
         } else {
@@ -539,7 +565,7 @@ pub fn process_table_inserts<F>(
 
     //fs::rename(output_file, table_file).expect("cannot rename");
 
-    Ok(())
+    Ok(captured)
 }
 
 pub fn read_table_file(working_file_path: &Path, table: &str) -> Result<impl Iterator<Item=IteratorItem>, anyhow::Error> {

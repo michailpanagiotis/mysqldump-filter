@@ -11,10 +11,10 @@ use crate::checks::{PlainCheckType, new_plain_test, parse_test_definition};
 use crate::split::process_table_inserts;
 
 
-fn process_inserts<'a, C: Iterator<Item=&'a PlainCheckType>, TC: Iterator<Item=&'a str>>(
+fn process_inserts<'a, C: Iterator<Item=&'a PlainCheckType>>(
     working_file_path: &Path,
     checks: C,
-    tracked_columns: TC,
+    tracked_columns: &[&str],
     lookup_table: &HashMap<String, HashSet<String>>,
 ) -> Result<HashMap<String, HashSet<String>>, anyhow::Error> {
     let checks: Vec<&PlainCheckType> = checks.collect();
@@ -28,25 +28,11 @@ fn process_inserts<'a, C: Iterator<Item=&'a PlainCheckType>, TC: Iterator<Item=&
     }
     let table = tables[0];
 
-    let mut column_per_key: HashMap<String, String> = HashMap::new();
-    let mut captured: HashMap<String, HashSet<String>> = HashMap::new();
-    for key in tracked_columns {
-        captured.insert(key.to_owned(), HashSet::new());
-        let (_, column) = ColumnMeta::get_components_from_key(key).unwrap();
-        column_per_key.insert(key.to_owned(), column);
-    }
-
-    process_table_inserts(working_file_path, table, |statement, value_per_field| {
+    let captured = process_table_inserts(working_file_path, table, tracked_columns, |statement, value_per_field| {
         if checks.iter().all(|t| {
             let col_name = t.get_column_name();
             t.test(col_name, &value_per_field[col_name], lookup_table)
         }) {
-            for (key, column) in &column_per_key {
-                let value = &value_per_field[column];
-                if let Some(set) = captured.get_mut(key) {
-                    set.insert(value.as_string().to_owned());
-                }
-            }
             return Ok(Some(statement.to_owned()));
         }
 
@@ -152,8 +138,8 @@ impl TableMeta {
         self.checks.iter()
     }
 
-    fn get_tracked_columns(&self) -> impl Iterator<Item=&str> {
-        self.get_references().keys().map(|k| k.as_str())
+    fn get_tracked_columns(&self) -> Vec<&str> {
+        self.get_references().keys().map(|k| k.as_str()).collect()
     }
 
 
@@ -168,7 +154,7 @@ impl TableMeta {
             return Ok(());
         }
 
-        self.references = process_inserts(working_file_path, self.get_checks(), self.get_tracked_columns(), lookup_table)?;
+        self.references = process_inserts(working_file_path, self.get_checks(), &self.get_tracked_columns(), lookup_table)?;
 
         self.fulfill_dependency(current_pass);
 
