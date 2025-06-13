@@ -107,6 +107,47 @@ impl TableMeta {
         self.checks.iter()
     }
 
+    fn process_inserts<'a, C: IntoIterator<Item=&'a PlainCheckType>, TC: IntoIterator<Item=&'a str>>(
+        working_file_path: &Path,
+        checks: C,
+        tracked_columns: TC,
+        lookup_table: &HashMap<String, HashSet<String>>,
+    ) -> Result<HashMap<String, HashSet<String>>, anyhow::Error> {
+        let mut captured: HashMap<String, HashSet<String>> = HashMap::new();
+        let checks: Vec<&PlainCheckType> = checks.into_iter().collect();
+        if !checks.is_empty() {
+            let mut column_per_key: HashMap<String, String> = HashMap::new();
+            for key in tracked_columns {
+                captured.insert(key.to_owned(), HashSet::new());
+                let (_, column) = ColumnMeta::get_components_from_key(key).unwrap();
+                column_per_key.insert(key.to_owned(), column);
+            }
+            let mut tables: Vec<&str> = checks.iter().map(|c| c.get_table_name()).collect();
+            tables.dedup();
+            if tables.len() != 1 {
+                return Err(anyhow::anyhow!("checks for multiple tables"));
+            }
+            let table = tables[0];
+            process_table_inserts(working_file_path, table, |statement, value_per_field| {
+                if checks.iter().all(|t| {
+                    let col_name = t.get_column_name();
+                    t.test(col_name, &value_per_field[col_name], lookup_table)
+                }) {
+                    for (key, column) in &column_per_key {
+                        let value = &value_per_field[column];
+                        if let Some(set) = captured.get_mut(key) {
+                            set.insert(value.as_string().to_owned());
+                        }
+                    }
+                    return Ok(Some(statement.to_owned()));
+                }
+
+                Ok(None)
+            })?;
+        }
+        Ok(captured)
+    }
+
     pub fn process_data_file(
         &mut self,
         current_pass: &usize,
@@ -118,28 +159,12 @@ impl TableMeta {
             return Ok(());
         }
         println!("Processing table {}", self.table);
-        let current_table = &self.table.clone();
-        let tracked_columns: Vec<String> = self.get_references().keys().map(|k| k.to_owned()).collect();
-        if self.get_checks().count() > 0 {
-            process_table_inserts(working_file_path, current_table, |statement, value_per_field| {
-                if self.get_checks().all(|t| {
-                    t.test(
-                        t.get_column_name(),
-                        &value_per_field[t.get_column_name()],
-                        lookup_table,
-                    )
-                }) {
-                    for key in &tracked_columns {
-                        let (_, column) = ColumnMeta::get_components_from_key(key)?;
-                        let value = &value_per_field[&column];
-                        self.capture_reference(key, value.as_string())?;
-                    }
-                    return Ok(Some(statement.to_owned()));
-                }
 
-                Ok(None)
-            })?;
-        }
+
+        let tracked_columns: Vec<&str> = self.get_references().keys().map(|k| k.as_str()).collect();
+        let captured = TableMeta::process_inserts(working_file_path, self.get_checks(), tracked_columns, lookup_table)?;
+
+        self.references = captured;
 
         self.fulfill_dependency(current_pass);
 
@@ -226,6 +251,7 @@ impl CheckCollection {
             }
             current_pass += 1;
         }
+        dbg!(self.get_lookup_table());
         Ok(())
     }
 }
