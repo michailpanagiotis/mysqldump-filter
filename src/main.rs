@@ -58,33 +58,28 @@ fn main() -> Result<(), anyhow::Error> {
     };
     let working_file_path = working_dir_path.join("INTERIM").with_extension("sql");
 
-    // explode_to_files(
-    //     working_file_path.as_path(),
-    //     working_dir_path.as_path(),
-    //     input_file.as_path(),
-    //     |statement, _| {
-    //         if let Some(table) = statement.get_table() {
-    //             if let Some(allowed) = &config.allow_data_on_tables {
-    //                 if !allowed.contains(table) {
-    //                     return None;
-    //                 }
-    //             }
-    //         }
-    //         Some(statement.clone())
-    //     }
-    // ).unwrap_or_else(|e| {
-    //     panic!("Problem exploding to files: {e:?}");
-    // });
+    explode_to_files(
+        working_file_path.as_path(),
+        working_dir_path.as_path(),
+        input_file.as_path(),
+        |statement, _| {
+            if let Some(table) = statement.get_table() {
+                if let Some(allowed) = &config.allow_data_on_tables {
+                    if !allowed.contains(table) {
+                        return None;
+                    }
+                }
+            }
+            Some(statement.clone())
+        }
+    ).unwrap_or_else(|e| {
+        panic!("Problem exploding to files: {e:?}");
+    });
 
-    let mut collection = CheckCollection::new(config.filters.iter().chain(&config.cascades))?;
-    let table_files = get_table_files(working_file_path.as_path())?;
-    collection.process(working_file_path.as_path())?;
-
-    // for it in read_table_file(&PathBuf::from("here/v1/admins.sql"), &None)? {
-    //     dbg!(it);
-    // }
-    // gather(&working_file_path, &output_file)?;
-    //
+    // let mut collection = CheckCollection::new(config.filters.iter().chain(&config.cascades))?;
+    // let table_files = get_table_files(working_file_path.as_path())?;
+    // collection.process(working_file_path.as_path())?;
+    gather(&working_file_path, &output_file)?;
 
     if let Some(dir) = temp_dir {
        let _ = dir.close();

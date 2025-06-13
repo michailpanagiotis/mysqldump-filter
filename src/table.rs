@@ -109,20 +109,14 @@ impl TableMeta {
 
     pub fn test(
         &mut self,
-        pass: &usize,
         sql_statement: &SqlStatement,
         tracker: &Tracker,
+        tracked_columns: &Vec<String>,
         lookup_table: &HashMap<String, HashSet<String>>,
     ) -> Result<bool, anyhow::Error> {
         if !sql_statement.is_insert() {
             return Ok(true);
         }
-
-        if !self.has_fulfilled_dependencies() {
-            return Ok(true);
-        }
-
-        self.fulfill_dependency(pass);
 
         let Some(value_per_field) = tracker.get_values(sql_statement) else {
             return Ok(true);
@@ -137,11 +131,10 @@ impl TableMeta {
         });
 
         if all_checks_passed {
-            let keys: Vec<String> = self.get_references().keys().map(|k| k.to_owned()).collect();
-            for key in keys {
-                let (_, column) = ColumnMeta::get_components_from_key(&key)?;
+            for key in tracked_columns {
+                let (_, column) = ColumnMeta::get_components_from_key(key)?;
                 let value = &value_per_field[&column];
-                self.capture_reference(&key, value.as_string())?;
+                self.capture_reference(key, value.as_string())?;
             }
         }
 
@@ -160,6 +153,7 @@ impl TableMeta {
         }
         println!("Processing table {}", self.table);
         let current_table = &self.table.clone();
+        let tracked_columns: Vec<String> = self.get_references().keys().map(|k| k.to_owned()).collect();
         process_table_file(working_file_path, current_table, |statement, tracker| {
             let copied = Some(statement.to_owned());
             let Some(table) = statement.get_table() else {
@@ -170,9 +164,9 @@ impl TableMeta {
             }
 
             let passed = self.test(
-                current_pass,
                 statement,
                 tracker,
+                &tracked_columns,
                 lookup_table,
             )?;
             if !passed {
@@ -180,6 +174,8 @@ impl TableMeta {
             }
             Ok(copied)
         })?;
+
+        self.fulfill_dependency(current_pass);
 
         Ok(())
     }

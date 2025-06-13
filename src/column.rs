@@ -1,9 +1,4 @@
-use std::collections::HashMap;
 use std::fmt::Debug;
-
-pub trait DBColumn {
-    fn get_column_name(&self) -> &str;
-}
 
 #[derive(Clone)]
 #[derive(Debug)]
@@ -13,16 +8,9 @@ pub struct ColumnMeta {
     table: String,
     column: String,
     foreign_keys: Vec<String>,
-    position: Option<usize>,
     is_referenced: bool,
     checks: Vec<String>,
     tested_at_pass: Option<usize>,
-}
-
-impl DBColumn for ColumnMeta {
-    fn get_column_name(&self) -> &str {
-        &self.column
-    }
 }
 
 impl ColumnMeta {
@@ -51,7 +39,6 @@ impl ColumnMeta {
             is_referenced: false,
             foreign_keys: foreign_keys.iter().map(|x| x.to_string()).collect(),
             checks: Vec::new(),
-            position: None,
             tested_at_pass: None,
         })
     }
@@ -73,10 +60,6 @@ impl ColumnMeta {
 
     pub fn get_column_key(&self) -> &str {
         &self.key
-    }
-
-    pub fn capture_position(&mut self, positions: &HashMap<String, usize>) {
-        self.position = Some(positions[self.get_column_name()]);
     }
 
     pub fn get_checks(&self) -> impl Iterator<Item=&String> {

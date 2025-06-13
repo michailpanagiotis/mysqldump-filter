@@ -4,9 +4,6 @@ use thiserror::Error;
 use std::rc::Weak;
 use std::cell::RefCell;
 
-use crate::column::ColumnMeta;
-use crate::sql::get_column_positions;
-
 pub trait ReferenceTracker {
     fn get_references(&self) -> &HashMap<String, HashSet<String>>;
     fn get_references_mut(&mut self) -> &mut HashMap<String, HashSet<String>>;
