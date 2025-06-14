@@ -200,10 +200,10 @@ impl SqlStatement {
         }
     }
 
-    pub fn get_values(&self) -> Option<Vec<&str>> {
+    pub fn get_values(&self) -> Result<Vec<&str>, anyhow::Error> {
         match &self.parts {
-            SqlStatementParts::Insert(insert_statement) => Some(insert_statement.get_values()),
-            _ => None,
+            SqlStatementParts::Insert(insert_statement) => Ok(insert_statement.get_values()),
+            _ => Err(anyhow::anyhow!("cannot get values unless on insert statement")),
         }
     }
 
@@ -379,15 +379,15 @@ impl Tracker {
         &self.column_positions[table]
     }
 
-    pub fn get_values<'a>(&'a self, insert_statement: &'a SqlStatement) -> Option<HashMap<String, Value<'a>>> {
+    pub fn get_insert_values<'a>(&'a self, insert_statement: &'a SqlStatement) -> Result<HashMap<String, Value<'a>>, anyhow::Error> {
         let Some(table) = insert_statement.get_table() else {
-            return None;
+            return Err(anyhow::anyhow!("insert statement has no table"));
         };
 
         let data_types = self.get_table_data_types(table);
         let positions = self.get_table_column_positions(table);
-        let values = insert_statement.get_values().unwrap();
-        Some(positions.iter().map(|(column_name, position)| (column_name.to_owned(), Value::parse(values[*position], &data_types[column_name]))).collect())
+        let values = insert_statement.get_values()?;
+        Ok(positions.iter().map(|(column_name, position)| (column_name.to_owned(), Value::parse(values[*position], &data_types[column_name]))).collect())
     }
 
     fn track_columns(&mut self, tracked_columns: &[&str]) -> Result<(), anyhow::Error> {
@@ -402,17 +402,33 @@ impl Tracker {
         Ok(())
     }
 
-    fn capture_values(&mut self, value_per_field: HashMap<String, Value<'_>>) {
+    fn capture_values(&mut self, value_per_field: HashMap<String, String>) {
         for (key, column) in &self.column_per_key {
             let value = &value_per_field[column];
             if let Some(set) = self.captured_values.get_mut(key) {
-                set.insert(value.as_string().to_owned());
+                set.insert(value.to_owned());
             }
         }
     }
 
     fn get_captured_values(&self) -> &HashMap<String, HashSet<String>> {
         &self.captured_values
+    }
+
+    fn transform_statement<F>(&mut self, input_statement: &SqlStatement, mut transform: F) -> Result<Option<Vec<u8>>, anyhow::Error>
+        where F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlStatement>, anyhow::Error>
+    {
+        if input_statement.is_insert() {
+            let value_per_field = self.get_insert_values(input_statement)?;
+            if let Some(statement) = transform(&input_statement, &value_per_field)? {
+                // capture values
+                let to_capture: HashMap<String, String> = value_per_field.iter().map(|(f, v)| (f.to_owned(), v.as_string().to_owned())).collect();
+                self.capture_values(to_capture);
+                return Ok(Some(statement.as_bytes()));
+            }
+            return Ok(None);
+        }
+        Ok(Some(input_statement.as_bytes()))
     }
 }
 
@@ -544,11 +560,13 @@ pub fn process_table_inserts<F>(
     let mut tracker = Tracker::from_working_file_path(working_file_path)?;
     tracker.track_columns(tracked_columns)?;
 
+    let tracker_cell = Rc::new(RefCell::new(tracker.clone()));
+
     let table_file = tracker.get_table_file(table);
     let output_file = &table_file.with_extension("proc");
     let mut writer = get_writer(output_file)?;
 
-    let statements = TrackedStatements::from_file(table_file, &Some(&Rc::new(RefCell::new(tracker.clone()))))?;
+    let statements = TrackedStatements::from_file(table_file, &Some(&tracker_cell))?;
 
     for (st, tr_option) in statements {
         let input_statement = st?;
@@ -556,25 +574,14 @@ pub fn process_table_inserts<F>(
         if input_statement.get_table().as_ref().is_none_or(|t| t != table) {
             return Err(anyhow::anyhow!("wrong table"));
         }
-        // filter inserts
-        if input_statement.is_insert() {
-            let borrowed = tr.borrow();
-            let Some(value_per_field) = borrowed.get_values(&input_statement) else {
-                return Err(anyhow::anyhow!("cannot get values"));
-            };
-            if let Some(statement) = transform(&input_statement, &value_per_field)? {
-                // capture values
-                tracker.capture_values(value_per_field);
-                writer.write_all(&statement.as_bytes())?;
-            }
-        } else {
-            writer.write_all(&input_statement.as_bytes())?;
+        if let Some(bytes) = tr.borrow_mut().transform_statement(&input_statement, &mut transform)? {
+            writer.write_all(&bytes)?;
         }
     };
 
     //fs::rename(output_file, table_file).expect("cannot rename");
 
-    Ok(tracker.get_captured_values().clone())
+    Ok(tracker_cell.borrow().get_captured_values().clone())
 }
 
 pub fn read_table_file(working_file_path: &Path, table: &str) -> Result<impl Iterator<Item=IteratorItem>, anyhow::Error> {
@@ -602,6 +609,7 @@ pub fn get_table_files(working_file_path: &Path) -> Result<HashMap<String, PathB
     Ok(table_files)
 }
 
+#[allow(dead_code)]
 pub fn gather(working_file_path: &Path, output_path: &Path) -> Result<(), anyhow::Error> {
     let output = File::create(output_path)?;
     let mut writer = BufWriter::new(output);
