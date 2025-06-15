@@ -420,22 +420,6 @@ impl Tracker {
     fn get_captured_values(&self) -> &CapturedValues {
         &self.captured_values
     }
-
-    fn transform_statement<F>(&mut self, input_statement: &SqlStatement, mut transform: F) -> Result<Option<SqlStatement>, anyhow::Error>
-        where F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlStatement>, anyhow::Error>
-    {
-        if input_statement.is_insert() {
-            let value_per_field = self.get_insert_values(input_statement)?;
-            if let Some(statement) = transform(input_statement, &value_per_field)? {
-                // capture values
-                let to_capture: HashMap<String, String> = value_per_field.iter().map(|(f, v)| (f.to_owned(), v.as_string().to_owned())).collect();
-                self.capture_values(to_capture);
-                return Ok(Some(statement));
-            }
-            return Ok(None);
-        }
-        Ok(Some(input_statement.clone()))
-    }
 }
 
 struct TrackedStatements {
@@ -488,15 +472,6 @@ impl Iterator for TrackedStatements {
             if let Err(e) = self.tracker.borrow_mut().capture(st, &self.current_table) {
                 return Some(Err(e));
             }
-            // match self.tracker.borrow_mut().transform_statement(st, &mut self.transform) {
-            //     Err(e) => return Some((Err(e), None)),
-            //     Ok(res) => {
-            //         match res {
-            //             Some(tr) => return Some((statement, Some(Ok(tr)))),
-            //             None => return Some((statement, None)),
-            //         }
-            //     }
-            // }
         }
 
         Some(statement)
@@ -516,11 +491,26 @@ impl<F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlSt
         })
     }
 
-    fn transform(&mut self, item: IteratorItem) -> Option<IteratorItem> {
+    fn transform_statement(&mut self, input_statement: &SqlStatement) -> Result<Option<SqlStatement>, anyhow::Error> {
+        if input_statement.is_insert() {
+            let mut tracker = self.iter.tracker.borrow_mut();
+            let value_per_field = tracker.get_insert_values(input_statement)?;
+            if let Some(statement) = (self.transform)(input_statement, &value_per_field)? {
+                // capture values
+                let to_capture: HashMap<String, String> = value_per_field.iter().map(|(f, v)| (f.to_owned(), v.as_string().to_owned())).collect();
+                tracker.capture_values(to_capture);
+                return Ok(Some(statement));
+            }
+            return Ok(None);
+        }
+        Ok(Some(input_statement.clone()))
+    }
+
+    fn transform_iteration_item(&mut self, item: IteratorItem) -> Option<IteratorItem> {
         match item {
             Err(_) => Some(item),
             Ok(st) => {
-                match self.iter.tracker.borrow_mut().transform_statement(&st, &mut self.transform) {
+                match self.transform_statement(&st) {
                     Err(e) => Some(Err(e)),
                     Ok(transformed_option) => {
                         transformed_option.map(Ok)
@@ -538,7 +528,7 @@ impl<F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlSt
 
         while {
             let input_statement = self.iter.next()?;
-            transformed = self.transform(input_statement);
+            transformed = self.transform_iteration_item(input_statement);
             transformed.is_none()
         } {}
 
@@ -627,9 +617,6 @@ pub fn process_table_inserts<F>(
             return Err(anyhow::anyhow!("wrong table"));
         }
         writer.write_all(&input_statement.as_bytes())?;
-        // if let Some(transformed) = tracker_cell.borrow_mut().transform_statement(&input_statement, &mut transform)? {
-        //     writer.write_all(&transformed.as_bytes())?;
-        // }
     };
 
     //fs::rename(output_file, table_file).expect("cannot rename");
