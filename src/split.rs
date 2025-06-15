@@ -20,9 +20,9 @@ type DataTypes = HashMap<String, TableDataTypes>;
 type TableColumnPositions = HashMap<String, usize>;
 type ColumnPositions = HashMap<String, TableColumnPositions>;
 type SqlStatementResult = Result<SqlStatement, anyhow::Error>;
-type IteratorItem = (SqlStatementResult, Rc<RefCell<Tracker>>);
+type IteratorItem = SqlStatementResult;
+type CapturedValues = HashMap<String, HashSet<String>>;
 type TrackerCell = Rc<RefCell<Tracker>>;
-type OptionalTracker<'a> = Option<&'a Rc<RefCell<Tracker>>>;
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -118,7 +118,7 @@ impl InsertStatement {
         }
     }
 
-    pub fn get_values(&self) -> Vec<&str> {
+    fn get_values(&self) -> Vec<&str> {
         parse_insert_values(&self.values_part)
     }
 }
@@ -314,25 +314,42 @@ pub struct Tracker {
     files: Files,
     data_types: DataTypes,
     column_positions: ColumnPositions,
-    captured_values: HashMap<String, HashSet<String>>,
+    captured_values: CapturedValues,
     column_per_key: HashMap<String, String>,
 }
 
 impl Tracker {
-    pub fn new() -> Self {
-        Tracker {
+    fn new(tracked_columns: &[&str]) -> Result<Self, anyhow::Error> {
+        let (captured_values, column_per_key) = Tracker::prepare_tracked_columns(tracked_columns)?;
+        Ok(Tracker {
             files: HashMap::new(),
             data_types: HashMap::new(),
             column_positions: HashMap::new(),
-            captured_values: HashMap::new(),
-            column_per_key: HashMap::new(),
-        }
+            captured_values,
+            column_per_key,
+        })
     }
 
-    fn from_working_file_path(filepath: &Path) -> Result<Self, anyhow::Error> {
-        let tracker = Rc::new(RefCell::new(Tracker::new()));
+    fn prepare_tracked_columns(tracked_columns: &[&str]) -> Result<(CapturedValues, HashMap<String, String>), anyhow::Error> {
+        let mut captured_values: CapturedValues = HashMap::new();
+        let mut column_per_key: HashMap<String, String> = HashMap::new();
+        for key in tracked_columns {
+            captured_values.insert(key.to_string(), HashSet::new());
+            let mut split = key.split('.');
+            let (Some(_), Some(column), None) = (split.next(), split.next(), split.next()) else {
+                return Err(anyhow::anyhow!("malformed key {}", key));
+            };
+            column_per_key.insert(key.to_string(), column.to_owned());
+        }
+        Ok((captured_values, column_per_key))
+    }
+
+
+    fn from_working_file_path(filepath: &Path, tracked_columns: &[&str]) -> Result<Self, anyhow::Error> {
+        let tracker = Rc::new(RefCell::new(Tracker::new(tracked_columns)?));
         let statements = TrackedStatements::from_file(filepath, &tracker)?;
-        for (_, _) in statements {}
+        // consume iterator to populate tracker
+        statements.for_each(drop);
         Ok((*tracker.borrow()).clone())
     }
 
@@ -368,19 +385,19 @@ impl Tracker {
         Ok(())
     }
 
-    pub fn get_table_file(&self, table: &str) -> &PathBuf {
+    fn get_table_file(&self, table: &str) -> &PathBuf {
         &self.files[table]
     }
 
-    pub fn get_table_data_types(&self, table: &str) -> &TableDataTypes {
+    fn get_table_data_types(&self, table: &str) -> &TableDataTypes {
         &self.data_types[table]
     }
 
-    pub fn get_table_column_positions(&self, table: &str) -> &TableColumnPositions {
+    fn get_table_column_positions(&self, table: &str) -> &TableColumnPositions {
         &self.column_positions[table]
     }
 
-    pub fn get_insert_values<'a>(&'a self, insert_statement: &'a SqlStatement) -> Result<HashMap<String, Value<'a>>, anyhow::Error> {
+    fn get_insert_values<'a>(&'a self, insert_statement: &'a SqlStatement) -> Result<HashMap<String, Value<'a>>, anyhow::Error> {
         let Some(table) = insert_statement.get_table() else {
             return Err(anyhow::anyhow!("insert statement has no table"));
         };
@@ -389,18 +406,6 @@ impl Tracker {
         let positions = self.get_table_column_positions(table);
         let values = insert_statement.get_values()?;
         Ok(positions.iter().map(|(column_name, position)| (column_name.to_owned(), Value::parse(values[*position], &data_types[column_name]))).collect())
-    }
-
-    fn track_columns(&mut self, tracked_columns: &[&str]) -> Result<(), anyhow::Error> {
-        for key in tracked_columns {
-            self.captured_values.insert(key.to_string(), HashSet::new());
-            let mut split = key.split('.');
-            let (Some(_), Some(column), None) = (split.next(), split.next(), split.next()) else {
-                return Err(anyhow::anyhow!("malformed key {}", key));
-            };
-            self.column_per_key.insert(key.to_string(), column.to_owned());
-        }
-        Ok(())
     }
 
     fn capture_values(&mut self, value_per_field: HashMap<String, String>) {
@@ -412,7 +417,7 @@ impl Tracker {
         }
     }
 
-    fn get_captured_values(&self) -> &HashMap<String, HashSet<String>> {
+    fn get_captured_values(&self) -> &CapturedValues {
         &self.captured_values
     }
 
@@ -421,7 +426,7 @@ impl Tracker {
     {
         if input_statement.is_insert() {
             let value_per_field = self.get_insert_values(input_statement)?;
-            if let Some(statement) = transform(&input_statement, &value_per_field)? {
+            if let Some(statement) = transform(input_statement, &value_per_field)? {
                 // capture values
                 let to_capture: HashMap<String, String> = value_per_field.iter().map(|(f, v)| (f.to_owned(), v.as_string().to_owned())).collect();
                 self.capture_values(to_capture);
@@ -480,10 +485,12 @@ impl Iterator for TrackedStatements {
                 self.unlock_next = true;
             }
 
-            self.tracker.borrow_mut().capture(st, &self.current_table);
+            if let Err(e) = self.tracker.borrow_mut().capture(st, &self.current_table) {
+                return Some(Err(e));
+            }
         }
 
-        Some((statement, Rc::clone(&self.tracker)))
+        Some(statement)
     }
 }
 
@@ -506,11 +513,11 @@ pub fn explode_to_files<F>(
     let mut writers: HashMap<String, BufWriter<File>> = HashMap::new();
     let mut table_files: HashMap<String, PathBuf> = HashMap::new();
     let mut working_file_writer = get_writer(working_file_path)?;
-    let tracker = Rc::new(RefCell::new(Tracker::new()));
+    let tracker = Rc::new(RefCell::new(Tracker::new(&[])?));
 
     let statements = TrackedStatements::from_file(sqldump_filepath, &tracker)?;
 
-    for (st, _) in statements {
+    for st in statements {
         let transformed = transform(&st?, &tracker.borrow());
         if let Some(statement) = transformed {
             match statement.get_table() {
@@ -552,22 +559,19 @@ pub fn process_table_inserts<F>(
     table: &str,
     tracked_columns: &[&str],
     mut transform: F,
-) -> Result<HashMap<String, HashSet<String>>, anyhow::Error>
+) -> Result<CapturedValues, anyhow::Error>
   where F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlStatement>, anyhow::Error>
 {
     println!("Processing table {table}");
-    let mut tracker = Tracker::from_working_file_path(working_file_path)?;
-    tracker.track_columns(tracked_columns)?;
+    let tracker_cell = Rc::new(RefCell::new(Tracker::from_working_file_path(working_file_path, tracked_columns)?));
 
-    let tracker_cell = Rc::new(RefCell::new(tracker.clone()));
-
-    let table_file = tracker.get_table_file(table);
+    let table_file = tracker_cell.borrow().get_table_file(table).to_owned();
     let output_file = &table_file.with_extension("proc");
     let mut writer = get_writer(output_file)?;
 
-    let statements = TrackedStatements::from_file(table_file, &tracker_cell)?;
+    let statements = TrackedStatements::from_file(&table_file, &tracker_cell)?;
 
-    for (st, _) in statements {
+    for st in statements {
         let input_statement = st?;
         if input_statement.get_table().as_ref().is_none_or(|t| t != table) {
             return Err(anyhow::anyhow!("wrong table"));
