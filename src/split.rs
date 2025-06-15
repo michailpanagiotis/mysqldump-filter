@@ -568,13 +568,12 @@ pub fn process_table_inserts<F>(
 
     let statements = TrackedStatements::from_file(table_file, &Some(&tracker_cell))?;
 
-    for (st, tr_option) in statements {
+    for (st, _) in statements {
         let input_statement = st?;
-        let tr = tr_option.ok_or(anyhow::anyhow!("unknown tracker"))?;
         if input_statement.get_table().as_ref().is_none_or(|t| t != table) {
             return Err(anyhow::anyhow!("wrong table"));
         }
-        if let Some(bytes) = tr.borrow_mut().transform_statement(&input_statement, &mut transform)? {
+        if let Some(bytes) = tracker_cell.borrow_mut().transform_statement(&input_statement, &mut transform)? {
             writer.write_all(&bytes)?;
         }
     };
