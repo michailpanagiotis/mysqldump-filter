@@ -518,15 +518,12 @@ impl<F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlSt
 
     fn transform(&mut self, item: IteratorItem) -> Option<IteratorItem> {
         match item {
-            Err(_) => return Some(item),
+            Err(_) => Some(item),
             Ok(st) => {
                 match self.iter.tracker.borrow_mut().transform_statement(&st, &mut self.transform) {
-                    Err(e) => return Some(Err(e)),
+                    Err(e) => Some(Err(e)),
                     Ok(transformed_option) => {
-                        match transformed_option {
-                            Some(tr) => return Some(Ok(tr)),
-                            None => return None,
-                        }
+                        transformed_option.map(Ok)
                     }
                 }
             }
