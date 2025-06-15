@@ -583,15 +583,6 @@ pub fn process_table_inserts<F>(
     Ok(tracker_cell.borrow().get_captured_values().clone())
 }
 
-pub fn read_table_file(working_file_path: &Path, table: &str) -> Result<impl Iterator<Item=IteratorItem>, anyhow::Error> {
-    let tracker = Rc::new(RefCell::new(Tracker::from_working_file_path(working_file_path)?));
-
-    let binding = tracker.borrow();
-    let table_file = binding.get_table_file(table);
-    let statements = TrackedStatements::from_file(table_file, &Some(&tracker))?;
-    Ok(statements)
-}
-
 pub fn get_table_files(working_file_path: &Path) -> Result<HashMap<String, PathBuf>, anyhow::Error> {
     let mut table_files: HashMap<String, PathBuf> = HashMap::new();
     let file = File::open(working_file_path)?;

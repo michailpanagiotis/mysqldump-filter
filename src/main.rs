@@ -12,7 +12,7 @@ mod sql;
 mod traits;
 
 use table::CheckCollection;
-use split::{explode_to_files, gather, get_table_files, read_table_file};
+use split::{explode_to_files, gather, get_table_files};
 
 #[derive(Debug)]
 #[derive(Deserialize)]
