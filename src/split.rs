@@ -20,7 +20,7 @@ type DataTypes = HashMap<String, TableDataTypes>;
 type TableColumnPositions = HashMap<String, usize>;
 type ColumnPositions = HashMap<String, TableColumnPositions>;
 type SqlStatementResult = Result<SqlStatement, anyhow::Error>;
-type IteratorItem = (SqlStatementResult, Option<SqlStatementResult>);
+type IteratorItem = SqlStatementResult;
 type CapturedValues = HashMap<String, HashSet<String>>;
 type TrackerCell = Rc<RefCell<Tracker>>;
 
@@ -347,7 +347,7 @@ impl Tracker {
 
     fn from_working_file_path(filepath: &Path, tracked_columns: &[&str]) -> Result<Self, anyhow::Error> {
         let tracker = Rc::new(RefCell::new(Tracker::new(tracked_columns)?));
-        let statements = TrackedStatements::from_file(filepath, &tracker, |x, _| Ok(Some(x.clone())))?;
+        let statements = TrackedStatements::from_file(filepath, &tracker)?;
         // consume iterator to populate tracker
         statements.for_each(drop);
         Ok((*tracker.borrow()).clone())
@@ -438,22 +438,20 @@ impl Tracker {
     }
 }
 
-struct TrackedStatements<F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlStatement>, anyhow::Error>> {
+struct TrackedStatements {
     iter: PlainStatements,
     current_table: Option<String>,
     unlock_next: bool,
     tracker: Rc<RefCell<Tracker>>,
-    transform: F,
 }
 
-impl<F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlStatement>, anyhow::Error>> TrackedStatements<F> {
-    fn from_file(sqldump_filepath: &Path, tracker: &TrackerCell, mut transform: F) -> Result<Self, anyhow::Error> {
+impl TrackedStatements {
+    fn from_file(sqldump_filepath: &Path, tracker: &TrackerCell) -> Result<Self, anyhow::Error> {
         Ok(TrackedStatements {
             iter: PlainStatements::from_file(sqldump_filepath)?,
             current_table: None,
             unlock_next: false,
             tracker: Rc::clone(tracker),
-            transform,
         })
     }
 
@@ -470,7 +468,7 @@ impl<F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlSt
     }
 }
 
-impl<F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlStatement>, anyhow::Error>> Iterator for TrackedStatements<F> {
+impl Iterator for TrackedStatements {
     type Item = IteratorItem;
     fn next(&mut self) -> Option<IteratorItem> {
         let mut statement = self.read_statement()?;
@@ -488,20 +486,66 @@ impl<F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlSt
             }
 
             if let Err(e) = self.tracker.borrow_mut().capture(st, &self.current_table) {
-                return Some((Err(e), Some(Err(anyhow::anyhow!("statement error")))));
+                return Some(Err(e));
             }
-            match self.tracker.borrow_mut().transform_statement(st, &mut self.transform) {
-                Err(e) => return Some((Err(e), None)),
-                Ok(res) => {
-                    match res {
-                        Some(tr) => return Some((statement, Some(Ok(tr)))),
-                        None => return Some((statement, None)),
+            // match self.tracker.borrow_mut().transform_statement(st, &mut self.transform) {
+            //     Err(e) => return Some((Err(e), None)),
+            //     Ok(res) => {
+            //         match res {
+            //             Some(tr) => return Some((statement, Some(Ok(tr)))),
+            //             None => return Some((statement, None)),
+            //         }
+            //     }
+            // }
+        }
+
+        Some(statement)
+    }
+}
+
+struct TransformedStatements<F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlStatement>, anyhow::Error>> {
+    iter: TrackedStatements,
+    transform: F,
+}
+
+impl<F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlStatement>, anyhow::Error>> TransformedStatements<F> {
+    fn from_file(sqldump_filepath: &Path, tracker: &TrackerCell, transform: F) -> Result<Self, anyhow::Error> {
+        Ok(TransformedStatements {
+            iter: TrackedStatements::from_file(sqldump_filepath, tracker)?,
+            transform,
+        })
+    }
+
+    fn transform(&mut self, item: IteratorItem) -> Option<IteratorItem> {
+        match item {
+            Err(_) => return Some(item),
+            Ok(st) => {
+                match self.iter.tracker.borrow_mut().transform_statement(&st, &mut self.transform) {
+                    Err(e) => return Some(Err(e)),
+                    Ok(transformed_option) => {
+                        match transformed_option {
+                            Some(tr) => return Some(Ok(tr)),
+                            None => return None,
+                        }
                     }
                 }
             }
         }
+    }
+}
 
-        Some((statement, None))
+impl<F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlStatement>, anyhow::Error>> Iterator for TransformedStatements<F> {
+    type Item = IteratorItem;
+    fn next(&mut self) -> Option<IteratorItem> {
+        let mut transformed;
+
+        while {
+            let input_statement = self.iter.next()?;
+            transformed = self.transform(input_statement);
+            transformed.is_none()
+        } {}
+
+        transformed
     }
 }
 
@@ -526,9 +570,9 @@ pub fn explode_to_files<F>(
     let mut working_file_writer = get_writer(working_file_path)?;
     let tracker = Rc::new(RefCell::new(Tracker::new(&[])?));
 
-    let statements = TrackedStatements::from_file(sqldump_filepath, &tracker, transform)?;
+    let statements = TransformedStatements::from_file(sqldump_filepath, &tracker, transform)?;
 
-    for (st, transformed) in statements {
+    for st in statements {
         let statement = st?;
         match statement.get_table() {
             None => working_file_writer.write_all(&statement.as_bytes())?,
@@ -578,16 +622,14 @@ pub fn process_table_inserts<F>(
     let output_file = &table_file.with_extension("proc");
     let mut writer = get_writer(output_file)?;
 
-    let statements = TrackedStatements::from_file(&table_file, &tracker_cell, transform)?;
+    let statements = TransformedStatements::from_file(&table_file, &tracker_cell, transform)?;
 
-    for (st, transformed) in statements {
+    for st in statements {
         let input_statement = st?;
         if input_statement.get_table().as_ref().is_none_or(|t| t != table) {
             return Err(anyhow::anyhow!("wrong table"));
         }
-        if let Some(tr) = transformed {
-            writer.write_all(&tr?.as_bytes())?;
-        }
+        writer.write_all(&input_statement.as_bytes())?;
         // if let Some(transformed) = tracker_cell.borrow_mut().transform_statement(&input_statement, &mut transform)? {
         //     writer.write_all(&transformed.as_bytes())?;
         // }
