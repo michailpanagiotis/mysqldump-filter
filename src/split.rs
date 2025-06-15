@@ -20,7 +20,8 @@ type DataTypes = HashMap<String, TableDataTypes>;
 type TableColumnPositions = HashMap<String, usize>;
 type ColumnPositions = HashMap<String, TableColumnPositions>;
 type SqlStatementResult = Result<SqlStatement, anyhow::Error>;
-type IteratorItem = (SqlStatementResult, Option<Rc<RefCell<Tracker>>>);
+type IteratorItem = (SqlStatementResult, Rc<RefCell<Tracker>>);
+type TrackerCell = Rc<RefCell<Tracker>>;
 type OptionalTracker<'a> = Option<&'a Rc<RefCell<Tracker>>>;
 
 lazy_static! {
@@ -328,9 +329,9 @@ impl Tracker {
         }
     }
 
-    pub fn from_working_file_path(filepath: &Path) -> Result<Self, anyhow::Error> {
+    fn from_working_file_path(filepath: &Path) -> Result<Self, anyhow::Error> {
         let tracker = Rc::new(RefCell::new(Tracker::new()));
-        let statements = TrackedStatements::from_file(filepath, &Some(&tracker))?;
+        let statements = TrackedStatements::from_file(filepath, &tracker)?;
         for (_, _) in statements {}
         Ok((*tracker.borrow()).clone())
     }
@@ -436,16 +437,16 @@ struct TrackedStatements {
     iter: PlainStatements,
     current_table: Option<String>,
     unlock_next: bool,
-    tracker: Option<Rc<RefCell<Tracker>>>,
+    tracker: Rc<RefCell<Tracker>>,
 }
 
 impl TrackedStatements {
-    fn from_file(sqldump_filepath: &Path, tracker: &OptionalTracker<'_>) -> Result<Self, anyhow::Error> {
+    fn from_file(sqldump_filepath: &Path, tracker: &TrackerCell) -> Result<Self, anyhow::Error> {
         Ok(TrackedStatements {
             iter: PlainStatements::from_file(sqldump_filepath)?,
             current_table: None,
             unlock_next: false,
-            tracker: tracker.map(Rc::clone),
+            tracker: Rc::clone(tracker),
         })
     }
 
@@ -479,12 +480,10 @@ impl Iterator for TrackedStatements {
                 self.unlock_next = true;
             }
 
-            if let Some(tracker) = &self.tracker {
-                tracker.borrow_mut().capture(st, &self.current_table);
-            }
+            self.tracker.borrow_mut().capture(st, &self.current_table);
         }
 
-        Some((statement, self.tracker.as_ref().map(Rc::clone)))
+        Some((statement, Rc::clone(&self.tracker)))
     }
 }
 
@@ -509,7 +508,7 @@ pub fn explode_to_files<F>(
     let mut working_file_writer = get_writer(working_file_path)?;
     let tracker = Rc::new(RefCell::new(Tracker::new()));
 
-    let statements = TrackedStatements::from_file(sqldump_filepath, &Some(&tracker))?;
+    let statements = TrackedStatements::from_file(sqldump_filepath, &tracker)?;
 
     for (st, _) in statements {
         let transformed = transform(&st?, &tracker.borrow());
@@ -566,7 +565,7 @@ pub fn process_table_inserts<F>(
     let output_file = &table_file.with_extension("proc");
     let mut writer = get_writer(output_file)?;
 
-    let statements = TrackedStatements::from_file(table_file, &Some(&tracker_cell))?;
+    let statements = TrackedStatements::from_file(table_file, &tracker_cell)?;
 
     for (st, _) in statements {
         let input_statement = st?;
