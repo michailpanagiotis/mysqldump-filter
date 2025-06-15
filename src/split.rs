@@ -319,15 +319,23 @@ pub struct Tracker {
 }
 
 impl Tracker {
-    fn new(tracked_columns: &[&str]) -> Result<Self, anyhow::Error> {
+    fn new(tracked_columns: &[&str]) -> Result<Rc<RefCell<Self>>, anyhow::Error> {
         let (captured_values, column_per_key) = Tracker::prepare_tracked_columns(tracked_columns)?;
-        Ok(Tracker {
+        Ok(Rc::new(RefCell::new(Tracker {
             files: HashMap::new(),
             data_types: HashMap::new(),
             column_positions: HashMap::new(),
             captured_values,
             column_per_key,
-        })
+        })))
+    }
+
+    fn from_working_file_path(filepath: &Path, tracked_columns: &[&str]) -> Result<Self, anyhow::Error> {
+        let tracker = Tracker::new(tracked_columns)?;
+        let statements = TrackedStatements::from_file(filepath, &tracker)?;
+        // consume iterator to populate tracker
+        statements.for_each(drop);
+        Ok((*tracker.borrow()).clone())
     }
 
     fn prepare_tracked_columns(tracked_columns: &[&str]) -> Result<(CapturedValues, HashMap<String, String>), anyhow::Error> {
@@ -342,15 +350,6 @@ impl Tracker {
             column_per_key.insert(key.to_string(), column.to_owned());
         }
         Ok((captured_values, column_per_key))
-    }
-
-
-    fn from_working_file_path(filepath: &Path, tracked_columns: &[&str]) -> Result<Self, anyhow::Error> {
-        let tracker = Rc::new(RefCell::new(Tracker::new(tracked_columns)?));
-        let statements = TrackedStatements::from_file(filepath, &tracker)?;
-        // consume iterator to populate tracker
-        statements.for_each(drop);
-        Ok((*tracker.borrow()).clone())
     }
 
     fn capture_positions(&mut self, statement: &SqlStatement, current_table: &Option<String>) {
@@ -555,7 +554,7 @@ pub fn explode_to_files<F>(
     let mut writers: HashMap<String, BufWriter<File>> = HashMap::new();
     let mut table_files: HashMap<String, PathBuf> = HashMap::new();
     let mut working_file_writer = get_writer(working_file_path)?;
-    let tracker = Rc::new(RefCell::new(Tracker::new(&[])?));
+    let tracker = Tracker::new(&[])?;
 
     let statements = TransformedStatements::from_file(sqldump_filepath, &tracker, transform)?;
 
@@ -606,17 +605,11 @@ pub fn process_table_inserts<F>(
     let tracker_cell = Rc::new(RefCell::new(Tracker::from_working_file_path(working_file_path, tracked_columns)?));
 
     let table_file = tracker_cell.borrow().get_table_file(table).to_owned();
-    let output_file = &table_file.with_extension("proc");
-    let mut writer = get_writer(output_file)?;
+    dbg!(&table_file);
+    let mut writer = get_writer(&table_file.with_extension("proc"))?;
 
-    let statements = TransformedStatements::from_file(&table_file, &tracker_cell, transform)?;
-
-    for st in statements {
-        let input_statement = st?;
-        if input_statement.get_table().as_ref().is_none_or(|t| t != table) {
-            return Err(anyhow::anyhow!("wrong table"));
-        }
-        writer.write_all(&input_statement.as_bytes())?;
+    for st in TransformedStatements::from_file(&table_file, &tracker_cell, transform)? {
+        writer.write_all(&st?.as_bytes())?;
     };
 
     //fs::rename(output_file, table_file).expect("cannot rename");
