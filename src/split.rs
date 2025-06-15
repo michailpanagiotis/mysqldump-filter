@@ -20,7 +20,7 @@ type DataTypes = HashMap<String, TableDataTypes>;
 type TableColumnPositions = HashMap<String, usize>;
 type ColumnPositions = HashMap<String, TableColumnPositions>;
 type SqlStatementResult = Result<SqlStatement, anyhow::Error>;
-type IteratorItem = (SqlStatementResult, Option<SqlStatement>);
+type IteratorItem = (SqlStatementResult, Option<SqlStatementResult>);
 type CapturedValues = HashMap<String, HashSet<String>>;
 type TrackerCell = Rc<RefCell<Tracker>>;
 
@@ -488,12 +488,15 @@ impl<F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlSt
             }
 
             if let Err(e) = self.tracker.borrow_mut().capture(st, &self.current_table) {
-                return Some((Err(e), None));
+                return Some((Err(e), Some(Err(anyhow::anyhow!("statement error")))));
             }
-            match self.tracker.borrow_mut().transform_statement(&st, &mut self.transform) {
+            match self.tracker.borrow_mut().transform_statement(st, &mut self.transform) {
                 Err(e) => return Some((Err(e), None)),
                 Ok(res) => {
-                    return Some((statement, res));
+                    match res {
+                        Some(tr) => return Some((statement, Some(Ok(tr)))),
+                        None => return Some((statement, None)),
+                    }
                 }
             }
         }
@@ -583,7 +586,7 @@ pub fn process_table_inserts<F>(
             return Err(anyhow::anyhow!("wrong table"));
         }
         if let Some(tr) = transformed {
-            writer.write_all(&tr.as_bytes())?;
+            writer.write_all(&tr?.as_bytes())?;
         }
         // if let Some(transformed) = tracker_cell.borrow_mut().transform_statement(&input_statement, &mut transform)? {
         //     writer.write_all(&transformed.as_bytes())?;
