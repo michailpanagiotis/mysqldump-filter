@@ -1,15 +1,16 @@
 use nom::{IResult, Parser};
 use nom::branch::alt;
-use nom::bytes::complete::{is_not, tag, tag_no_case, take, take_until};
-use nom::character::complete::{digit1, multispace0};
+use nom::bytes::complete::{is_not, tag, take, take_until};
+use nom::character::complete::multispace0;
 use nom::combinator::{opt, recognize};
 use nom::multi::many0;
-use nom::sequence::{delimited, pair, preceded};
+use nom::sequence::{delimited, preceded};
 
-fn raw_string_quoted(i: &str) -> IResult<&str, &str> {
+fn quoted(i: &str) -> IResult<&str, &str> {
     recognize(delimited(
         tag("\'"),
         many0(
+            // from https://github.com/ms705/nom-sql
             alt((
                 is_not("\\\'"),
                 tag("\'\'"),
@@ -27,25 +28,23 @@ fn raw_string_quoted(i: &str) -> IResult<&str, &str> {
     )).parse(i)
 }
 
-pub fn literal(i: &str) -> IResult<&str, &str> {
-    alt((
-        // float
-        recognize((opt(tag("-")), digit1, tag("."), digit1)),
-        // integer
-        recognize(pair(opt(tag("-")), digit1)),
-        raw_string_quoted,
-        tag_no_case("null"),
-    )).parse(i)
-}
-
-pub fn ws_sep_comma(i: &str) -> IResult<&str, &str> {
-    delimited(multispace0, tag(","), multispace0).parse(i)
-}
-
 pub fn values(i: &str) -> IResult<&str, Vec<&str>> {
-    many0(delimited(multispace0, literal, opt(ws_sep_comma))).parse(i)
+    many0(
+        delimited(
+            // space
+            multispace0,
+            // value
+            alt((
+                // quoted value
+                quoted,
+                // unquoted value
+                is_not(","),
+            )),
+            // comma
+            opt(delimited(multispace0, tag(","), multispace0)),
+        ),
+    ).parse(i)
 }
-
 
 pub fn insert_parts(insert_statement: &str) -> Result<(String, String, String), anyhow::Error> {
     let mut parser = (

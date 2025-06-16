@@ -586,7 +586,7 @@ impl Writers {
         })
     }
 
-    fn get_writer<'a>(&'a mut self, statement: &SqlStatement) -> Result<(&'a BufWriter<File>, &'a PathBuf), anyhow::Error> {
+    fn get_writer<'a>(&'a mut self, statement: &SqlStatement, inline_files: bool) -> Result<&'a mut BufWriter<File>, anyhow::Error> {
         let table_option = statement.get_table();
         if !self.instances.contains_key(table_option) {
             let Some(table) = &table_option else {
@@ -596,10 +596,18 @@ impl Writers {
             let table_file = std::path::absolute(self.working_dir_path.join(table).with_extension("sql"))?;
             self.files.insert(table_option.to_owned(), table_file.to_owned());
             self.instances.insert(table_option.to_owned(), new_writer(&table_file)?);
+            if inline_files {
+                let working_file_writer = self.instances.get_mut(&None).ok_or(anyhow::anyhow!("cannot find working file writer"))?;
+                working_file_writer.write_all(format!("--- INLINE {} {}\n", table_file.display(), table).as_bytes())?;
+            }
         }
         let writer = self.instances.get_mut(table_option).ok_or(anyhow::anyhow!("cannot find writer"))?;
-        let file = self.files.get_mut(table_option).ok_or(anyhow::anyhow!("cannot find file"))?;
-        Ok((writer, file))
+        Ok(writer)
+    }
+
+    fn get_working_file_writer<'a>(&'a mut self) -> Result<&'a mut BufWriter<File>, anyhow::Error> {
+        let writer = self.instances.get_mut(&None).ok_or(anyhow::anyhow!("cannot find working file writer"))?;
+        Ok(writer)
     }
 
     fn flush(&mut self) -> Result<(), anyhow::Error> {
@@ -618,44 +626,34 @@ pub fn explode_to_files<F>(
 ) -> Result<Tracker, anyhow::Error>
   where F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlStatement>, anyhow::Error>
 {
-    let mut writers: HashMap<String, BufWriter<File>> = HashMap::new();
-    let mut table_files: HashMap<String, PathBuf> = HashMap::new();
-    let mut working_file_writer = new_writer(working_file_path)?;
     let tracker = Tracker::new(working_dir_path, &[])?;
-
+    let mut writers_tracker = Writers::new(working_file_path)?;
     let statements = TransformedStatements::from_file(sqldump_filepath, &tracker, transform)?;
 
     for st in statements {
         let statement = st?;
-        match statement.get_table() {
-            None => working_file_writer.write_all(&statement.as_bytes())?,
-            Some(table) => {
-                let writer = match writers.get_mut(table) {
-                    None => {
-                        let table_file = std::path::absolute(working_dir_path.join(table).with_extension("sql"))?;
-                        table_files.insert(table.to_owned(), table_file.to_owned());
-                        working_file_writer.write_all(format!("--- INLINE {} {}\n", table_file.display(), table).as_bytes())?;
-                        writers.insert(table.to_owned(), new_writer(&table_file)?);
-                        writers.get_mut(table).unwrap()
-                    },
-                    Some(w) => w,
-                };
-
-                writer.write_all(&statement.as_bytes())?
-            }
-        }
+        let t_writer = writers_tracker.get_writer(&statement, true)?;
+        t_writer.write_all(&statement.as_bytes())?;
+        // match statement.get_table() {
+        //     None => working_file_writer.write_all(&statement.as_bytes())?,
+        //     Some(table) => {
+        //         let writer = match writers.get_mut(table) {
+        //             None => {
+        //                 let table_file = std::path::absolute(working_dir_path.join(table).with_extension("sql"))?;
+        //                 table_files.insert(table.to_owned(), table_file.to_owned());
+        //                 working_file_writer.write_all(format!("--- INLINE {} {}\n", table_file.display(), table).as_bytes())?;
+        //                 writers.insert(table.to_owned(), new_writer(&table_file)?);
+        //                 writers.get_mut(table).unwrap()
+        //             },
+        //             Some(w) => w,
+        //         };
+        //
+        //         writer.write_all(&statement.as_bytes())?
+        //     }
+        // }
     };
 
-    for (table, file) in &table_files {
-        tracker.borrow_mut().files.insert(table.clone(), file.clone());
-    }
-
-    working_file_writer.flush()?;
-    for w in writers.values_mut() {
-        w.flush()?
-    }
-
-    // dbg!(&tracker);
+    writers_tracker.flush()?;
 
     Ok((*tracker.borrow()).clone())
 }
