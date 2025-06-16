@@ -1,6 +1,5 @@
 use chrono::NaiveDateTime;
 use lazy_static::lazy_static;
-use nom::AsBytes;
 use regex::Regex;
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -13,8 +12,7 @@ use std::rc::Rc;
 use sqlparser::dialect::MySqlDialect;
 use sqlparser::parser::Parser as SqlParser;
 
-use crate::sql::{get_columns, parse_insert_parts, parse_insert_values};
-use crate::sql_parser::values;
+use crate::sql_parser::{insert_parts, values};
 
 type Files = HashMap<String, PathBuf>;
 type TableDataTypes = HashMap<String, sqlparser::ast::DataType>;
@@ -106,13 +104,19 @@ struct InsertStatement {
 
 impl InsertStatement {
     fn new(statement: &str) -> Result<Self, anyhow::Error> {
-        let (table, columns_part, values_part) = parse_insert_parts(statement)?;
+        let (table, columns_part, values_part) = insert_parts(statement)?;
         let values = values_part.split(',').map(|x| x.to_string()).collect();
         Ok(Self { statement: statement.to_string(), table, columns_part, values_part, values })
     }
 
     fn get_column_positions(&self) -> HashMap<String, usize> {
-        get_columns(&self.statement).iter().enumerate().map(|(idx, c)| (c.to_owned(), idx)).collect()
+        let dialect = MySqlDialect {};
+        let ast = SqlParser::parse_sql(&dialect, &self.statement).unwrap();
+
+        let st = ast.first().unwrap();
+        let sqlparser::ast::Statement::Insert(x) = st else { panic!("stop") };
+
+        x.columns.iter().enumerate().map(|(idx, x)| (x.value.to_owned(), idx)).collect()
     }
 
     fn as_string(&self) -> String {
