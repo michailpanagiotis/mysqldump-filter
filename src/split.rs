@@ -311,6 +311,7 @@ impl Iterator for PlainStatements {
 #[derive(Debug)]
 #[derive(Clone)]
 pub struct Tracker {
+    working_dir_path: PathBuf,
     files: Files,
     data_types: DataTypes,
     column_positions: ColumnPositions,
@@ -319,9 +320,10 @@ pub struct Tracker {
 }
 
 impl Tracker {
-    fn new(tracked_columns: &[&str]) -> Result<Rc<RefCell<Self>>, anyhow::Error> {
+    fn new(working_dir_path: &Path, tracked_columns: &[&str]) -> Result<Rc<RefCell<Self>>, anyhow::Error> {
         let (captured_values, column_per_key) = Tracker::prepare_tracked_columns(tracked_columns)?;
         Ok(Rc::new(RefCell::new(Tracker {
+            working_dir_path: working_dir_path.to_owned(),
             files: HashMap::new(),
             data_types: HashMap::new(),
             column_positions: HashMap::new(),
@@ -331,7 +333,7 @@ impl Tracker {
     }
 
     fn from_working_file_path(filepath: &Path, tracked_columns: &[&str]) -> Result<Self, anyhow::Error> {
-        let tracker = Tracker::new(tracked_columns)?;
+        let tracker = Tracker::new(filepath.parent().ok_or(anyhow::anyhow!("cannot find direcory"))?, tracked_columns)?;
         let statements = TrackedStatements::from_file(filepath, &tracker)?;
         // consume iterator to populate tracker
         statements.for_each(drop);
@@ -384,8 +386,8 @@ impl Tracker {
         Ok(())
     }
 
-    fn get_table_file(&self, table: &str) -> &PathBuf {
-        &self.files[table]
+    fn get_table_file(&self, table: &str) -> Result<PathBuf, io::Error> {
+        std::path::absolute(self.working_dir_path.join(table).with_extension("sql"))
     }
 
     fn get_table_data_types(&self, table: &str) -> &TableDataTypes {
@@ -535,12 +537,27 @@ impl<F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlSt
     }
 }
 
-fn get_writer(filepath: &Path) -> Result<BufWriter<File>, anyhow::Error> {
+fn new_writer(filepath: &Path) -> Result<BufWriter<File>, anyhow::Error> {
     fs::File::create(filepath)?;
     let file = fs::OpenOptions::new()
         .append(true)
         .open(filepath)?;
     Ok(BufWriter::new(file))
+}
+
+fn get_writer<'a> (
+    working_dir_path: &Path,
+    writers: &'a mut HashMap<String, BufWriter<File>>,
+    table: &str,
+) -> Result<(&'a BufWriter<File>, Option<&'a BufWriter<File>>), anyhow::Error> {
+    let mut new = false;
+    if !writers.contains_key(table) {
+        new = true;
+        let table_file = std::path::absolute(working_dir_path.join(table).with_extension("sql"))?;
+        writers.insert(table.to_owned(), new_writer(&table_file)?);
+    }
+    let writer = writers.get_mut(table).ok_or(anyhow::anyhow!("cannot find writer"))?;
+    Ok((writer, if new { Some(writer) } else { None }))
 }
 
 pub fn explode_to_files<F>(
@@ -553,8 +570,8 @@ pub fn explode_to_files<F>(
 {
     let mut writers: HashMap<String, BufWriter<File>> = HashMap::new();
     let mut table_files: HashMap<String, PathBuf> = HashMap::new();
-    let mut working_file_writer = get_writer(working_file_path)?;
-    let tracker = Tracker::new(&[])?;
+    let mut working_file_writer = new_writer(working_file_path)?;
+    let tracker = Tracker::new(working_dir_path, &[])?;
 
     let statements = TransformedStatements::from_file(sqldump_filepath, &tracker, transform)?;
 
@@ -568,7 +585,7 @@ pub fn explode_to_files<F>(
                         let table_file = std::path::absolute(working_dir_path.join(table).with_extension("sql"))?;
                         table_files.insert(table.to_owned(), table_file.to_owned());
                         working_file_writer.write_all(format!("--- INLINE {} {}\n", table_file.display(), table).as_bytes())?;
-                        writers.insert(table.to_owned(), get_writer(&table_file)?);
+                        writers.insert(table.to_owned(), new_writer(&table_file)?);
                         writers.get_mut(table).unwrap()
                     },
                     Some(w) => w,
@@ -604,9 +621,9 @@ pub fn process_table_inserts<F>(
     println!("Processing table {table}");
     let tracker_cell = Rc::new(RefCell::new(Tracker::from_working_file_path(working_file_path, tracked_columns)?));
 
-    let table_file = tracker_cell.borrow().get_table_file(table).to_owned();
+    let table_file = tracker_cell.borrow().get_table_file(table)?;
     dbg!(&table_file);
-    let mut writer = get_writer(&table_file.with_extension("proc"))?;
+    let mut writer = new_writer(&table_file.with_extension("proc"))?;
 
     for st in TransformedStatements::from_file(&table_file, &tracker_cell, transform)? {
         writer.write_all(&st?.as_bytes())?;
