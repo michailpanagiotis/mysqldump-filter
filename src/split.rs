@@ -333,7 +333,7 @@ impl Tracker {
     }
 
     fn from_working_file_path(filepath: &Path, tracked_columns: &[&str]) -> Result<Self, anyhow::Error> {
-        let tracker = Tracker::new(filepath.parent().ok_or(anyhow::anyhow!("cannot find direcory"))?, tracked_columns)?;
+        let tracker = Tracker::new(filepath.parent().ok_or(anyhow::anyhow!("cannot find directory"))?, tracked_columns)?;
         let statements = TrackedStatements::from_file(filepath, &tracker)?;
         // consume iterator to populate tracker
         statements.for_each(drop);
@@ -558,6 +558,44 @@ fn get_writer<'a> (
     }
     let writer = writers.get_mut(table).ok_or(anyhow::anyhow!("cannot find writer"))?;
     Ok((writer, if new { Some(writer) } else { None }))
+}
+
+struct Writers {
+    working_dir_path: PathBuf,
+    files: HashMap<Option<String>, PathBuf>,
+    instances: HashMap<Option<String>, BufWriter<File>>,
+}
+
+impl Writers {
+    fn new(working_file_path: &Path) -> Result<Self, anyhow::Error> {
+        let working_dir_path = working_file_path.parent().ok_or(anyhow::anyhow!("cannot find parent directory"))?;
+        Ok(Writers {
+            working_dir_path: working_dir_path.to_owned(),
+            files: HashMap::from([(None, working_file_path.to_owned())]),
+            instances: HashMap::from([(None, new_writer(working_file_path)?)]),
+        })
+    }
+
+    fn get_writer(&mut self, statement: &SqlStatement) -> Result<(), anyhow::Error> {
+        let table_option = statement.get_table();
+        if !self.instances.contains_key(table_option) {
+            let Some(table) = &table_option else {
+                return Err(anyhow::anyhow!("statement has no table"));
+            };
+
+            let table_file = std::path::absolute(self.working_dir_path.join(table).with_extension("sql"))?;
+            self.files.insert(table_option.to_owned(), table_file.to_owned());
+            self.instances.insert(table_option.to_owned(), new_writer(&table_file)?);
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<(), anyhow::Error> {
+        for w in self.instances.values_mut() {
+            w.flush()?
+        }
+        Ok(())
+    }
 }
 
 pub fn explode_to_files<F>(
