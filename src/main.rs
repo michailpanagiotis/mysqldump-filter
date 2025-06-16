@@ -9,6 +9,7 @@ mod column;
 mod table;
 mod split;
 mod sql;
+mod sql_parser;
 mod traits;
 
 use table::CheckCollection;

@@ -1,5 +1,6 @@
 use chrono::NaiveDateTime;
 use lazy_static::lazy_static;
+use nom::AsBytes;
 use regex::Regex;
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -13,6 +14,7 @@ use sqlparser::dialect::MySqlDialect;
 use sqlparser::parser::Parser as SqlParser;
 
 use crate::sql::{get_columns, parse_insert_parts, parse_insert_values};
+use crate::sql_parser::values;
 
 type Files = HashMap<String, PathBuf>;
 type TableDataTypes = HashMap<String, sqlparser::ast::DataType>;
@@ -67,6 +69,9 @@ impl<'a> Value<'a> {
     fn parse_date(s: &'a str) -> i64 {
         let date = Value::parse_string(s);
         let to_parse = if date.len() == 10 { date.to_owned() + " 00:00:00" } else { date.to_owned() };
+        if to_parse.starts_with("0000-00-00") {
+            return NaiveDateTime::MIN.and_utc().timestamp();
+        }
         NaiveDateTime::parse_from_str(&to_parse, "%Y-%m-%d %H:%M:%S")
             .unwrap_or_else(|_| panic!("cannot parse timestamp {s}"))
             .and_utc()
@@ -119,7 +124,8 @@ impl InsertStatement {
     }
 
     fn get_values(&self) -> Vec<&str> {
-        parse_insert_values(&self.values_part)
+        let (_, output) = values(&self.values_part).unwrap();
+        output
     }
 }
 
@@ -645,7 +651,7 @@ pub fn explode_to_files<F>(
         w.flush()?
     }
 
-    dbg!(&tracker);
+    // dbg!(&tracker);
 
     Ok((*tracker.borrow()).clone())
 }
@@ -662,7 +668,7 @@ pub fn process_table_inserts<F>(
     let tracker_cell = Rc::new(RefCell::new(Tracker::from_working_file_path(working_file_path, tracked_columns)?));
 
     let table_file = tracker_cell.borrow().get_table_file(table)?;
-    dbg!(&table_file);
+    // dbg!(&table_file);
     let mut writer = new_writer(&table_file.with_extension("proc"))?;
 
     for st in TransformedStatements::from_file(&table_file, &tracker_cell, transform)? {
