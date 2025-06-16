@@ -572,42 +572,77 @@ fn get_writer<'a> (
 
 struct Writers {
     working_dir_path: PathBuf,
+    working_file_path: PathBuf,
     files: HashMap<Option<String>, PathBuf>,
     instances: HashMap<Option<String>, BufWriter<File>>,
+    temporary: bool,
 }
 
 impl Writers {
-    fn new(working_file_path: &Path) -> Result<Self, anyhow::Error> {
+    fn new(working_file_path: &Path, temporary: bool) -> Result<Self, anyhow::Error> {
         let working_dir_path = working_file_path.parent().ok_or(anyhow::anyhow!("cannot find parent directory"))?;
         Ok(Writers {
             working_dir_path: working_dir_path.to_owned(),
-            files: HashMap::from([(None, working_file_path.to_owned())]),
-            instances: HashMap::from([(None, new_writer(working_file_path)?)]),
+            working_file_path: working_file_path.to_owned(),
+            files: HashMap::new(),
+            instances: HashMap::new(),
+            temporary,
         })
     }
 
-    fn get_writer<'a>(&'a mut self, statement: &SqlStatement, inline_files: bool) -> Result<&'a mut BufWriter<File>, anyhow::Error> {
-        let table_option = statement.get_table();
-        if !self.instances.contains_key(table_option) {
-            let Some(table) = &table_option else {
-                return Err(anyhow::anyhow!("statement has no table"));
-            };
-
-            let table_file = std::path::absolute(self.working_dir_path.join(table).with_extension("sql"))?;
-            self.files.insert(table_option.to_owned(), table_file.to_owned());
-            self.instances.insert(table_option.to_owned(), new_writer(&table_file)?);
-            if inline_files {
-                let working_file_writer = self.instances.get_mut(&None).ok_or(anyhow::anyhow!("cannot find working file writer"))?;
-                working_file_writer.write_all(format!("--- INLINE {} {}\n", table_file.display(), table).as_bytes())?;
+    fn determine_file(&mut self, table_option: &Option<String>) -> Result<PathBuf, anyhow::Error> {
+        match table_option {
+            None => {
+                if self.temporary {
+                    return Err(anyhow::anyhow!("cannot write to working file as temporary"));
+                }
+                Ok(self.working_file_path.to_owned())
+            }
+            Some(table) => {
+                let table_file = std::path::absolute(
+                    if self.temporary {
+                        self.working_dir_path.join(table).with_extension("proc")
+                    } else {
+                        self.working_dir_path.join(table).with_extension("sql")
+                    }
+                )?;
+                Ok(table_file.to_owned())
             }
         }
-        let writer = self.instances.get_mut(table_option).ok_or(anyhow::anyhow!("cannot find writer"))?;
-        Ok(writer)
     }
 
-    fn get_working_file_writer<'a>(&'a mut self) -> Result<&'a mut BufWriter<File>, anyhow::Error> {
-        let writer = self.instances.get_mut(&None).ok_or(anyhow::anyhow!("cannot find working file writer"))?;
-        Ok(writer)
+    fn record_inline_file(&mut self, table: &str, table_file: &Path) -> Result<(), anyhow::Error> {
+        let working_file_writer = self.instances.get_mut(&None).ok_or(anyhow::anyhow!("cannot find working file writer"))?;
+        working_file_writer.write_all(format!("--- INLINE {} {}\n", table_file.display(), table).as_bytes())?;
+        Ok(())
+    }
+
+    fn get_writer<'a>(&'a mut self, statement: &SqlStatement) -> Result<(&'a mut BufWriter<File>, Option<PathBuf>), anyhow::Error> {
+        let table_file = self.determine_file(statement.get_table())?;
+        let table_option = statement.get_table();
+        let mut new_file = None;
+        if !self.instances.contains_key(table_option) {
+            self.instances.insert(table_option.to_owned(), new_writer(&table_file)?);
+            new_file = Some(table_file.to_owned());
+            self.files.insert(table_option.to_owned(), table_file.to_owned());
+        }
+        let writer = self.instances.get_mut(table_option).ok_or(anyhow::anyhow!("cannot find writer"))?;
+        Ok((writer, new_file))
+    }
+
+    fn write_statement(&mut self, statement: &SqlStatement) -> Result<(), anyhow::Error> {
+        let (t_writer, new_file) = self.get_writer(statement)?;
+        t_writer.write_all(&statement.as_bytes())?;
+        if let Some(table_file) = new_file {
+            let Some(table) = statement.get_table() else {
+                return Err(anyhow::anyhow!("statement has no table"));
+            };
+            println!("writing file {}", &table_file.display());
+            if !self.temporary {
+                self.record_inline_file(table, &table_file)?;
+            }
+        }
+        Ok(())
     }
 
     fn flush(&mut self) -> Result<(), anyhow::Error> {
@@ -627,30 +662,12 @@ pub fn explode_to_files<F>(
   where F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlStatement>, anyhow::Error>
 {
     let tracker = Tracker::new(working_dir_path, &[])?;
-    let mut writers_tracker = Writers::new(working_file_path)?;
+    let mut writers_tracker = Writers::new(working_file_path, false)?;
     let statements = TransformedStatements::from_file(sqldump_filepath, &tracker, transform)?;
 
     for st in statements {
         let statement = st?;
-        let t_writer = writers_tracker.get_writer(&statement, true)?;
-        t_writer.write_all(&statement.as_bytes())?;
-        // match statement.get_table() {
-        //     None => working_file_writer.write_all(&statement.as_bytes())?,
-        //     Some(table) => {
-        //         let writer = match writers.get_mut(table) {
-        //             None => {
-        //                 let table_file = std::path::absolute(working_dir_path.join(table).with_extension("sql"))?;
-        //                 table_files.insert(table.to_owned(), table_file.to_owned());
-        //                 working_file_writer.write_all(format!("--- INLINE {} {}\n", table_file.display(), table).as_bytes())?;
-        //                 writers.insert(table.to_owned(), new_writer(&table_file)?);
-        //                 writers.get_mut(table).unwrap()
-        //             },
-        //             Some(w) => w,
-        //         };
-        //
-        //         writer.write_all(&statement.as_bytes())?
-        //     }
-        // }
+        writers_tracker.write_statement(&statement)?;
     };
 
     writers_tracker.flush()?;
@@ -671,11 +688,13 @@ pub fn process_table_inserts<F>(
 
     let table_file = tracker_cell.borrow().get_table_file(table)?;
     // dbg!(&table_file);
-    let mut writer = new_writer(&table_file.with_extension("proc"))?;
+    let mut writers_tracker = Writers::new(working_file_path, true)?;
 
     for st in TransformedStatements::from_file(&table_file, &tracker_cell, transform)? {
-        writer.write_all(&st?.as_bytes())?;
+        let statement = st?;
+        writers_tracker.write_statement(&statement)?;
     };
+    writers_tracker.flush()?;
 
     //fs::rename(output_file, table_file).expect("cannot rename");
 
