@@ -576,7 +576,7 @@ impl Writers {
         })
     }
 
-    fn get_writer(&mut self, statement: &SqlStatement) -> Result<(), anyhow::Error> {
+    fn get_writer<'a>(&'a mut self, statement: &SqlStatement) -> Result<(&'a BufWriter<File>, &'a PathBuf), anyhow::Error> {
         let table_option = statement.get_table();
         if !self.instances.contains_key(table_option) {
             let Some(table) = &table_option else {
@@ -587,7 +587,9 @@ impl Writers {
             self.files.insert(table_option.to_owned(), table_file.to_owned());
             self.instances.insert(table_option.to_owned(), new_writer(&table_file)?);
         }
-        Ok(())
+        let writer = self.instances.get_mut(table_option).ok_or(anyhow::anyhow!("cannot find writer"))?;
+        let file = self.files.get_mut(table_option).ok_or(anyhow::anyhow!("cannot find file"))?;
+        Ok((writer, file))
     }
 
     fn flush(&mut self) -> Result<(), anyhow::Error> {
