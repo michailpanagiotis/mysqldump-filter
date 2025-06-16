@@ -634,12 +634,11 @@ impl Writers {
         let (t_writer, new_file) = self.get_writer(statement)?;
         t_writer.write_all(&statement.as_bytes())?;
         if let Some(table_file) = new_file {
-            let Some(table) = statement.get_table() else {
-                return Err(anyhow::anyhow!("statement has no table"));
-            };
             println!("writing file {}", &table_file.display());
             if !self.temporary {
-                self.record_inline_file(table, &table_file)?;
+                if let Some(table) = statement.get_table() {
+                    self.record_inline_file(table, &table_file)?;
+                };
             }
         }
         Ok(())
