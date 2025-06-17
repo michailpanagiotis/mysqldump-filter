@@ -224,14 +224,12 @@ impl SqlStatementParts {
 #[derive(Debug)]
 pub struct SqlStatement {
     parts: SqlStatementParts,
-    table: Option<String>,
 }
 
 impl SqlStatement {
     fn new(statement: &str, table: &Option<String>) -> Result<Self, anyhow::Error> {
         Ok(SqlStatement {
             parts: SqlStatementParts::new(statement)?,
-            table: table.clone(),
         })
     }
 
@@ -251,8 +249,11 @@ impl SqlStatement {
         Vec::from(self.as_string().as_bytes())
     }
 
-    pub fn get_table(&self) -> &Option<String> {
-        &self.table
+    pub fn get_table(&self) -> Option<&str> {
+        match &self.parts {
+            SqlStatementParts::Insert(insert_statement) => Some(&insert_statement.table),
+            _ => None,
+        }
     }
 
     fn get_column_positions(&self) -> Option<HashMap<String, usize>> {
@@ -311,7 +312,6 @@ impl SqlStatement {
         match &self.parts {
             SqlStatementParts::TableDataDumpComment(comment) => {
                 let table = TABLE_DUMP_RE.captures(comment).unwrap().get(1).unwrap().as_str();
-                self.table = Some(table.to_string());
                 Some(table)
             },
             _ => None,
@@ -663,7 +663,7 @@ impl Writers {
         })
     }
 
-    fn determine_output_file(&mut self, table_option: &Option<String>, in_place: bool) -> Result<PathBuf, anyhow::Error> {
+    fn determine_output_file(&mut self, table_option: &Option<&str>, in_place: bool) -> Result<PathBuf, anyhow::Error> {
         match table_option {
             None => {
                 if in_place {
@@ -691,15 +691,16 @@ impl Writers {
     }
 
     fn get_writer<'a>(&'a mut self, statement: &SqlStatement) -> Result<(&'a mut BufWriter<File>, Option<PathBuf>), anyhow::Error> {
-        let table_file = self.determine_output_file(statement.get_table(), self.in_place)?;
+        let table_file = self.determine_output_file(&statement.get_table(), self.in_place)?;
         let table_option = statement.get_table();
         let mut new_file = None;
-        if !self.instances.contains_key(table_option) {
-            self.instances.insert(table_option.to_owned(), Writers::new_writer(&table_file)?);
+        let owned = table_option.map(|t| t.to_string());
+        if !self.instances.contains_key(&owned) {
+            self.instances.insert(owned.clone(), Writers::new_writer(&table_file)?);
             new_file = Some(table_file.to_owned());
-            self.files.insert(table_option.to_owned(), table_file.to_owned());
+            self.files.insert(owned.clone(), table_file.to_owned());
         }
-        let writer = self.instances.get_mut(table_option).ok_or(anyhow::anyhow!("cannot find writer"))?;
+        let writer = self.instances.get_mut(&owned).ok_or(anyhow::anyhow!("cannot find writer"))?;
         Ok((writer, new_file))
     }
 
