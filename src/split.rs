@@ -400,6 +400,10 @@ impl Tracker {
         std::path::absolute(self.working_dir_path.join(table).with_extension("sql"))
     }
 
+    fn get_table_files(&self) -> &HashMap<String, PathBuf> {
+        &self.files
+    }
+
     fn get_table_data_types(&self, table: &str) -> &TableDataTypes {
         &self.data_types[table]
     }
@@ -575,32 +579,32 @@ struct Writers {
     working_file_path: PathBuf,
     files: HashMap<Option<String>, PathBuf>,
     instances: HashMap<Option<String>, BufWriter<File>>,
-    temporary: bool,
+    in_place: bool,
 }
 
 impl Writers {
-    fn new(working_file_path: &Path, temporary: bool) -> Result<Self, anyhow::Error> {
+    fn new(working_file_path: &Path, in_place: bool) -> Result<Self, anyhow::Error> {
         let working_dir_path = working_file_path.parent().ok_or(anyhow::anyhow!("cannot find parent directory"))?;
         Ok(Writers {
             working_dir_path: working_dir_path.to_owned(),
             working_file_path: working_file_path.to_owned(),
             files: HashMap::new(),
             instances: HashMap::new(),
-            temporary,
+            in_place,
         })
     }
 
-    fn determine_file(&mut self, table_option: &Option<String>) -> Result<PathBuf, anyhow::Error> {
+    fn determine_output_file(&mut self, table_option: &Option<String>, in_place: bool) -> Result<PathBuf, anyhow::Error> {
         match table_option {
             None => {
-                if self.temporary {
-                    return Err(anyhow::anyhow!("cannot write to working file as temporary"));
+                if in_place {
+                    return Err(anyhow::anyhow!("cannot write to working file in place"));
                 }
                 Ok(self.working_file_path.to_owned())
             }
             Some(table) => {
                 let table_file = std::path::absolute(
-                    if self.temporary {
+                    if in_place {
                         self.working_dir_path.join(table).with_extension("proc")
                     } else {
                         self.working_dir_path.join(table).with_extension("sql")
@@ -618,7 +622,7 @@ impl Writers {
     }
 
     fn get_writer<'a>(&'a mut self, statement: &SqlStatement) -> Result<(&'a mut BufWriter<File>, Option<PathBuf>), anyhow::Error> {
-        let table_file = self.determine_file(statement.get_table())?;
+        let table_file = self.determine_output_file(statement.get_table(), self.in_place)?;
         let table_option = statement.get_table();
         let mut new_file = None;
         if !self.instances.contains_key(table_option) {
@@ -635,7 +639,7 @@ impl Writers {
         t_writer.write_all(&statement.as_bytes())?;
         if let Some(table_file) = new_file {
             println!("writing file {}", &table_file.display());
-            if !self.temporary {
+            if !self.in_place {
                 if let Some(table) = statement.get_table() {
                     self.record_inline_file(table, &table_file)?;
                 };
@@ -644,9 +648,19 @@ impl Writers {
         Ok(())
     }
 
-    fn flush(&mut self) -> Result<(), anyhow::Error> {
+    fn flush(&mut self, table_files: &HashMap<String, PathBuf>) -> Result<(), anyhow::Error> {
         for w in self.instances.values_mut() {
             w.flush()?
+        }
+        if self.in_place {
+            for (table_option, temporary_file) in self.files.iter() {
+                if let Some(table) = table_option {
+                    let Some(original_file) = table_files.get(table) else {
+                        return Err(anyhow::anyhow!("cannot find original file"));
+                    };
+                    fs::rename(temporary_file, original_file).expect("cannot rename");
+                }
+            }
         }
         Ok(())
     }
@@ -669,7 +683,7 @@ pub fn explode_to_files<F>(
         writers_tracker.write_statement(&statement)?;
     };
 
-    writers_tracker.flush()?;
+    writers_tracker.flush(tracker.borrow().get_table_files())?;
 
     Ok((*tracker.borrow()).clone())
 }
@@ -693,7 +707,8 @@ pub fn process_table_inserts<F>(
         let statement = st?;
         writers_tracker.write_statement(&statement)?;
     };
-    writers_tracker.flush()?;
+    dbg!(&tracker_cell.borrow().files);
+    writers_tracker.flush(tracker_cell.borrow().get_table_files())?;
 
     //fs::rename(output_file, table_file).expect("cannot rename");
 
