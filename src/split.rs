@@ -551,29 +551,6 @@ impl<F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlSt
     }
 }
 
-fn new_writer(filepath: &Path) -> Result<BufWriter<File>, anyhow::Error> {
-    fs::File::create(filepath)?;
-    let file = fs::OpenOptions::new()
-        .append(true)
-        .open(filepath)?;
-    Ok(BufWriter::new(file))
-}
-
-fn get_writer<'a> (
-    working_dir_path: &Path,
-    writers: &'a mut HashMap<String, BufWriter<File>>,
-    table: &str,
-) -> Result<(&'a BufWriter<File>, Option<&'a BufWriter<File>>), anyhow::Error> {
-    let mut new = false;
-    if !writers.contains_key(table) {
-        new = true;
-        let table_file = std::path::absolute(working_dir_path.join(table).with_extension("sql"))?;
-        writers.insert(table.to_owned(), new_writer(&table_file)?);
-    }
-    let writer = writers.get_mut(table).ok_or(anyhow::anyhow!("cannot find writer"))?;
-    Ok((writer, if new { Some(writer) } else { None }))
-}
-
 struct Writers {
     working_dir_path: PathBuf,
     working_file_path: PathBuf,
@@ -583,6 +560,12 @@ struct Writers {
 }
 
 impl Writers {
+    fn new_writer(filepath: &Path) -> Result<BufWriter<File>, anyhow::Error> {
+        fs::File::create(filepath)?;
+        let file = fs::OpenOptions::new().append(true).open(filepath)?;
+        Ok(BufWriter::new(file))
+    }
+
     fn new(working_file_path: &Path, in_place: bool) -> Result<Self, anyhow::Error> {
         let working_dir_path = working_file_path.parent().ok_or(anyhow::anyhow!("cannot find parent directory"))?;
         Ok(Writers {
@@ -626,7 +609,7 @@ impl Writers {
         let table_option = statement.get_table();
         let mut new_file = None;
         if !self.instances.contains_key(table_option) {
-            self.instances.insert(table_option.to_owned(), new_writer(&table_file)?);
+            self.instances.insert(table_option.to_owned(), Writers::new_writer(&table_file)?);
             new_file = Some(table_file.to_owned());
             self.files.insert(table_option.to_owned(), table_file.to_owned());
         }
@@ -664,6 +647,23 @@ impl Writers {
         }
         Ok(())
     }
+
+    fn process_input_file<F>(
+        &mut self,
+        sqldump_filepath: &Path,
+        tracker_cell: &TrackerCell,
+        transform: F,
+    ) -> Result<(), anyhow::Error>
+        where F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlStatement>, anyhow::Error>
+    {
+        let statements = TransformedStatements::from_file(sqldump_filepath, tracker_cell, transform)?;
+        for st in statements {
+            let statement = st?;
+            self.write_statement(&statement)?;
+        };
+        self.flush(tracker_cell.borrow().get_table_files())?;
+        Ok(())
+    }
 }
 
 pub fn explode_to_files<F>(
@@ -671,21 +671,15 @@ pub fn explode_to_files<F>(
     working_dir_path: &Path,
     sqldump_filepath: &Path,
     transform: F,
-) -> Result<Tracker, anyhow::Error>
+) -> Result<CapturedValues, anyhow::Error>
   where F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlStatement>, anyhow::Error>
 {
-    let tracker = Tracker::new(working_dir_path, &[])?;
+    let tracker_cell = Tracker::new(working_dir_path, &[])?;
     let mut writers_tracker = Writers::new(working_file_path, false)?;
-    let statements = TransformedStatements::from_file(sqldump_filepath, &tracker, transform)?;
 
-    for st in statements {
-        let statement = st?;
-        writers_tracker.write_statement(&statement)?;
-    };
+    writers_tracker.process_input_file(sqldump_filepath, &tracker_cell, transform)?;
 
-    writers_tracker.flush(tracker.borrow().get_table_files())?;
-
-    Ok((*tracker.borrow()).clone())
+    Ok(tracker_cell.borrow().get_captured_values().clone())
 }
 
 pub fn process_table_inserts<F>(
@@ -697,20 +691,12 @@ pub fn process_table_inserts<F>(
   where F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlStatement>, anyhow::Error>
 {
     println!("Processing table {table}");
+
     let tracker_cell = Rc::new(RefCell::new(Tracker::from_working_file_path(working_file_path, tracked_columns)?));
-
-    let table_file = tracker_cell.borrow().get_table_file(table)?;
-    // dbg!(&table_file);
     let mut writers_tracker = Writers::new(working_file_path, true)?;
+    let sqldump_filepath = &tracker_cell.borrow().get_table_file(table)?;
 
-    for st in TransformedStatements::from_file(&table_file, &tracker_cell, transform)? {
-        let statement = st?;
-        writers_tracker.write_statement(&statement)?;
-    };
-    dbg!(&tracker_cell.borrow().files);
-    writers_tracker.flush(tracker_cell.borrow().get_table_files())?;
-
-    //fs::rename(output_file, table_file).expect("cannot rename");
+    writers_tracker.process_input_file(sqldump_filepath, &tracker_cell, transform)?;
 
     Ok(tracker_cell.borrow().get_captured_values().clone())
 }
