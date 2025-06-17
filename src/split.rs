@@ -330,19 +330,19 @@ pub struct Tracker {
     data_types: DataTypes,
     column_positions: ColumnPositions,
     captured_values: CapturedValues,
-    column_per_key: HashMap<String, String>,
+    tracked_column_per_key: HashMap<String, String>,
 }
 
 impl Tracker {
     fn new(working_dir_path: &Path, tracked_columns: &[&str]) -> Result<Rc<RefCell<Self>>, anyhow::Error> {
-        let (captured_values, column_per_key) = Tracker::prepare_tracked_columns(tracked_columns)?;
+        let (captured_values, tracked_column_per_key) = Tracker::prepare_tracked_columns(tracked_columns)?;
         Ok(Rc::new(RefCell::new(Tracker {
             working_dir_path: working_dir_path.to_owned(),
             files: HashMap::new(),
             data_types: HashMap::new(),
             column_positions: HashMap::new(),
             captured_values,
-            column_per_key,
+            tracked_column_per_key,
         })))
     }
 
@@ -356,16 +356,16 @@ impl Tracker {
 
     fn prepare_tracked_columns(tracked_columns: &[&str]) -> Result<(CapturedValues, HashMap<String, String>), anyhow::Error> {
         let mut captured_values: CapturedValues = HashMap::new();
-        let mut column_per_key: HashMap<String, String> = HashMap::new();
+        let mut tracked_column_per_key: HashMap<String, String> = HashMap::new();
         for key in tracked_columns {
             captured_values.insert(key.to_string(), HashSet::new());
             let mut split = key.split('.');
             let (Some(_), Some(column), None) = (split.next(), split.next(), split.next()) else {
                 return Err(anyhow::anyhow!("malformed key {}", key));
             };
-            column_per_key.insert(key.to_string(), column.to_owned());
+            tracked_column_per_key.insert(key.to_string(), column.to_owned());
         }
-        Ok((captured_values, column_per_key))
+        Ok((captured_values, tracked_column_per_key))
     }
 
     fn capture_positions(&mut self, statement: &SqlStatement, current_table: &Option<String>) {
@@ -428,7 +428,7 @@ impl Tracker {
     }
 
     fn capture_values(&mut self, value_per_field: HashMap<String, String>) {
-        for (key, column) in &self.column_per_key {
+        for (key, column) in &self.tracked_column_per_key {
             let value = &value_per_field[column];
             if let Some(set) = self.captured_values.get_mut(key) {
                 set.insert(value.to_owned());
@@ -438,6 +438,10 @@ impl Tracker {
 
     fn get_captured_values(&self) -> &CapturedValues {
         &self.captured_values
+    }
+
+    fn is_capturing_columns(&self) -> bool {
+        !self.tracked_column_per_key.is_empty()
     }
 }
 
@@ -515,9 +519,11 @@ impl<F: FnMut(&SqlStatement, &Values<'_>) -> OptionalStatementResult> Transforme
             let mut tracker = self.iter.tracker.borrow_mut();
             let value_per_field = tracker.get_insert_values(input_statement)?;
             if let Some(statement) = (self.transform)(input_statement, &value_per_field)? {
-                // capture values
-                let to_capture: HashMap<String, String> = value_per_field.iter().map(|(f, v)| (f.to_owned(), v.as_string().to_owned())).collect();
-                tracker.capture_values(to_capture);
+                if tracker.is_capturing_columns() {
+                    // capture values
+                    let to_capture: HashMap<String, String> = value_per_field.iter().map(|(f, v)| (f.to_owned(), v.as_string().to_owned())).collect();
+                    tracker.capture_values(to_capture);
+                }
                 return Ok(Some(statement));
             }
             return Ok(None);
