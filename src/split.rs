@@ -19,10 +19,14 @@ type TableDataTypes = HashMap<String, sqlparser::ast::DataType>;
 type DataTypes = HashMap<String, TableDataTypes>;
 type TableColumnPositions = HashMap<String, usize>;
 type ColumnPositions = HashMap<String, TableColumnPositions>;
-type SqlStatementResult = Result<SqlStatement, anyhow::Error>;
 type IteratorItem = SqlStatementResult;
 type CapturedValues = HashMap<String, HashSet<String>>;
 type TrackerCell = Rc<RefCell<Tracker>>;
+
+type SqlStatementResult = Result<SqlStatement, anyhow::Error>;
+type OptionalStatementResult = Result<Option<SqlStatement>, anyhow::Error>;
+type EmptyResult = Result<(), anyhow::Error>;
+type Values<'a> = HashMap<String, Value<'a>>;
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -382,14 +386,14 @@ impl Tracker {
         }
     }
 
-    fn capture_inline_files(&mut self, statement: &SqlStatement) -> Result<(), anyhow::Error> {
+    fn capture_inline_files(&mut self, statement: &SqlStatement) -> EmptyResult {
         if let Some((table, file)) = statement.parse_inline_file()? {
             self.files.insert(table, file);
         }
         Ok(())
     }
 
-    fn capture(&mut self, statement: &SqlStatement, current_table: &Option<String>) -> Result<(), anyhow::Error> {
+    fn capture(&mut self, statement: &SqlStatement, current_table: &Option<String>) -> EmptyResult {
         self.capture_positions(statement, current_table);
         self.capture_data_types(statement);
         self.capture_inline_files(statement)?;
@@ -412,7 +416,7 @@ impl Tracker {
         &self.column_positions[table]
     }
 
-    fn get_insert_values<'a>(&'a self, insert_statement: &'a SqlStatement) -> Result<HashMap<String, Value<'a>>, anyhow::Error> {
+    fn get_insert_values<'a>(&'a self, insert_statement: &'a SqlStatement) -> Result<Values<'a>, anyhow::Error> {
         let Some(table) = insert_statement.get_table() else {
             return Err(anyhow::anyhow!("insert statement has no table"));
         };
@@ -493,12 +497,12 @@ impl Iterator for TrackedStatements {
     }
 }
 
-struct TransformedStatements<F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlStatement>, anyhow::Error>> {
+struct TransformedStatements<F: FnMut(&SqlStatement, &Values<'_>) -> OptionalStatementResult> {
     iter: TrackedStatements,
     transform: F,
 }
 
-impl<F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlStatement>, anyhow::Error>> TransformedStatements<F> {
+impl<F: FnMut(&SqlStatement, &Values<'_>) -> OptionalStatementResult> TransformedStatements<F> {
     fn from_file(sqldump_filepath: &Path, tracker: &TrackerCell, transform: F) -> Result<Self, anyhow::Error> {
         Ok(TransformedStatements {
             iter: TrackedStatements::from_file(sqldump_filepath, tracker)?,
@@ -506,7 +510,7 @@ impl<F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlSt
         })
     }
 
-    fn transform_statement(&mut self, input_statement: &SqlStatement) -> Result<Option<SqlStatement>, anyhow::Error> {
+    fn transform_statement(&mut self, input_statement: &SqlStatement) -> OptionalStatementResult {
         if input_statement.is_insert() {
             let mut tracker = self.iter.tracker.borrow_mut();
             let value_per_field = tracker.get_insert_values(input_statement)?;
@@ -536,7 +540,7 @@ impl<F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlSt
     }
 }
 
-impl<F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlStatement>, anyhow::Error>> Iterator for TransformedStatements<F> {
+impl<F: FnMut(&SqlStatement, &Values<'_>) -> OptionalStatementResult> Iterator for TransformedStatements<F> {
     type Item = IteratorItem;
     fn next(&mut self) -> Option<IteratorItem> {
         let mut transformed;
@@ -598,7 +602,7 @@ impl Writers {
         }
     }
 
-    fn record_inline_file(&mut self, table: &str, table_file: &Path) -> Result<(), anyhow::Error> {
+    fn record_inline_file(&mut self, table: &str, table_file: &Path) -> EmptyResult {
         let working_file_writer = self.instances.get_mut(&None).ok_or(anyhow::anyhow!("cannot find working file writer"))?;
         working_file_writer.write_all(format!("--- INLINE {} {}\n", table_file.display(), table).as_bytes())?;
         Ok(())
@@ -617,7 +621,7 @@ impl Writers {
         Ok((writer, new_file))
     }
 
-    fn write_statement(&mut self, statement: &SqlStatement) -> Result<(), anyhow::Error> {
+    fn write_statement(&mut self, statement: &SqlStatement) -> EmptyResult {
         let (t_writer, new_file) = self.get_writer(statement)?;
         t_writer.write_all(&statement.as_bytes())?;
         if let Some(table_file) = new_file {
@@ -631,7 +635,7 @@ impl Writers {
         Ok(())
     }
 
-    fn flush(&mut self, table_files: &HashMap<String, PathBuf>) -> Result<(), anyhow::Error> {
+    fn flush(&mut self, table_files: &HashMap<String, PathBuf>) -> EmptyResult {
         for w in self.instances.values_mut() {
             w.flush()?
         }
@@ -648,13 +652,8 @@ impl Writers {
         Ok(())
     }
 
-    fn process_input_file<F>(
-        &mut self,
-        sqldump_filepath: &Path,
-        tracker_cell: &TrackerCell,
-        transform: F,
-    ) -> Result<(), anyhow::Error>
-        where F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlStatement>, anyhow::Error>
+    fn process_input_file<F>(&mut self, sqldump_filepath: &Path, tracker_cell: &TrackerCell, transform: F) -> EmptyResult
+        where F: FnMut(&SqlStatement, &Values<'_>) -> OptionalStatementResult
     {
         let statements = TransformedStatements::from_file(sqldump_filepath, tracker_cell, transform)?;
         for st in statements {
@@ -672,7 +671,7 @@ pub fn explode_to_files<F>(
     sqldump_filepath: &Path,
     transform: F,
 ) -> Result<CapturedValues, anyhow::Error>
-  where F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlStatement>, anyhow::Error>
+  where F: FnMut(&SqlStatement, &Values<'_>) -> OptionalStatementResult
 {
     let tracker_cell = Tracker::new(working_dir_path, &[])?;
     let mut writers_tracker = Writers::new(working_file_path, false)?;
@@ -688,7 +687,7 @@ pub fn process_table_inserts<F>(
     tracked_columns: &[&str],
     transform: F,
 ) -> Result<CapturedValues, anyhow::Error>
-  where F: FnMut(&SqlStatement, &HashMap<String, Value<'_>>) -> Result<Option<SqlStatement>, anyhow::Error>
+  where F: FnMut(&SqlStatement, &Values<'_>) -> OptionalStatementResult
 {
     println!("Processing table {table}");
 
@@ -718,7 +717,7 @@ pub fn get_table_files(working_file_path: &Path) -> Result<HashMap<String, PathB
 }
 
 #[allow(dead_code)]
-pub fn gather(working_file_path: &Path, output_path: &Path) -> Result<(), anyhow::Error> {
+pub fn gather(working_file_path: &Path, output_path: &Path) -> EmptyResult {
     let output = File::create(output_path)?;
     let mut writer = BufWriter::new(output);
 
