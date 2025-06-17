@@ -27,6 +27,7 @@ type SqlStatementResult = Result<SqlStatement, anyhow::Error>;
 type OptionalStatementResult = Result<Option<SqlStatement>, anyhow::Error>;
 type EmptyResult = Result<(), anyhow::Error>;
 type Values<'a> = HashMap<String, Value<'a>>;
+type ValuesResult<'a> = Result<HashMap<String, Value<'a>>, anyhow::Error>;
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -131,9 +132,13 @@ impl InsertStatement {
         }
     }
 
-    fn get_values(&self) -> Vec<&str> {
-        let (_, output) = values(&self.values_part).unwrap();
-        output
+    fn get_values<'a, 'b>(&'a self, positions: &'b TableColumnPositions, data_types: &'b TableDataTypes) -> ValuesResult<'a>
+        where 'b: 'a
+    {
+        let (_, value_array) = values(&self.values_part).unwrap();
+        Ok(positions.iter().map(|(column_name, position)| {
+            (column_name.to_owned(), Value::parse(value_array[*position], &data_types[column_name]))
+        }).collect())
     }
 }
 
@@ -215,9 +220,11 @@ impl SqlStatement {
         }
     }
 
-    pub fn get_values(&self) -> Result<Vec<&str>, anyhow::Error> {
+    pub fn get_values<'a, 'b>(&'a self, positions: &'b TableColumnPositions, data_types: &'b TableDataTypes) -> ValuesResult<'a>
+      where 'b: 'a
+    {
         match &self.parts {
-            SqlStatementParts::Insert(insert_statement) => Ok(insert_statement.get_values()),
+            SqlStatementParts::Insert(insert_statement) => insert_statement.get_values(positions, data_types),
             _ => Err(anyhow::anyhow!("cannot get values unless on insert statement")),
         }
     }
@@ -423,8 +430,7 @@ impl Tracker {
 
         let data_types = self.get_table_data_types(table);
         let positions = self.get_table_column_positions(table);
-        let values = insert_statement.get_values()?;
-        Ok(positions.iter().map(|(column_name, position)| (column_name.to_owned(), Value::parse(values[*position], &data_types[column_name]))).collect())
+        insert_statement.get_values(positions, data_types)
     }
 
     fn capture_values(&mut self, value_per_field: HashMap<String, String>) {
