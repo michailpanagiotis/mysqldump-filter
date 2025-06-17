@@ -28,7 +28,8 @@ fn process_inserts<'a, C: Iterator<Item=&'a PlainCheckType>>(
     }
     let table = tables[0];
 
-    let captured = process_table_inserts(working_file_path, table, tracked_columns, |statement, value_per_field| {
+    let captured = process_table_inserts(working_file_path, table, tracked_columns, |statement| {
+        let value_per_field = statement.get_values()?;
         if checks.iter().all(|t| {
             let col_name = t.get_column_name();
             t.test(col_name, &value_per_field[col_name], lookup_table)

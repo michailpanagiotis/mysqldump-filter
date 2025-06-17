@@ -1,6 +1,7 @@
 use chrono::NaiveDateTime;
 use lazy_static::lazy_static;
 use regex::Regex;
+use std::cell::LazyCell;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::{collections::HashMap, fs::File};
@@ -15,9 +16,9 @@ use sqlparser::parser::Parser as SqlParser;
 use crate::sql_parser::{insert_parts, values};
 
 type Files = HashMap<String, PathBuf>;
-type TableDataTypes = HashMap<String, sqlparser::ast::DataType>;
+type TableDataTypes = Rc<HashMap<String, sqlparser::ast::DataType>>;
 type DataTypes = HashMap<String, TableDataTypes>;
-type TableColumnPositions = HashMap<String, usize>;
+type TableColumnPositions = Rc<HashMap<String, usize>>;
 type ColumnPositions = HashMap<String, TableColumnPositions>;
 type IteratorItem = SqlStatementResult;
 type CapturedValues = HashMap<String, HashSet<String>>;
@@ -26,50 +27,54 @@ type TrackerCell = Rc<RefCell<Tracker>>;
 type SqlStatementResult = Result<SqlStatement, anyhow::Error>;
 type OptionalStatementResult = Result<Option<SqlStatement>, anyhow::Error>;
 type EmptyResult = Result<(), anyhow::Error>;
-type Values<'a> = HashMap<String, Value<'a>>;
-type ValuesResult<'a> = Result<HashMap<String, Value<'a>>, anyhow::Error>;
+
+type Values = HashMap<String, Value>;
+type ValuesResult<'a> = Result<&'a Values, anyhow::Error>;
+type LazyValues<'a> = LazyCell<ValuesResult<'a>, Box<dyn FnMut() -> ValuesResult<'a>>>;
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
 }
 
-pub enum Value<'a> {
+#[derive(Clone)]
+#[derive(Debug)]
+pub enum Value {
     Int {
-        string: &'a str,
+        string: String,
         parsed: i64
     },
     Date {
-        string: &'a str,
+        string: String,
         parsed: i64
     },
     String {
-        string: &'a str,
+        string: String,
         parsed: String,
     },
     Null {
-        string: &'a str,
+        string: String,
     }
 }
 
-impl<'a> Value<'a> {
-    pub fn as_string(&'a self) -> &'a str {
+impl Value {
+    pub fn as_string(&self) -> &str {
         match self {
-            Value::Int{ string, .. } => string,
-            Value::Date{ string, .. } => string,
-            Value::String{ string, .. } => string,
-            Value::Null{ string, .. } => string,
+            Value::Int{ string, .. } => string.as_str(),
+            Value::Date{ string, .. } => string.as_str(),
+            Value::String{ string, .. } => string.as_str(),
+            Value::Null{ string, .. } => string.as_str(),
         }
     }
 
-    fn parse_int(s: &'a str) -> i64 {
+    fn parse_int(s: &str) -> i64 {
         s.parse().unwrap_or_else(|_| panic!("cannot parse int {s}"))
     }
 
-    fn parse_string(s: &'a str) -> String {
+    fn parse_string(s: &str) -> String {
         s.replace("'", "")
     }
 
-    fn parse_date(s: &'a str) -> i64 {
+    fn parse_date(s: &str) -> i64 {
         let date = Value::parse_string(s);
         let to_parse = if date.len() == 10 { date.to_owned() + " 00:00:00" } else { date.to_owned() };
         if to_parse.starts_with("0000-00-00") {
@@ -81,19 +86,23 @@ impl<'a> Value<'a> {
             .timestamp()
     }
 
-    fn parse(value: &'a str, data_type: &'a sqlparser::ast::DataType) -> Self {
+    fn parse(value: &str, data_type: &sqlparser::ast::DataType) -> Self {
         if value == "NULL" {
-            return Value::Null { string: value };
+            return Value::Null { string: value.to_string() };
         }
         match data_type {
             sqlparser::ast::DataType::TinyInt(_) | sqlparser::ast::DataType::Int(_) => {
-                Value::Int{ string: value, parsed: Value::parse_int(value) }
+                Value::Int{ string: value.to_string(), parsed: Value::parse_int(value) }
             },
             sqlparser::ast::DataType::Datetime(_) | sqlparser::ast::DataType::Date => {
-                Value::Date{ string: value, parsed: Value::parse_date(value) }
+                Value::Date{ string: value.to_string(), parsed: Value::parse_date(value) }
             },
-            _ => Value::String{ string: value, parsed: Value::parse_string(value) }
+            _ => Value::String{ string: value.to_string(), parsed: Value::parse_string(value) }
         }
+    }
+
+    fn parse_to_string(value: &str, data_type: &sqlparser::ast::DataType) -> String {
+        Value::parse(value, data_type).as_string().to_string()
     }
 }
 
@@ -105,13 +114,16 @@ struct InsertStatement {
     columns_part: String,
     values_part: String,
     values: Vec<String>,
+    data_types: Option<TableDataTypes>,
+    positions: Option<TableColumnPositions>,
+    value_per_field: Option<HashMap<String, Value>>,
 }
 
 impl InsertStatement {
     fn new(statement: &str) -> Result<Self, anyhow::Error> {
         let (table, columns_part, values_part) = insert_parts(statement)?;
         let values = values_part.split(',').map(|x| x.to_string()).collect();
-        Ok(Self { statement: statement.to_string(), table, columns_part, values_part, values })
+        Ok(Self { statement: statement.to_string(), table, columns_part, values_part, values, value_per_field: None, data_types: None, positions: None })
     }
 
     fn get_column_positions(&self) -> HashMap<String, usize> {
@@ -132,13 +144,43 @@ impl InsertStatement {
         }
     }
 
-    fn get_values<'a, 'b>(&'a self, positions: &'b TableColumnPositions, data_types: &'b TableDataTypes) -> ValuesResult<'a>
-        where 'b: 'a
-    {
-        let (_, value_array) = values(&self.values_part).unwrap();
-        Ok(positions.iter().map(|(column_name, position)| {
-            (column_name.to_owned(), Value::parse(value_array[*position], &data_types[column_name]))
-        }).collect())
+    fn set_meta(&mut self, column_positions: &TableColumnPositions, data_types: &TableDataTypes) {
+        self.positions = Some(Rc::clone(column_positions));
+        self.data_types = Some(Rc::clone(data_types));
+    }
+
+    pub fn get_values(&mut self) -> Result<&HashMap<String, Value>, anyhow::Error> {
+        panic!("stop");
+        if self.value_per_field.is_none() {
+            let Some(ref positions) = self.positions else {
+                return Err(anyhow::anyhow!("statement with no positions"));
+            };
+            let Some(ref data_types) = self.data_types else {
+                return Err(anyhow::anyhow!("statement with no data types"));
+            };
+            let value_array = self.get_value_array()?;
+            let values: Values = positions
+                .iter()
+                .map(|(column_name, position)| {
+                    (
+                        column_name.to_owned(),
+                        Value::parse(value_array[*position], &data_types[column_name])
+                    )
+                })
+                .collect::<Values>();
+            self.value_per_field = Some(values);
+        }
+        let Some(ref values) = self.value_per_field else {
+            return Err(anyhow::anyhow!("cannot get empty values"));
+        };
+        Ok(values)
+    }
+
+    fn get_value_array(&self) -> Result<Vec<&str>, anyhow::Error> {
+        match values(&self.values_part) {
+            Err(_) => Err(anyhow::anyhow!("cannot parse values")),
+            Ok((_, values)) => Ok(values)
+        }
     }
 }
 
@@ -220,15 +262,6 @@ impl SqlStatement {
         }
     }
 
-    pub fn get_values<'a, 'b>(&'a self, positions: &'b TableColumnPositions, data_types: &'b TableDataTypes) -> ValuesResult<'a>
-      where 'b: 'a
-    {
-        match &self.parts {
-            SqlStatementParts::Insert(insert_statement) => insert_statement.get_values(positions, data_types),
-            _ => Err(anyhow::anyhow!("cannot get values unless on insert statement")),
-        }
-    }
-
     fn parse_inline_file(&self) -> Result<Option<(String, PathBuf)>, anyhow::Error> {
         match &self.parts {
             SqlStatementParts::InlineTable(line) => {
@@ -258,10 +291,13 @@ impl SqlStatement {
                 for st in ast.into_iter().filter(|x| matches!(x, sqlparser::ast::Statement::CreateTable(_))) {
                     if let sqlparser::ast::Statement::CreateTable(ct) = st {
                         let table = ct.name.0[0].as_ident().unwrap().value.to_string();
-                        let mut data_types: DataTypes = HashMap::from([(table.to_owned(), HashMap::new())]);
-                        for column in ct.columns.into_iter() {
-                            data_types.get_mut(&table)?.insert(column.name.value.to_string(), column.data_type);
-                        }
+                        let data_types: DataTypes = HashMap::from([
+                            (table.to_owned(), Rc::new(
+                                HashMap::from_iter(
+                                    ct.columns.iter().map(|column| (column.name.value.to_string(), column.data_type.to_owned())),
+                                ),
+                            )),
+                        ]);
                         return Some(data_types);
                     }
                 }
@@ -279,6 +315,35 @@ impl SqlStatement {
                 Some(table)
             },
             _ => None,
+        }
+    }
+
+    fn set_meta(&mut self, column_positions: &TableColumnPositions, data_types: &TableDataTypes) {
+        match self.parts {
+            SqlStatementParts::Insert(ref mut insert_statement) => {
+                insert_statement.set_meta(column_positions, data_types);
+            },
+            _ => {},
+        }
+    }
+
+    pub fn get_values(&mut self) -> Result<&HashMap<String, Value>, anyhow::Error> {
+        match self.parts {
+            SqlStatementParts::Insert(ref mut insert_statement) => {
+                insert_statement.get_values()
+            },
+            _ => Err(anyhow::anyhow!("can only get values of insert statements")),
+        }
+    }
+}
+
+impl TryFrom<&SqlStatement> for InsertStatement {
+    type Error = anyhow::Error;
+
+    fn try_from(other: &SqlStatement) -> Result<Self, Self::Error> {
+        match &other.parts {
+            SqlStatementParts::Insert(insert_statement) => Ok(insert_statement.to_owned()),
+            _ => Err(anyhow::anyhow!("cannot convert statement to insert statement")),
         }
     }
 }
@@ -379,7 +444,7 @@ impl Tracker {
         if let Some(table) = current_table {
             if !self.column_positions.contains_key(table) {
                 if let Some(pos) = statement.get_column_positions() {
-                    self.column_positions.insert(table.to_string(), pos);
+                    self.column_positions.insert(table.to_string(), Rc::new(pos));
                 }
             };
         }
@@ -423,21 +488,13 @@ impl Tracker {
         &self.column_positions[table]
     }
 
-    fn get_insert_values<'a>(&'a self, insert_statement: &'a SqlStatement) -> Result<Values<'a>, anyhow::Error> {
-        let Some(table) = insert_statement.get_table() else {
-            return Err(anyhow::anyhow!("insert statement has no table"));
-        };
-
-        let data_types = self.get_table_data_types(table);
-        let positions = self.get_table_column_positions(table);
-        insert_statement.get_values(positions, data_types)
-    }
-
-    fn capture_values(&mut self, value_per_field: HashMap<String, String>) {
-        for (key, column) in &self.tracked_column_per_key {
-            let value = &value_per_field[column];
-            if let Some(set) = self.captured_values.get_mut(key) {
-                set.insert(value.to_owned());
+    fn capture_values(&mut self, value_per_field: &HashMap<String, Value>) {
+        if self.is_capturing_columns() {
+            for (key, column) in &self.tracked_column_per_key {
+                let value = &value_per_field[column];
+                if let Some(set) = self.captured_values.get_mut(key) {
+                    set.insert(value.as_string().to_owned());
+                }
             }
         }
     }
@@ -448,6 +505,30 @@ impl Tracker {
 
     fn is_capturing_columns(&self) -> bool {
         !self.tracked_column_per_key.is_empty()
+    }
+
+    fn transform_statement<F>(
+        &mut self,
+        input_statement: &mut SqlStatement,
+        mut transform: F,
+    ) -> OptionalStatementResult
+        where F: FnMut(&mut SqlStatement) -> OptionalStatementResult
+    {
+        if input_statement.is_insert() {
+            let Some(table) = input_statement.get_table() else {
+                return Err(anyhow::anyhow!("insert statement without table"));
+            };
+            let positions = self.get_table_column_positions(&table);
+            let data_types = self.get_table_data_types(&table);
+            input_statement.set_meta(&positions, &data_types);
+            let transformed = (transform)(input_statement)?;
+            if self.is_capturing_columns() {
+                let value_per_field = input_statement.get_values()?;
+                self.capture_values(value_per_field);
+            }
+            return Ok(transformed);
+        }
+        Ok(Some(input_statement.clone()))
     }
 }
 
@@ -507,12 +588,12 @@ impl Iterator for TrackedStatements {
     }
 }
 
-struct TransformedStatements<F: FnMut(&SqlStatement, &Values<'_>) -> OptionalStatementResult> {
+struct TransformedStatements<F: FnMut(&mut SqlStatement) -> OptionalStatementResult> {
     iter: TrackedStatements,
     transform: F,
 }
 
-impl<F: FnMut(&SqlStatement, &Values<'_>) -> OptionalStatementResult> TransformedStatements<F> {
+impl<F: FnMut(&mut SqlStatement) -> OptionalStatementResult> TransformedStatements<F> {
     fn from_file(sqldump_filepath: &Path, tracker: &TrackerCell, transform: F) -> Result<Self, anyhow::Error> {
         Ok(TransformedStatements {
             iter: TrackedStatements::from_file(sqldump_filepath, tracker)?,
@@ -520,28 +601,17 @@ impl<F: FnMut(&SqlStatement, &Values<'_>) -> OptionalStatementResult> Transforme
         })
     }
 
-    fn transform_statement(&mut self, input_statement: &SqlStatement) -> OptionalStatementResult {
-        if input_statement.is_insert() {
-            let mut tracker = self.iter.tracker.borrow_mut();
-            let value_per_field = tracker.get_insert_values(input_statement)?;
-            if let Some(statement) = (self.transform)(input_statement, &value_per_field)? {
-                if tracker.is_capturing_columns() {
-                    // capture values
-                    let to_capture: HashMap<String, String> = value_per_field.iter().map(|(f, v)| (f.to_owned(), v.as_string().to_owned())).collect();
-                    tracker.capture_values(to_capture);
-                }
-                return Ok(Some(statement));
-            }
-            return Ok(None);
-        }
-        Ok(Some(input_statement.clone()))
+    fn transform_statement(&mut self, input_statement: &mut SqlStatement) -> OptionalStatementResult {
+        let mut borrowed = self.iter.tracker.borrow_mut();
+        let transformed = borrowed.transform_statement(input_statement, &mut self.transform);
+        transformed
     }
 
-    fn transform_iteration_item(&mut self, item: IteratorItem) -> Option<IteratorItem> {
+    fn transform_iteration_item(&mut self, mut item: IteratorItem) -> Option<IteratorItem> {
         match item {
             Err(_) => Some(item),
-            Ok(st) => {
-                match self.transform_statement(&st) {
+            Ok(ref mut st) => {
+                match self.transform_statement(st) {
                     Err(e) => Some(Err(e)),
                     Ok(transformed_option) => {
                         transformed_option.map(Ok)
@@ -552,7 +622,7 @@ impl<F: FnMut(&SqlStatement, &Values<'_>) -> OptionalStatementResult> Transforme
     }
 }
 
-impl<F: FnMut(&SqlStatement, &Values<'_>) -> OptionalStatementResult> Iterator for TransformedStatements<F> {
+impl<F: FnMut(&mut SqlStatement) -> OptionalStatementResult> Iterator for TransformedStatements<F> {
     type Item = IteratorItem;
     fn next(&mut self) -> Option<IteratorItem> {
         let mut transformed;
@@ -665,7 +735,7 @@ impl Writers {
     }
 
     fn process_input_file<F>(&mut self, sqldump_filepath: &Path, tracker_cell: &TrackerCell, transform: F) -> EmptyResult
-        where F: FnMut(&SqlStatement, &Values<'_>) -> OptionalStatementResult
+        where F: FnMut(&mut SqlStatement) -> OptionalStatementResult
     {
         let statements = TransformedStatements::from_file(sqldump_filepath, tracker_cell, transform)?;
         for st in statements {
@@ -683,7 +753,7 @@ pub fn explode_to_files<F>(
     sqldump_filepath: &Path,
     transform: F,
 ) -> Result<CapturedValues, anyhow::Error>
-  where F: FnMut(&SqlStatement, &Values<'_>) -> OptionalStatementResult
+  where F: FnMut(&mut SqlStatement) -> OptionalStatementResult
 {
     let tracker_cell = Tracker::new(working_dir_path, &[])?;
     let mut writers_tracker = Writers::new(working_file_path, false)?;
@@ -699,7 +769,7 @@ pub fn process_table_inserts<F>(
     tracked_columns: &[&str],
     transform: F,
 ) -> Result<CapturedValues, anyhow::Error>
-  where F: FnMut(&SqlStatement, &Values<'_>) -> OptionalStatementResult
+  where F: FnMut(&mut SqlStatement) -> OptionalStatementResult
 {
     println!("Processing table {table}");
 
