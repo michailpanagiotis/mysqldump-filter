@@ -319,11 +319,8 @@ impl SqlStatement {
     }
 
     fn set_meta(&mut self, column_positions: &TableColumnPositions, data_types: &TableDataTypes) {
-        match self.parts {
-            SqlStatementParts::Insert(ref mut insert_statement) => {
-                insert_statement.set_meta(column_positions, data_types);
-            },
-            _ => {},
+        if let Ok(i) = <&mut InsertStatement>::try_from(self) {
+            i.set_meta(column_positions, data_types);
         }
     }
 
@@ -337,12 +334,12 @@ impl SqlStatement {
     }
 }
 
-impl TryFrom<&SqlStatement> for InsertStatement {
+impl<'a> TryFrom<&'a mut SqlStatement> for &'a mut InsertStatement {
     type Error = anyhow::Error;
 
-    fn try_from(other: &SqlStatement) -> Result<Self, Self::Error> {
-        match &other.parts {
-            SqlStatementParts::Insert(insert_statement) => Ok(insert_statement.to_owned()),
+    fn try_from(other: &'a mut SqlStatement) -> Result<&'a mut InsertStatement, Self::Error> {
+        match other.parts {
+            SqlStatementParts::Insert(ref mut insert_statement) => Ok(insert_statement),
             _ => Err(anyhow::anyhow!("cannot convert statement to insert statement")),
         }
     }
@@ -507,6 +504,15 @@ impl Tracker {
         !self.tracked_column_per_key.is_empty()
     }
 
+    fn try_share_meta(&self, statement: &mut SqlStatement) -> EmptyResult {
+        if let Ok(i) = <&mut InsertStatement>::try_from(statement) {
+            let positions = self.get_table_column_positions(&i.table);
+            let data_types = self.get_table_data_types(&i.table);
+            i.set_meta(positions, data_types);
+        }
+        Ok(())
+    }
+
     fn transform_statement<F>(
         &mut self,
         input_statement: &mut SqlStatement,
@@ -515,12 +521,6 @@ impl Tracker {
         where F: FnMut(&mut SqlStatement) -> OptionalStatementResult
     {
         if input_statement.is_insert() {
-            let Some(table) = input_statement.get_table() else {
-                return Err(anyhow::anyhow!("insert statement without table"));
-            };
-            let positions = self.get_table_column_positions(&table);
-            let data_types = self.get_table_data_types(&table);
-            input_statement.set_meta(&positions, &data_types);
             let transformed = (transform)(input_statement)?;
             if self.is_capturing_columns() {
                 let value_per_field = input_statement.get_values()?;
@@ -611,6 +611,9 @@ impl<F: FnMut(&mut SqlStatement) -> OptionalStatementResult> TransformedStatemen
         match item {
             Err(_) => Some(item),
             Ok(ref mut st) => {
+                if self.iter.tracker.borrow().try_share_meta(st).is_err() {
+                    return Some(Err(anyhow::anyhow!("cannot share meta")));
+                }
                 match self.transform_statement(st) {
                     Err(e) => Some(Err(e)),
                     Ok(transformed_option) => {
