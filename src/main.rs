@@ -71,7 +71,7 @@ fn main() -> Result<(), anyhow::Error> {
                     }
                 }
             }
-            Ok(Some(statement.clone()))
+            Ok(Some(()))
         }
     ).unwrap_or_else(|e| {
         panic!("Problem exploding to files: {e:?}");
@@ -79,7 +79,7 @@ fn main() -> Result<(), anyhow::Error> {
 
     // let mut collection = CheckCollection::new(config.filters.iter().chain(&config.cascades))?;
     // collection.process(working_file_path.as_path())?;
-    gather(&working_file_path, &output_file)?;
+    // gather(&working_file_path, &output_file)?;
 
     if let Some(dir) = temp_dir {
        let _ = dir.close();

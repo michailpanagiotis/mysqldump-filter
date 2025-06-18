@@ -24,13 +24,13 @@ type CapturedValues = HashMap<String, HashSet<String>>;
 type TrackerCell = Rc<RefCell<Tracker>>;
 
 type SqlStatementResult = Result<SqlStatement, anyhow::Error>;
-type OptionalStatementResult = Result<Option<SqlStatement>, anyhow::Error>;
+type OptionalStatementResult = Result<Option<()>, anyhow::Error>;
 type EmptyResult = Result<(), anyhow::Error>;
 
 type Values = HashMap<String, Value>;
 
 // trait alias for transform functions
-trait TransformFn: FnMut(&mut SqlStatement) -> OptionalStatementResult  {}
+pub trait TransformFn: FnMut(&mut SqlStatement) -> OptionalStatementResult  {}
 impl<T: FnMut(&mut SqlStatement) -> OptionalStatementResult> TransformFn for T {}
 
 lazy_static! {
@@ -513,7 +513,7 @@ impl Tracker {
             }
             return Ok(transformed);
         }
-        Ok(Some(input_statement.clone()))
+        Ok(Some(()))
     }
 }
 
@@ -596,7 +596,7 @@ impl<F: TransformFn> TransformedStatements<F> {
                 match self.iter.tracker.borrow_mut().transform_statement(st, &mut self.transform) {
                     Err(e) => Some(Err(e)),
                     Ok(transformed_option) => {
-                        transformed_option.map(Ok)
+                        transformed_option.map(|()| { item })
                     }
                 }
             }

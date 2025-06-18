@@ -34,7 +34,7 @@ fn process_inserts<'a, C: Iterator<Item=&'a PlainCheckType>>(
             let col_name = t.get_column_name();
             t.test(col_name, &value_per_field[col_name], lookup_table)
         }) {
-            return Ok(Some(statement.to_owned()));
+            return Ok(Some(()));
         }
 
         Ok(None)
