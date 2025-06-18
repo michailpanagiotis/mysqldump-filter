@@ -387,6 +387,7 @@ pub struct Tracker {
     column_positions: ColumnPositions,
     captured_values: CapturedValues,
     tracked_column_per_key: HashMap<String, String>,
+    inline_files: HashSet<PathBuf>,
     working_file_writer: Option<Rc<RefCell<BufWriter<File>>>>,
     current_writer: Option<Rc<RefCell<BufWriter<File>>>>,
     current_file: Option<PathBuf>,
@@ -405,6 +406,7 @@ impl Tracker {
             column_positions: HashMap::new(),
             captured_values,
             tracked_column_per_key,
+            inline_files: HashSet::new(),
             working_file_writer: None,
             current_writer: None,
             current_file: None,
@@ -536,6 +538,20 @@ impl Tracker {
         }
         self.current_writer = writer.as_ref().map(Rc::clone);
         self.current_file = filepath.to_owned();
+    }
+
+    fn try_write_inline_file(&mut self, table_option: &Option<&str>, filepath: &Path) -> Result<(), anyhow::Error> {
+        if !self.inline_files.contains(filepath) {
+            self.inline_files.insert(filepath.to_owned());
+            println!("inlining file {}", &filepath.display());
+            if let Some(table) = table_option {
+                let Some(ref working_file_writer) = self.working_file_writer else {
+                    return Err(anyhow::anyhow!("cannot find output file"));
+                };
+                working_file_writer.borrow_mut().write_all(format!("--- INLINE {} {}\n", filepath.display(), table).as_bytes())?;
+            };
+        }
+        Ok(())
     }
 
     fn transform_statement<F>(
@@ -707,158 +723,32 @@ impl<F: TransformFn> Iterator for TransformedStatements<F> {
     }
 }
 
-struct Writers {
-    working_dir_path: PathBuf,
-    working_file_path: PathBuf,
-    inline_files: HashSet<PathBuf>,
-    files: HashMap<Option<String>, PathBuf>,
-    instances: HashMap<Option<String>, BufWriter<File>>,
+fn process_input_file<F: TransformFn>(
+    sqldump_filepath: &Path,
+    tracker_cell: &TrackerCell,
+    transform: F,
     in_place: bool,
-}
-
-impl Writers {
-    fn new_writer(filepath: &Path) -> Result<BufWriter<File>, anyhow::Error> {
-        fs::File::create(filepath)?;
-        let file = fs::OpenOptions::new().append(true).open(filepath)?;
-        Ok(BufWriter::new(file))
-    }
-
-    fn new(working_file_path: &Path, in_place: bool) -> Result<Self, anyhow::Error> {
-        let working_dir_path = working_file_path.parent().ok_or(anyhow::anyhow!("cannot find parent directory"))?;
-        Ok(Writers {
-            working_dir_path: working_dir_path.to_owned(),
-            working_file_path: working_file_path.to_owned(),
-            inline_files: HashSet::new(),
-            files: HashMap::new(),
-            instances: HashMap::new(),
-            in_place,
-        })
-    }
-
-    fn determine_output_file(&mut self, table_option: &Option<&str>, in_place: bool) -> Result<PathBuf, anyhow::Error> {
-        match table_option {
-            None => {
-                if in_place {
-                    return Err(anyhow::anyhow!("cannot write to working file in place"));
-                }
-                Ok(self.working_file_path.to_owned())
-            }
-            Some(table) => {
-                let table_file = std::path::absolute(
-                    if in_place {
-                        self.working_dir_path.join(table).with_extension("proc")
-                    } else {
-                        self.working_dir_path.join(table).with_extension("sql")
-                    }
-                )?;
-                Ok(table_file.to_owned())
-            }
-        }
-    }
-
-    fn record_inline_file(&mut self, table: &str, table_file: &Path) -> EmptyResult {
-        let working_file_writer = self.instances.get_mut(&None).ok_or(anyhow::anyhow!("cannot find working file writer"))?;
-        working_file_writer.write_all(format!("--- INLINE {} {}\n", table_file.display(), table).as_bytes())?;
-        Ok(())
-    }
-
-    fn get_writer<'a>(&'a mut self, statement: &SqlStatement) -> Result<(&'a mut BufWriter<File>, Option<PathBuf>), anyhow::Error> {
-        let table_file = self.determine_output_file(&statement.get_table(), self.in_place)?;
-        let table_option = statement.get_table();
-        let mut new_file = None;
-        let owned = table_option.map(|t| t.to_string());
-        if !self.instances.contains_key(&owned) {
-            self.instances.insert(owned.clone(), Writers::new_writer(&table_file)?);
-            new_file = Some(table_file.to_owned());
-            self.files.insert(owned.clone(), table_file.to_owned());
-        }
-        let writer = self.instances.get_mut(&owned).ok_or(anyhow::anyhow!("cannot find writer"))?;
-        Ok((writer, new_file))
-    }
-
-    fn write_statement(&mut self, statement: &SqlStatement, writer: &mut BufWriter<File>, filepath: &Path) -> EmptyResult {
-        // let writer = self.instances.get_mut(&owned).ok_or(anyhow::anyhow!("cannot find writer"))?;
-        // let (t_writer, new_file) = self.get_writer(statement)?;
-        writer.write_all(&statement.as_bytes())?;
-
-        if !self.inline_files.contains(filepath) {
-            self.inline_files.insert(filepath.to_owned());
-            if !self.in_place {
-                println!("inlining file {}", &filepath.display());
-                if let Some(table) = statement.get_table() {
-                    let working_file_writer = self.instances.get_mut(&None).ok_or(anyhow::anyhow!("cannot find working file writer"))?;
-                    working_file_writer.write_all(format!("--- INLINE {} {}\n", filepath.display(), table).as_bytes())?;
-                };
-            }
-        }
-        // let mut new_file = None;
-        // let owned = table_option.map(|t| t.to_string());
-        // if !self.files.contains_key(&owned) {
-        //     new_file = Some(table_file.to_owned());
-        //     self.files.insert(owned.clone(), table_file.to_owned());
-        // }
-
-        // if let Some(table_file) = new_file {
-        //     println!("inlining file {}", &table_file.display());
-        //     if !self.in_place {
-        //         if let Some(table) = statement.get_table() {
-        //             self.record_inline_file(table, &table_file)?;
-        //         };
-        //     }
-        // }
-        Ok(())
-    }
-
-    fn flush(&mut self, table_files: &HashMap<String, PathBuf>) -> EmptyResult {
-        for w in self.instances.values_mut() {
-            w.flush()?
-        }
-        if self.in_place {
-            for (table_option, temporary_file) in self.files.iter() {
-                if let Some(table) = table_option {
-                    let Some(original_file) = table_files.get(table) else {
-                        return Err(anyhow::anyhow!("cannot find original file"));
-                    };
-                    fs::rename(temporary_file, original_file).expect("cannot rename");
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn process_input_file<F>(&mut self, sqldump_filepath: &Path, tracker_cell: &TrackerCell, transform: F) -> EmptyResult
-        where F: TransformFn
-    {
-        let statements = TransformedStatements::from_file(sqldump_filepath, tracker_cell, transform)?;
-        for st in statements {
-            let statement = st?;
-            let filepath_option = tracker_cell.borrow().current_file.to_owned();
-            let mut borrowed = tracker_cell.borrow_mut();
-            let Some(writer) = &mut borrowed.current_writer else {
-                return Err(anyhow::anyhow!("cannot find writer"));
-            };
-            let Some(filepath) = &filepath_option else {
-                return Err(anyhow::anyhow!("cannot find output file"));
-            };
-
-            writer.borrow_mut().write_all(&statement.as_bytes())?;
-
-            if !self.inline_files.contains(filepath) {
-                self.inline_files.insert(filepath.to_owned());
-                if !self.in_place {
-                    println!("inlining file {}", &filepath.display());
-                    if let Some(table) = statement.get_table() {
-                        let Some(ref working_file_writer) = borrowed.working_file_writer else {
-                            return Err(anyhow::anyhow!("cannot find output file"));
-                        };
-                        working_file_writer.borrow_mut().write_all(format!("--- INLINE {} {}\n", filepath.display(), table).as_bytes())?;
-                    };
-                }
-            }
+) -> EmptyResult {
+    let statements = TransformedStatements::from_file(sqldump_filepath, tracker_cell, transform)?;
+    for st in statements {
+        let statement = st?;
+        let filepath_option = tracker_cell.borrow().current_file.to_owned();
+        let mut borrowed = tracker_cell.borrow_mut();
+        let Some(writer) = &mut borrowed.current_writer else {
+            return Err(anyhow::anyhow!("cannot find writer"));
         };
-        tracker_cell.borrow_mut().flush()?;
-        Ok(())
-    }
+        let Some(filepath) = &filepath_option else {
+            return Err(anyhow::anyhow!("cannot find output file"));
+        };
+
+        writer.borrow_mut().write_all(&statement.as_bytes())?;
+
+        if !in_place {
+            borrowed.try_write_inline_file(&statement.get_table(), filepath)?;
+        }
+    };
+    tracker_cell.borrow_mut().flush()?;
+    Ok(())
 }
 
 pub fn explode_to_files<F>(
@@ -869,9 +759,7 @@ pub fn explode_to_files<F>(
   where F: TransformFn
 {
     let tracker_cell = Tracker::new(working_file_path, &[], false)?;
-    let mut writers_tracker = Writers::new(working_file_path, false)?;
-
-    writers_tracker.process_input_file(sqldump_filepath, &tracker_cell, transform)?;
+    process_input_file(sqldump_filepath, &tracker_cell, transform, false)?;
 
     Ok(tracker_cell.borrow().get_captured_values().clone())
 }
@@ -887,11 +775,9 @@ pub fn process_table_inserts<F>(
     println!("Processing table {table}");
 
     let tracker_cell = Rc::new(RefCell::new(Tracker::from_working_file_path(working_file_path, tracked_columns)?));
-    let mut writers_tracker = Writers::new(working_file_path, true)?;
-
     let sqldump_filepath = &tracker_cell.borrow().get_table_file(table)?;
 
-    writers_tracker.process_input_file(sqldump_filepath, &tracker_cell, transform)?;
+    process_input_file(sqldump_filepath, &tracker_cell, transform, true)?;
 
     Ok(tracker_cell.borrow().get_captured_values().clone())
 }
