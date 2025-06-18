@@ -387,7 +387,9 @@ pub struct Tracker {
     column_positions: ColumnPositions,
     captured_values: CapturedValues,
     tracked_column_per_key: HashMap<String, String>,
+    working_file_writer: Option<Rc<RefCell<BufWriter<File>>>>,
     current_writer: Option<Rc<RefCell<BufWriter<File>>>>,
+    current_file: Option<PathBuf>,
 }
 
 impl Tracker {
@@ -403,7 +405,9 @@ impl Tracker {
             column_positions: HashMap::new(),
             captured_values,
             tracked_column_per_key,
+            working_file_writer: None,
             current_writer: None,
+            current_file: None,
         })))
     }
 
@@ -526,8 +530,12 @@ impl Tracker {
         }
     }
 
-    fn set_writer(&mut self, writer: &Option<Rc<RefCell<BufWriter<File>>>>) {
+    fn set_writer(&mut self, table: &Option<String>, filepath: &Option<PathBuf>, writer: &Option<Rc<RefCell<BufWriter<File>>>>) {
+        if table.is_none() && self.working_file_writer.is_none() {
+            self.working_file_writer = writer.as_ref().map(Rc::clone);
+        }
         self.current_writer = writer.as_ref().map(Rc::clone);
+        self.current_file = filepath.to_owned();
     }
 
     fn transform_statement<F>(
@@ -611,6 +619,7 @@ struct TransformedStatements<F: TransformFn> {
     iter: TrackedStatements,
     current_table: Option<String>,
     current_writer: Option<Rc<RefCell<BufWriter<File>>>>,
+    current_file: Option<PathBuf>,
     written_files: HashSet<PathBuf>,
     transform: F,
 }
@@ -621,6 +630,7 @@ impl<F: TransformFn> TransformedStatements<F> {
             iter: TrackedStatements::from_file(sqldump_filepath, tracker)?,
             current_table: None,
             current_writer: None,
+            current_file: None,
             written_files: HashSet::new(),
             transform,
         })
@@ -631,6 +641,7 @@ impl<F: TransformFn> TransformedStatements<F> {
         if self.current_writer.is_none() || table_option != self.current_table.as_deref() {
             self.current_table = table_option.map(|s| s.to_owned());
             let filepath = self.iter.tracker.borrow().determine_output_file(&table_option)?;
+            self.current_file = Some(filepath.to_owned());
             if !self.written_files.contains(&filepath) {
                 println!("creating file {}", &filepath.display());
                 self.written_files.insert(filepath.to_owned());
@@ -639,6 +650,9 @@ impl<F: TransformFn> TransformedStatements<F> {
                 println!("appending to file {}", &filepath.display());
             }
             let file = fs::OpenOptions::new().append(true).open(&filepath)?;
+            if let Some(writer) = &self.current_writer {
+                writer.borrow_mut().flush();
+            }
             self.current_writer = Some(Rc::new(RefCell::new(BufWriter::new(file))));
         }
         Ok(())
@@ -651,7 +665,7 @@ impl<F: TransformFn> TransformedStatements<F> {
                 match self.determine_writer(st) {
                     Err(_) => Some(Err(anyhow::anyhow!("cannot determine writer"))),
                     Ok(_) => {
-                        self.iter.tracker.borrow_mut().set_writer(&self.current_writer);
+                        self.iter.tracker.borrow_mut().set_writer(&self.current_table, &self.current_file, &self.current_writer);
                         if self.iter.tracker.borrow().try_share_meta(st).is_err() {
                             return Some(Err(anyhow::anyhow!("cannot share meta")));
                         }
@@ -686,6 +700,7 @@ impl<F: TransformFn> Iterator for TransformedStatements<F> {
 struct Writers {
     working_dir_path: PathBuf,
     working_file_path: PathBuf,
+    inline_files: HashSet<PathBuf>,
     files: HashMap<Option<String>, PathBuf>,
     instances: HashMap<Option<String>, BufWriter<File>>,
     in_place: bool,
@@ -703,6 +718,7 @@ impl Writers {
         Ok(Writers {
             working_dir_path: working_dir_path.to_owned(),
             working_file_path: working_file_path.to_owned(),
+            inline_files: HashSet::new(),
             files: HashMap::new(),
             instances: HashMap::new(),
             in_place,
@@ -750,20 +766,30 @@ impl Writers {
         Ok((writer, new_file))
     }
 
-    fn write_statement(&mut self, statement: &SqlStatement, writer: &mut BufWriter<File>) -> EmptyResult {
+    fn write_statement(&mut self, statement: &SqlStatement, writer: &mut BufWriter<File>, filepath: &Path) -> EmptyResult {
         // let writer = self.instances.get_mut(&owned).ok_or(anyhow::anyhow!("cannot find writer"))?;
         // let (t_writer, new_file) = self.get_writer(statement)?;
         writer.write_all(&statement.as_bytes())?;
 
+        if !self.inline_files.contains(filepath) {
+            self.inline_files.insert(filepath.to_owned());
+            if !self.in_place {
+                println!("inlining file {}", &filepath.display());
+                if let Some(table) = statement.get_table() {
+                    let working_file_writer = self.instances.get_mut(&None).ok_or(anyhow::anyhow!("cannot find working file writer"))?;
+                    working_file_writer.write_all(format!("--- INLINE {} {}\n", filepath.display(), table).as_bytes())?;
+                };
+            }
+        }
         // let mut new_file = None;
         // let owned = table_option.map(|t| t.to_string());
         // if !self.files.contains_key(&owned) {
         //     new_file = Some(table_file.to_owned());
         //     self.files.insert(owned.clone(), table_file.to_owned());
         // }
-        //
+
         // if let Some(table_file) = new_file {
-        //     println!("writing file {}", &table_file.display());
+        //     println!("inlining file {}", &table_file.display());
         //     if !self.in_place {
         //         if let Some(table) = statement.get_table() {
         //             self.record_inline_file(table, &table_file)?;
@@ -796,10 +822,29 @@ impl Writers {
         let statements = TransformedStatements::from_file(sqldump_filepath, tracker_cell, transform)?;
         for st in statements {
             let statement = st?;
-            let Some(writer) = &mut tracker_cell.borrow_mut().current_writer else {
+            let filepath_option = tracker_cell.borrow().current_file.to_owned();
+            let mut borrowed = tracker_cell.borrow_mut();
+            let Some(writer) = &mut borrowed.current_writer else {
                 return Err(anyhow::anyhow!("cannot find writer"));
             };
-            self.write_statement(&statement, &mut writer.borrow_mut())?;
+            let Some(filepath) = &filepath_option else {
+                return Err(anyhow::anyhow!("cannot find output file"));
+            };
+
+            writer.borrow_mut().write_all(&statement.as_bytes())?;
+
+            if !self.inline_files.contains(filepath) {
+                self.inline_files.insert(filepath.to_owned());
+                if !self.in_place {
+                    println!("inlining file {}", &filepath.display());
+                    if let Some(table) = statement.get_table() {
+                        let Some(ref working_file_writer) = borrowed.working_file_writer else {
+                            return Err(anyhow::anyhow!("cannot find output file"));
+                        };
+                        working_file_writer.borrow_mut().write_all(format!("--- INLINE {} {}\n", filepath.display(), table).as_bytes())?;
+                    };
+                }
+            }
         };
         self.flush(tracker_cell.borrow().get_table_files())?;
         Ok(())
