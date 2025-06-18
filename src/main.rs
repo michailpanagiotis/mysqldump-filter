@@ -13,7 +13,7 @@ mod sql_parser;
 mod traits;
 
 use table::CheckCollection;
-use split::{explode_to_files, gather, get_table_files};
+use split::{explode_to_files, gather};
 
 #[derive(Debug)]
 #[derive(Deserialize)]

@@ -29,6 +29,10 @@ type EmptyResult = Result<(), anyhow::Error>;
 
 type Values = HashMap<String, Value>;
 
+// trait alias for transform functions
+trait TransformFn: FnMut(&mut SqlStatement) -> OptionalStatementResult  {}
+impl<T: FnMut(&mut SqlStatement) -> OptionalStatementResult> TransformFn for T {}
+
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
 }
@@ -115,8 +119,7 @@ struct InsertStatement {
 impl InsertStatement {
     fn new(statement: &str) -> Result<Self, anyhow::Error> {
         let (table, columns_part, values_part) = insert_parts(statement)?;
-        let values = values_part.split(',').map(|x| x.to_string()).collect();
-        Ok(Self { statement: statement.to_string(), table, columns_part, values_part, values, value_per_field: None, data_types: None, positions: None })
+        Ok(Self { statement: statement.to_string(), table, columns_part, values_part, values: Vec::new(), value_per_field: None, data_types: None, positions: None })
     }
 
     fn get_column_positions(&self) -> HashMap<String, usize> {
@@ -129,12 +132,8 @@ impl InsertStatement {
         x.columns.iter().enumerate().map(|(idx, x)| (x.value.to_owned(), idx)).collect()
     }
 
-    fn as_string(&self) -> String {
-        if self.values.is_empty() {
-            format!("INSERT INTO `{}` ({}) VALUES ({});\n", self.table, self.columns_part, self.values_part)
-        } else {
-            format!("INSERT INTO `{}` ({}) VALUES ({});\n", self.table, self.columns_part, self.values.join(","))
-        }
+    fn as_string(&self) -> &str {
+        &self.statement
     }
 
     fn set_meta(&mut self, column_positions: &TableColumnPositions, data_types: &TableDataTypes) {
@@ -225,14 +224,14 @@ impl SqlStatement {
         })
     }
 
-    pub fn as_string(&self) -> String {
+    pub fn as_string(&self) -> &str {
         match &self.parts {
             SqlStatementParts::Generic(s)
             | SqlStatementParts::CreateTable(s)
             | SqlStatementParts::TableUnlock(s)
             | SqlStatementParts::TableDataDumpComment(s)
             | SqlStatementParts::InlineTable(s)
-                => s.to_owned(),
+                => s,
             SqlStatementParts::Insert(s) => s.as_string(),
         }
     }
@@ -504,7 +503,7 @@ impl Tracker {
         input_statement: &mut SqlStatement,
         mut transform: F,
     ) -> OptionalStatementResult
-        where F: FnMut(&mut SqlStatement) -> OptionalStatementResult
+        where F: TransformFn
     {
         if input_statement.is_insert() {
             let transformed = (transform)(input_statement)?;
@@ -574,12 +573,12 @@ impl Iterator for TrackedStatements {
     }
 }
 
-struct TransformedStatements<F: FnMut(&mut SqlStatement) -> OptionalStatementResult> {
+struct TransformedStatements<F: TransformFn> {
     iter: TrackedStatements,
     transform: F,
 }
 
-impl<F: FnMut(&mut SqlStatement) -> OptionalStatementResult> TransformedStatements<F> {
+impl<F: TransformFn> TransformedStatements<F> {
     fn from_file(sqldump_filepath: &Path, tracker: &TrackerCell, transform: F) -> Result<Self, anyhow::Error> {
         Ok(TransformedStatements {
             iter: TrackedStatements::from_file(sqldump_filepath, tracker)?,
@@ -605,7 +604,7 @@ impl<F: FnMut(&mut SqlStatement) -> OptionalStatementResult> TransformedStatemen
     }
 }
 
-impl<F: FnMut(&mut SqlStatement) -> OptionalStatementResult> Iterator for TransformedStatements<F> {
+impl<F: TransformFn> Iterator for TransformedStatements<F> {
     type Item = IteratorItem;
     fn next(&mut self) -> Option<IteratorItem> {
         let mut transformed;
@@ -719,7 +718,7 @@ impl Writers {
     }
 
     fn process_input_file<F>(&mut self, sqldump_filepath: &Path, tracker_cell: &TrackerCell, transform: F) -> EmptyResult
-        where F: FnMut(&mut SqlStatement) -> OptionalStatementResult
+        where F: TransformFn
     {
         let statements = TransformedStatements::from_file(sqldump_filepath, tracker_cell, transform)?;
         for st in statements {
@@ -737,7 +736,7 @@ pub fn explode_to_files<F>(
     sqldump_filepath: &Path,
     transform: F,
 ) -> Result<CapturedValues, anyhow::Error>
-  where F: FnMut(&mut SqlStatement) -> OptionalStatementResult
+  where F: TransformFn
 {
     let tracker_cell = Tracker::new(working_dir_path, &[])?;
     let mut writers_tracker = Writers::new(working_file_path, false)?;
@@ -753,12 +752,13 @@ pub fn process_table_inserts<F>(
     tracked_columns: &[&str],
     transform: F,
 ) -> Result<CapturedValues, anyhow::Error>
-  where F: FnMut(&mut SqlStatement) -> OptionalStatementResult
+  where F: TransformFn
 {
     println!("Processing table {table}");
 
     let tracker_cell = Rc::new(RefCell::new(Tracker::from_working_file_path(working_file_path, tracked_columns)?));
     let mut writers_tracker = Writers::new(working_file_path, true)?;
+
     let sqldump_filepath = &tracker_cell.borrow().get_table_file(table)?;
 
     writers_tracker.process_input_file(sqldump_filepath, &tracker_cell, transform)?;
