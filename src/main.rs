@@ -61,7 +61,6 @@ fn main() -> Result<(), anyhow::Error> {
 
     explode_to_files(
         working_file_path.as_path(),
-        working_dir_path.as_path(),
         input_file.as_path(),
         |statement| {
             if let Some(table) = statement.get_table() {
