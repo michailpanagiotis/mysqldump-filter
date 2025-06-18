@@ -1,7 +1,6 @@
 use chrono::NaiveDateTime;
 use lazy_static::lazy_static;
 use regex::Regex;
-use std::cell::LazyCell;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::{collections::HashMap, fs::File};
@@ -29,8 +28,6 @@ type OptionalStatementResult = Result<Option<SqlStatement>, anyhow::Error>;
 type EmptyResult = Result<(), anyhow::Error>;
 
 type Values = HashMap<String, Value>;
-type ValuesResult<'a> = Result<&'a Values, anyhow::Error>;
-type LazyValues<'a> = LazyCell<ValuesResult<'a>, Box<dyn FnMut() -> ValuesResult<'a>>>;
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -100,10 +97,6 @@ impl Value {
             _ => Value::String{ string: value.to_string(), parsed: Value::parse_string(value) }
         }
     }
-
-    fn parse_to_string(value: &str, data_type: &sqlparser::ast::DataType) -> String {
-        Value::parse(value, data_type).as_string().to_string()
-    }
 }
 
 #[derive(Clone)]
@@ -150,7 +143,6 @@ impl InsertStatement {
     }
 
     pub fn get_values(&mut self) -> Result<&HashMap<String, Value>, anyhow::Error> {
-        panic!("stop");
         if self.value_per_field.is_none() {
             let Some(ref positions) = self.positions else {
                 return Err(anyhow::anyhow!("statement with no positions"));
@@ -315,12 +307,6 @@ impl SqlStatement {
                 Some(table)
             },
             _ => None,
-        }
-    }
-
-    fn set_meta(&mut self, column_positions: &TableColumnPositions, data_types: &TableDataTypes) {
-        if let Ok(i) = <&mut InsertStatement>::try_from(self) {
-            i.set_meta(column_positions, data_types);
         }
     }
 
@@ -601,12 +587,6 @@ impl<F: FnMut(&mut SqlStatement) -> OptionalStatementResult> TransformedStatemen
         })
     }
 
-    fn transform_statement(&mut self, input_statement: &mut SqlStatement) -> OptionalStatementResult {
-        let mut borrowed = self.iter.tracker.borrow_mut();
-        let transformed = borrowed.transform_statement(input_statement, &mut self.transform);
-        transformed
-    }
-
     fn transform_iteration_item(&mut self, mut item: IteratorItem) -> Option<IteratorItem> {
         match item {
             Err(_) => Some(item),
@@ -614,7 +594,7 @@ impl<F: FnMut(&mut SqlStatement) -> OptionalStatementResult> TransformedStatemen
                 if self.iter.tracker.borrow().try_share_meta(st).is_err() {
                     return Some(Err(anyhow::anyhow!("cannot share meta")));
                 }
-                match self.transform_statement(st) {
+                match self.iter.tracker.borrow_mut().transform_statement(st, &mut self.transform) {
                     Err(e) => Some(Err(e)),
                     Ok(transformed_option) => {
                         transformed_option.map(Ok)
@@ -784,22 +764,6 @@ pub fn process_table_inserts<F>(
     writers_tracker.process_input_file(sqldump_filepath, &tracker_cell, transform)?;
 
     Ok(tracker_cell.borrow().get_captured_values().clone())
-}
-
-pub fn get_table_files(working_file_path: &Path) -> Result<HashMap<String, PathBuf>, anyhow::Error> {
-    let mut table_files: HashMap<String, PathBuf> = HashMap::new();
-    let file = File::open(working_file_path)?;
-    for res in io::BufReader::new(file).lines() {
-        let line = res?;
-        if line.starts_with("--- INLINE ") {
-            let st = line.replace("--- INLINE ", "").to_string();
-            let mut split = st.split(" ");
-            let filename = split.next().ok_or(anyhow::anyhow!("cannot parse filename"))?;
-            let table = split.next().ok_or(anyhow::anyhow!("cannot parse table"))?;
-            table_files.insert(table.to_string(), PathBuf::from(filename));
-        }
-    }
-    Ok(table_files)
 }
 
 #[allow(dead_code)]
