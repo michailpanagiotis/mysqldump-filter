@@ -14,7 +14,7 @@ use sqlparser::parser::Parser as SqlParser;
 
 use crate::sql_parser::{insert_parts, values};
 
-type Files = HashMap<String, PathBuf>;
+type Files = HashMap<Option<String>, PathBuf>;
 type TableDataTypes = Rc<HashMap<String, sqlparser::ast::DataType>>;
 type DataTypes = HashMap<String, TableDataTypes>;
 type TableColumnPositions = Rc<HashMap<String, usize>>;
@@ -453,7 +453,7 @@ impl Tracker {
 
     fn capture_inline_files(&mut self, statement: &SqlStatement) -> EmptyResult {
         if let Some((table, file)) = statement.parse_inline_file()? {
-            self.files.insert(table, file);
+            self.files.insert(Some(table), file);
         }
         Ok(())
     }
@@ -469,7 +469,7 @@ impl Tracker {
         std::path::absolute(self.working_dir_path.join(table).with_extension("sql"))
     }
 
-    fn get_table_files(&self) -> &HashMap<String, PathBuf> {
+    fn get_table_files(&self) -> &HashMap<Option<String>, PathBuf> {
         &self.files
     }
 
@@ -554,6 +554,16 @@ impl Tracker {
             return Ok(transformed);
         }
         Ok(Some(()))
+    }
+
+    fn flush(&self) -> Result<(), anyhow::Error> {
+        if let Some(w) = &self.current_writer {
+            w.borrow_mut().flush()?;
+        }
+        if let Some(w) = &self.working_file_writer {
+            w.borrow_mut().flush()?;
+        }
+        Ok(())
     }
 }
 
@@ -846,7 +856,7 @@ impl Writers {
                 }
             }
         };
-        self.flush(tracker_cell.borrow().get_table_files())?;
+        tracker_cell.borrow_mut().flush()?;
         Ok(())
     }
 }
