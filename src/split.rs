@@ -1,6 +1,7 @@
 use chrono::NaiveDateTime;
 use lazy_static::lazy_static;
 use regex::Regex;
+use core::borrow;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::{collections::HashMap, fs::File};
@@ -376,7 +377,6 @@ impl Iterator for PlainStatements {
 
 #[derive(Debug)]
 pub struct Tracker {
-    working_file_path: PathBuf,
     data_types: DataTypes,
     column_positions: ColumnPositions,
     captured_values: CapturedValues,
@@ -387,7 +387,6 @@ impl Tracker {
     fn new(working_file_path: &Path, tracked_columns: &[&str], read_working_file: bool) -> Result<Rc<RefCell<Self>>, anyhow::Error> {
         let (captured_values, tracked_column_per_key) = Tracker::prepare_tracked_columns(tracked_columns)?;
         let tracker = Rc::new(RefCell::new(Tracker {
-            working_file_path: working_file_path.to_owned(),
             data_types: HashMap::new(),
             column_positions: HashMap::new(),
             captured_values,
@@ -475,23 +474,14 @@ impl Tracker {
         Ok(())
     }
 
-    fn transform_statement<F>(
-        &mut self,
-        input_statement: &mut SqlStatement,
-        mut transform: F,
-    ) -> OptionalStatementResult
-        where F: TransformFn
-    {
-        if input_statement.is_insert() {
-            let transformed = (transform)(input_statement)?;
-            if self.is_capturing_columns() {
-                let value_per_field = input_statement.get_values()?;
-                self.capture_values(value_per_field);
-            }
-            return Ok(transformed);
+    fn try_capture_values(&mut self, input_statement: &mut SqlStatement) -> EmptyResult {
+        if self.is_capturing_columns() {
+            let value_per_field = input_statement.get_values()?;
+            self.capture_values(value_per_field);
         }
-        Ok(Some(()))
+        Ok(())
     }
+
 }
 
 struct TrackedStatements {
@@ -569,15 +559,26 @@ impl<F: TransformFn> TransformedStatements<F> {
         })
     }
 
+    fn transform_statement(&mut self, input_statement: &mut SqlStatement) -> OptionalStatementResult
+        where F: TransformFn
+    {
+        let mut borrowed = self.iter.tracker.borrow_mut();
+        if borrowed.try_share_meta(input_statement).is_err() {
+            return Err(anyhow::anyhow!("cannot share meta"));
+        }
+        if input_statement.is_insert() {
+            let transformed = (self.transform)(input_statement)?;
+            borrowed.try_capture_values(input_statement)?;
+            return Ok(transformed);
+        }
+        Ok(Some(()))
+    }
+
     fn transform_iteration_item(&mut self, mut item: IteratorItem) -> Option<IteratorItem> {
         match item {
             Err(_) => Some(item),
             Ok(ref mut st) => {
-                let mut borrowed = self.iter.tracker.borrow_mut();
-                if borrowed.try_share_meta(st).is_err() {
-                    return Some(Err(anyhow::anyhow!("cannot share meta")));
-                }
-                match borrowed.transform_statement(st, &mut self.transform) {
+                match self.transform_statement(st) {
                     Err(e) => Some(Err(e)),
                     Ok(transformed_option) => {
                         transformed_option.map(|()| { item })
