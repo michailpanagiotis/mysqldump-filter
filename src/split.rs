@@ -324,20 +324,14 @@ pub struct Tracker {
 }
 
 impl Tracker {
-    fn new(working_file_path: &Path, tracked_columns: &[&str], read_working_file: bool) -> Result<Rc<RefCell<Self>>, anyhow::Error> {
+    fn new(tracked_columns: &[&str]) -> Result<Rc<RefCell<Self>>, anyhow::Error> {
         let (captured_values, tracked_column_per_key) = Tracker::prepare_tracked_columns(tracked_columns)?;
-        let tracker = Rc::new(RefCell::new(Tracker {
+        Ok(Rc::new(RefCell::new(Tracker {
             data_types: HashMap::new(),
             column_positions: HashMap::new(),
             captured_values,
             tracked_column_per_key,
-        }));
-        if read_working_file {
-            let statements = TrackedStatements::from_file(working_file_path, &tracker)?;
-            // consume iterator to populate tracker
-            statements.for_each(drop);
-        }
-        Ok(tracker)
+        })))
     }
 
     fn prepare_tracked_columns(tracked_columns: &[&str]) -> Result<(CapturedValues, HashMap<String, String>), anyhow::Error> {
@@ -461,12 +455,20 @@ struct TrackedStatements {
 }
 
 impl TrackedStatements {
-    fn from_file(sqldump_filepath: &Path, tracker: &TrackerCell) -> Result<Self, anyhow::Error> {
+    fn from_file(sqldump_filepath: &Path, tracker: &TrackerCell, preprocess_file: &Option<&Path>) -> Result<Self, anyhow::Error> {
+        let tracker = Rc::clone(tracker);
+
+        if let Some(file) = preprocess_file {
+            let statements = TrackedStatements::from_file(file, &tracker, &None)?;
+            // consume iterator to populate tracker
+            statements.for_each(drop);
+        }
+
         Ok(TrackedStatements {
             iter: PlainStatements::from_file(sqldump_filepath)?,
             current_table: None,
             unlock_next: false,
-            tracker: Rc::clone(tracker),
+            tracker,
         })
     }
 
@@ -524,9 +526,9 @@ struct TransformedStatements<F: TransformFn> {
 }
 
 impl<F: TransformFn> TransformedStatements<F> {
-    fn from_file(sqldump_filepath: &Path, tracker: &TrackerCell, transform: F) -> Result<Self, anyhow::Error> {
+    fn from_file(sqldump_filepath: &Path, tracker: &TrackerCell, transform: F, preprocess_file: &Option<&Path>) -> Result<Self, anyhow::Error> {
         Ok(TransformedStatements {
-            iter: TrackedStatements::from_file(sqldump_filepath, tracker)?,
+            iter: TrackedStatements::from_file(sqldump_filepath, tracker, preprocess_file)?,
             transform,
         })
     }
@@ -603,21 +605,6 @@ fn process_statements<I: Iterator<Item=IteratorItem>>(statements: I, writers: &m
     Ok(())
 }
 
-fn process_input_file<F: TransformFn>(
-    sqldump_filepath: &Path,
-    tracker_cell: &TrackerCell,
-    transform: F,
-    writers: &mut Writers,
-) -> EmptyResult {
-    let statements = TransformedStatements::from_file(sqldump_filepath, tracker_cell, transform)?;
-    for st in statements {
-        let statement = st?;
-        writers.write_statement(statement.get_table(), &statement.as_bytes())?;
-    };
-    writers.flush()?;
-    Ok(())
-}
-
 pub fn explode_to_files<F>(
     working_file_path: &Path,
     input_filepath: &Path,
@@ -627,8 +614,9 @@ pub fn explode_to_files<F>(
 {
     let mut writers = Writers::new(working_file_path, false)?;
 
-    let tracker_cell = Tracker::new(working_file_path, &[], false)?;
-    let statements = TransformedStatements::from_file(input_filepath, &tracker_cell, transform)?;
+    let tracker_cell = Tracker::new(&[])?;
+    let statements = TransformedStatements::from_file(input_filepath, &tracker_cell, transform, &None)?;
+
     process_statements(statements, &mut writers)?;
 
     Ok(tracker_cell.borrow().get_captured_values().clone())
@@ -647,9 +635,9 @@ pub fn process_table_inserts<F>(
     let mut writers = Writers::new(working_file_path, true)?;
     let input_filepath = &writers.get_table_file(table)?;
 
-    let tracker_cell = Tracker::new(working_file_path, tracked_columns, true)?;
+    let tracker_cell = Tracker::new(tracked_columns)?;
+    let statements = TransformedStatements::from_file(input_filepath, &tracker_cell, transform, &Some(working_file_path))?;
 
-    let statements = TransformedStatements::from_file(input_filepath, &tracker_cell, transform)?;
     process_statements(statements, &mut writers)?;
 
     Ok(tracker_cell.borrow().get_captured_values().clone())
