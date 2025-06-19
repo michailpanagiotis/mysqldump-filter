@@ -1,3 +1,5 @@
+pub mod sql_parser;
+
 use chrono::NaiveDateTime;
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -12,7 +14,7 @@ use std::rc::Rc;
 use sqlparser::dialect::MySqlDialect;
 use sqlparser::parser::Parser as SqlParser;
 
-use crate::sql_parser::{insert_parts, values};
+use crate::scanner::sql_parser::{insert_parts, values};
 use crate::writers::Writers;
 
 type TableDataTypes = Rc<HashMap<String, sqlparser::ast::DataType>>;
@@ -199,46 +201,9 @@ impl InsertStatement {
 
 #[derive(Clone)]
 #[derive(Debug)]
-enum SqlStatementParts {
-    Generic,
-    TableUnlock,
-    TableDataDumpComment,
-    InlineTable,
-    CreateTable,
-    Insert(InsertStatement),
-}
-
-impl SqlStatementParts {
-    fn new(st: &str) -> Result<Self, anyhow::Error> {
-        if st.starts_with("UNLOCK TABLES;") {
-            return Ok(SqlStatementParts::TableUnlock);
-        }
-        if st.starts_with("-- Dumping data for table") {
-            return Ok(SqlStatementParts::TableDataDumpComment);
-        }
-        if st.starts_with("UNLOCK TABLES;") {
-            return Ok(SqlStatementParts::TableUnlock);
-        }
-        if st.starts_with("--- INLINE") {
-            return Ok(SqlStatementParts::InlineTable);
-        }
-        if st.starts_with("CREATE TABLE") {
-            return Ok(SqlStatementParts::CreateTable);
-        }
-        if st.starts_with("INSERT") {
-            return Ok(SqlStatementParts::Insert(InsertStatement::new(st)?));
-        }
-
-        Ok(SqlStatementParts::Generic)
-    }
-}
-
-#[derive(Clone)]
-#[derive(Debug)]
 pub struct SqlStatement {
     line: String,
     table: Option<String>,
-    parts: SqlStatementParts,
 }
 
 impl SqlStatement {
@@ -246,20 +211,11 @@ impl SqlStatement {
         Ok(SqlStatement {
             line: statement.to_string(),
             table: table.to_owned(),
-            parts: SqlStatementParts::new(statement)?,
         })
     }
 
     pub fn as_string(&self) -> &str {
-        match &self.parts {
-            SqlStatementParts::Generic
-            | SqlStatementParts::CreateTable
-            | SqlStatementParts::TableUnlock
-            | SqlStatementParts::TableDataDumpComment
-            | SqlStatementParts::InlineTable
-                => &self.line,
-            SqlStatementParts::Insert(s) => s.as_string(),
-        }
+        &self.line
     }
 
     pub fn as_bytes(&self) -> Vec<u8> {
@@ -290,7 +246,7 @@ impl<'a> TryFrom<&'a SqlStatement> for InsertStatement {
 impl<'a> TryFrom<&'a mut InsertStatement> for SqlStatement {
     type Error = anyhow::Error;
     fn try_from(other: &'a mut InsertStatement) -> Result<SqlStatement, Self::Error> {
-        SqlStatement::new(&other.as_string(), &Some(other.get_table().to_owned()))
+        SqlStatement::new(other.as_string(), &Some(other.get_table().to_owned()))
     }
 }
 

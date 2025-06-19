@@ -8,7 +8,7 @@ use std::rc::{Rc, Weak};
 use crate::traits::{ReferenceTracker, Dependency};
 use crate::column::ColumnMeta;
 use crate::checks::{PlainCheckType, new_plain_test, parse_test_definition};
-use crate::split::process_table_inserts;
+use crate::scanner::process_table_inserts;
 
 
 fn process_inserts<'a, C: Iterator<Item=&'a PlainCheckType>>(

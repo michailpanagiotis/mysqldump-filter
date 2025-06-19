@@ -7,14 +7,13 @@ use tempdir::TempDir;
 mod checks;
 mod column;
 mod table;
-mod split;
 mod sql;
-mod sql_parser;
+mod scanner;
 mod traits;
 mod writers;
 
 use table::CheckCollection;
-use split::{explode_to_files, gather};
+use scanner::{explode_to_files, gather};
 
 #[derive(Debug)]
 #[derive(Deserialize)]
