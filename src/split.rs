@@ -1,7 +1,6 @@
 use chrono::NaiveDateTime;
 use lazy_static::lazy_static;
 use regex::Regex;
-use core::borrow;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::{collections::HashMap, fs::File};
@@ -213,24 +212,28 @@ impl SqlStatementParts {
 #[derive(Clone)]
 #[derive(Debug)]
 pub struct SqlStatement {
+    line: String,
+    table: Option<String>,
     parts: SqlStatementParts,
 }
 
 impl SqlStatement {
     fn new(statement: &str, table: &Option<String>) -> Result<Self, anyhow::Error> {
         Ok(SqlStatement {
+            line: statement.to_string(),
+            table: table.to_owned(),
             parts: SqlStatementParts::new(statement)?,
         })
     }
 
     pub fn as_string(&self) -> &str {
         match &self.parts {
-            SqlStatementParts::Generic(s)
-            | SqlStatementParts::CreateTable(s)
-            | SqlStatementParts::TableUnlock(s)
-            | SqlStatementParts::TableDataDumpComment(s)
-            | SqlStatementParts::InlineTable(s)
-                => s,
+            SqlStatementParts::Generic(_)
+            | SqlStatementParts::CreateTable(_)
+            | SqlStatementParts::TableUnlock(_)
+            | SqlStatementParts::TableDataDumpComment(_)
+            | SqlStatementParts::InlineTable(_)
+                => &self.line,
             SqlStatementParts::Insert(s) => s.as_string(),
         }
     }
@@ -239,11 +242,8 @@ impl SqlStatement {
         Vec::from(self.as_string().as_bytes())
     }
 
-    pub fn get_table(&self) -> Option<&str> {
-        match &self.parts {
-            SqlStatementParts::Insert(insert_statement) => Some(&insert_statement.table),
-            _ => None,
-        }
+    pub fn get_table(&self) -> &Option<String> {
+        &self.table
     }
 
     fn get_column_positions(&self) -> Option<HashMap<String, usize>> {
@@ -464,24 +464,6 @@ impl Tracker {
     fn is_capturing_columns(&self) -> bool {
         !self.tracked_column_per_key.is_empty()
     }
-
-    fn try_share_meta(&self, statement: &mut SqlStatement) -> EmptyResult {
-        if let Ok(i) = <&mut InsertStatement>::try_from(statement) {
-            let positions = self.get_table_column_positions(&i.table);
-            let data_types = self.get_table_data_types(&i.table);
-            i.set_meta(positions, data_types);
-        }
-        Ok(())
-    }
-
-    fn try_capture_values(&mut self, input_statement: &mut SqlStatement) -> EmptyResult {
-        if self.is_capturing_columns() {
-            let value_per_field = input_statement.get_values()?;
-            self.capture_values(value_per_field);
-        }
-        Ok(())
-    }
-
 }
 
 struct TrackedStatements {
@@ -559,16 +541,34 @@ impl<F: TransformFn> TransformedStatements<F> {
         })
     }
 
+    fn try_share_meta(&self, statement: &mut SqlStatement) -> EmptyResult {
+        let borrowed = self.iter.tracker.borrow();
+        if let Ok(i) = <&mut InsertStatement>::try_from(statement) {
+            let positions = borrowed.get_table_column_positions(&i.table);
+            let data_types = borrowed.get_table_data_types(&i.table);
+            i.set_meta(positions, data_types);
+        }
+        Ok(())
+    }
+
+    fn try_capture_values(&mut self, input_statement: &mut SqlStatement) -> EmptyResult {
+        let mut borrowed = self.iter.tracker.borrow_mut();
+        if borrowed.is_capturing_columns() {
+            let value_per_field = input_statement.get_values()?;
+            borrowed.capture_values(value_per_field);
+        }
+        Ok(())
+    }
+
     fn transform_statement(&mut self, input_statement: &mut SqlStatement) -> OptionalStatementResult
         where F: TransformFn
     {
+        if self.try_share_meta(input_statement).is_err() {
+            return Err(anyhow::anyhow!("cannot share meta"));
+        }
         if input_statement.is_insert() {
-            let mut borrowed = self.iter.tracker.borrow_mut();
-            if borrowed.try_share_meta(input_statement).is_err() {
-                return Err(anyhow::anyhow!("cannot share meta"));
-            }
             let transformed = (self.transform)(input_statement)?;
-            borrowed.try_capture_values(input_statement)?;
+            self.try_capture_values(input_statement)?;
             return Ok(transformed);
         }
         Ok(Some(()))

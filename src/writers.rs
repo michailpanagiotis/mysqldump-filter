@@ -39,7 +39,7 @@ impl Writers {
         std::path::absolute(self.working_dir_path.join(table).with_extension("sql"))
     }
 
-    fn determine_output_file(&self, table_option: &Option<&str>) -> Result<PathBuf, anyhow::Error> {
+    fn determine_output_file(&self, table_option: &Option<String>) -> Result<PathBuf, anyhow::Error> {
         match table_option {
             None => {
                 if self.in_place {
@@ -60,11 +60,11 @@ impl Writers {
         }
     }
 
-    fn determine_writer(&mut self, table_option: &Option<&str>) -> EmptyResult {
-        if self.current_writer.is_none() || table_option != &self.current_table.as_deref() {
+    fn determine_writer(&mut self, table_option: &Option<String>) -> EmptyResult {
+        if self.current_writer.is_none() || table_option != &self.current_table {
             println!("determining writer");
-            self.current_table = table_option.map(|s| s.to_owned());
-            let filepath = self.determine_output_file(&table_option)?;
+            self.current_table = table_option.clone();
+            let filepath = self.determine_output_file(table_option)?;
             self.current_file = Some(filepath.to_owned());
             if !self.written_files.contains(&filepath) {
                 println!("creating file {}", &filepath.display());
@@ -87,7 +87,7 @@ impl Writers {
         Ok(())
     }
 
-    fn try_write_inline_file(&mut self, table_option: &Option<&str>, filepath: &Path) -> EmptyResult {
+    fn try_write_inline_file(&mut self, table_option: &Option<String>, filepath: &Path) -> EmptyResult {
         if !self.inline_files.contains(filepath) {
             self.inline_files.insert(filepath.to_owned());
             println!("inlining file {}", &filepath.display());
@@ -101,7 +101,7 @@ impl Writers {
         Ok(())
     }
 
-    pub fn write_statement(&mut self, table_option: &Option<&str>, statement: &[u8]) -> EmptyResult {
+    pub fn write_statement(&mut self, table_option: &Option<String>, statement: &[u8]) -> EmptyResult {
         self.determine_writer(table_option)?;
         let filepath_option = self.current_file.to_owned();
         let Some(writer) = &mut self.current_writer else {
@@ -114,7 +114,7 @@ impl Writers {
         writer.write_all(statement)?;
 
         if !self.in_place {
-            self.try_write_inline_file(&table_option, filepath)?;
+            self.try_write_inline_file(table_option, filepath)?;
         }
         Ok(())
     }
