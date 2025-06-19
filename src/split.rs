@@ -37,6 +37,23 @@ lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
 }
 
+fn get_data_types(create_statement: &str) -> Result<Option<(String, TableDataTypes)>, anyhow::Error> {
+    let dialect = MySqlDialect {};
+    let ast = SqlParser::parse_sql(&dialect, create_statement)?;
+    for st in ast.into_iter().filter(|x| matches!(x, sqlparser::ast::Statement::CreateTable(_))) {
+        if let sqlparser::ast::Statement::CreateTable(ct) = st {
+            let table = ct.name.0[0].as_ident().unwrap().value.to_string();
+            let data_types: TableDataTypes = Rc::new(
+                HashMap::from_iter(
+                    ct.columns.iter().map(|column| (column.name.value.to_string(), column.data_type.to_owned())),
+                ),
+            );
+            return Ok(Some((table, data_types)));
+        }
+    }
+    Ok(None)
+}
+
 #[derive(Clone)]
 #[derive(Debug)]
 pub enum Value {
@@ -116,6 +133,9 @@ pub struct InsertStatement {
 
 impl InsertStatement {
     fn new(statement: &str) -> Result<Self, anyhow::Error> {
+        if !statement.starts_with("INSERT") {
+            return Err(anyhow::anyhow!("not an insert statement"));
+        }
         let (table, _, values_part) = insert_parts(statement)?;
         Ok(Self { statement: statement.to_string(), table, values_part, value_per_field: None, data_types: None, positions: None })
     }
@@ -258,28 +278,19 @@ impl SqlStatement {
         self.line.starts_with("CREATE TABLE")
     }
 
-    fn get_data_types(&self) -> Option<DataTypes> {
-        match &self.parts {
-            SqlStatementParts::CreateTable => {
-                let dialect = MySqlDialect {};
-                let ast = SqlParser::parse_sql(&dialect, &self.line).unwrap();
-                for st in ast.into_iter().filter(|x| matches!(x, sqlparser::ast::Statement::CreateTable(_))) {
-                    if let sqlparser::ast::Statement::CreateTable(ct) = st {
-                        let table = ct.name.0[0].as_ident().unwrap().value.to_string();
-                        let data_types: DataTypes = HashMap::from([
-                            (table.to_owned(), Rc::new(
-                                HashMap::from_iter(
-                                    ct.columns.iter().map(|column| (column.name.value.to_string(), column.data_type.to_owned())),
-                                ),
-                            )),
-                        ]);
-                        return Some(data_types);
-                    }
-                }
-                None
-            },
-            _ => None,
-        }
+}
+
+impl<'a> TryFrom<&'a mut SqlStatement> for InsertStatement {
+    type Error = anyhow::Error;
+    fn try_from(other: &'a mut SqlStatement) -> Result<InsertStatement, Self::Error> {
+        InsertStatement::new(&other.line)
+    }
+}
+
+impl<'a> TryFrom<&'a SqlStatement> for InsertStatement {
+    type Error = anyhow::Error;
+    fn try_from(other: &'a SqlStatement) -> Result<InsertStatement, Self::Error> {
+        InsertStatement::new(&other.line)
     }
 }
 
@@ -346,17 +357,18 @@ impl Tracker {
         Ok(())
     }
 
-    fn capture_data_types(&mut self, statement: &SqlStatement) {
-        if let Some(data_types) = statement.get_data_types() {
-            for (key, data_type) in data_types {
-                self.data_types.insert(key, data_type);
+    fn capture_data_types(&mut self, statement: &SqlStatement) -> EmptyResult {
+        if statement.is_create_table() {
+            if let Some((table, data_types)) = get_data_types(statement.as_string())? {
+                self.data_types.insert(table.to_string(), data_types);
             }
         }
+        Ok(())
     }
 
     fn capture(&mut self, statement: &SqlStatement, current_table: &Option<String>) -> EmptyResult {
         self.capture_positions(statement, current_table)?;
-        self.capture_data_types(statement);
+        self.capture_data_types(statement)?;
         Ok(())
     }
 
@@ -522,49 +534,52 @@ impl<F: TransformFn> TransformedStatements<F> {
         })
     }
 
-    fn try_share_meta(&self, statement: &mut SqlStatement) -> EmptyResult {
+    fn try_share_meta(&self, insert_statement: &mut InsertStatement) -> EmptyResult {
         let borrowed = self.iter.tracker.borrow();
-        if let Ok(i) = <&mut InsertStatement>::try_from(statement) {
-            let positions = borrowed.get_table_column_positions(&i.table);
-            let data_types = borrowed.get_table_data_types(&i.table);
-            i.set_meta(positions, data_types);
-        }
+        let positions = borrowed.get_table_column_positions(&insert_statement.table);
+        let data_types = borrowed.get_table_data_types(&insert_statement.table);
+        insert_statement.set_meta(positions, data_types);
         Ok(())
     }
 
-    fn try_capture_values(&mut self, input_statement: &mut SqlStatement) -> EmptyResult {
+    fn try_capture_values(&mut self, insert_statement: &mut InsertStatement) -> EmptyResult {
         let mut borrowed = self.iter.tracker.borrow_mut();
         if borrowed.is_capturing_columns() {
-            let value_per_field = <&mut InsertStatement>::try_from(input_statement)?.get_values()?;
+            let value_per_field = insert_statement.get_values()?;
             borrowed.capture_values(value_per_field);
         }
         Ok(())
     }
 
-    fn transform_statement(&mut self, input_statement: &mut SqlStatement) -> OptionalStatementResult
+    fn transform_statement(&mut self, insert_statement: &mut InsertStatement) -> OptionalStatementResult
         where F: TransformFn
     {
-        if self.try_share_meta(input_statement).is_err() {
+        if self.try_share_meta(insert_statement).is_err() {
             return Err(anyhow::anyhow!("cannot share meta"));
         }
-        if input_statement.is_insert() {
-            let transformed = (self.transform)(<&mut InsertStatement>::try_from(&mut *input_statement)?)?;
-            if transformed.is_some() {
-                self.try_capture_values(input_statement)?;
-            }
-            return Ok(transformed);
+        let transformed = (self.transform)(insert_statement)?;
+        if transformed.is_some() {
+            self.try_capture_values(insert_statement)?;
         }
-        Ok(Some(()))
+        Ok(transformed)
     }
 
     fn transform_iteration_item(&mut self, mut item: IteratorItem) -> Option<IteratorItem> {
         match item {
-            Err(_) => Some(item),
+            Err(e) => Some(Err(e)),
             Ok(ref mut st) => {
-                match self.transform_statement(st) {
+                if !st.is_insert() {
+                    return Some(item);
+                }
+                match InsertStatement::try_from(st) {
                     Err(e) => Some(Err(e)),
-                    Ok(transformed_option) => {
-                        transformed_option.map(|()| { item })
+                    Ok(ref mut insert_statement) => {
+                        match self.transform_statement(insert_statement) {
+                            Err(e) => Some(Err(e)),
+                            Ok(transformed_option) => {
+                                transformed_option.map(|()| { item })
+                            }
+                        }
                     }
                 }
             }
