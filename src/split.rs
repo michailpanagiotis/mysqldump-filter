@@ -315,52 +315,6 @@ impl<'a> TryFrom<&'a mut SqlStatement> for &'a mut InsertStatement {
     }
 }
 
-struct PlainStatements {
-    buf: io::BufReader<fs::File>,
-}
-
-impl PlainStatements {
-    fn from_file(sqldump_filepath: &Path) -> Result<Self, anyhow::Error> {
-        let file = fs::File::open(sqldump_filepath)?;
-        Ok(PlainStatements {
-            buf: io::BufReader::new(file),
-        })
-    }
-
-    fn is_full_line(line: &str) -> bool {
-        if line.ends_with(";\n") {
-            return true;
-        }
-
-        if line.starts_with("\n") {
-            return true;
-        }
-
-        if line.starts_with("--") {
-            return true;
-        }
-
-        false
-    }
-}
-
-impl Iterator for PlainStatements {
-    type Item = String;
-    fn next(&mut self) -> Option<String> {
-        let mut buf: String = String::new();
-
-        while {
-            let read_bytes = self.buf.read_line(&mut buf).ok()?;
-            read_bytes > 0 && !PlainStatements::is_full_line(&buf)
-        } {}
-
-        match buf.is_empty() {
-            true => None,
-            false => Some(buf),
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct Tracker {
     data_types: DataTypes,
@@ -449,6 +403,53 @@ impl Tracker {
 
     fn is_capturing_columns(&self) -> bool {
         !self.tracked_column_per_key.is_empty()
+    }
+}
+
+
+struct PlainStatements {
+    buf: io::BufReader<fs::File>,
+}
+
+impl PlainStatements {
+    fn from_file(sqldump_filepath: &Path) -> Result<Self, anyhow::Error> {
+        let file = fs::File::open(sqldump_filepath)?;
+        Ok(PlainStatements {
+            buf: io::BufReader::new(file),
+        })
+    }
+
+    fn is_full_line(line: &str) -> bool {
+        if line.ends_with(";\n") {
+            return true;
+        }
+
+        if line.starts_with("\n") {
+            return true;
+        }
+
+        if line.starts_with("--") {
+            return true;
+        }
+
+        false
+    }
+}
+
+impl Iterator for PlainStatements {
+    type Item = String;
+    fn next(&mut self) -> Option<String> {
+        let mut buf: String = String::new();
+
+        while {
+            let read_bytes = self.buf.read_line(&mut buf).ok()?;
+            read_bytes > 0 && !PlainStatements::is_full_line(&buf)
+        } {}
+
+        match buf.is_empty() {
+            true => None,
+            false => Some(buf),
+        }
     }
 }
 
