@@ -250,15 +250,12 @@ impl SqlStatement {
         &self.table
     }
 
-    fn get_column_positions(&self) -> Option<HashMap<String, usize>> {
-        match &self.parts {
-            SqlStatementParts::Insert(insert_statement) => Some(insert_statement.get_column_positions()),
-            _ => None,
-        }
+    fn is_insert(&self) -> bool {
+        self.line.starts_with("INSERT")
     }
 
-    pub fn is_insert(&self) -> bool {
-        matches!(&self.parts, SqlStatementParts::Insert(_))
+    fn is_create_table(&self) -> bool {
+        self.line.starts_with("CREATE TABLE")
     }
 
     fn get_data_types(&self) -> Option<DataTypes> {
@@ -288,10 +285,19 @@ impl SqlStatement {
 
 impl<'a> TryFrom<&'a mut SqlStatement> for &'a mut InsertStatement {
     type Error = anyhow::Error;
-
     fn try_from(other: &'a mut SqlStatement) -> Result<&'a mut InsertStatement, Self::Error> {
         match other.parts {
             SqlStatementParts::Insert(ref mut insert_statement) => Ok(insert_statement),
+            _ => Err(anyhow::anyhow!("cannot convert statement to insert statement")),
+        }
+    }
+}
+
+impl<'a> TryFrom<&'a SqlStatement> for &'a InsertStatement {
+    type Error = anyhow::Error;
+    fn try_from(other: &'a SqlStatement) -> Result<&'a InsertStatement, Self::Error> {
+        match other.parts {
+            SqlStatementParts::Insert(ref insert_statement) => Ok(insert_statement),
             _ => Err(anyhow::anyhow!("cannot convert statement to insert statement")),
         }
     }
@@ -330,14 +336,14 @@ impl Tracker {
         Ok((captured_values, tracked_column_per_key))
     }
 
-    fn capture_positions(&mut self, statement: &SqlStatement, current_table: &Option<String>) {
+    fn capture_positions(&mut self, statement: &SqlStatement, current_table: &Option<String>) -> EmptyResult {
         if let Some(table) = current_table {
-            if !self.column_positions.contains_key(table) {
-                if let Some(pos) = statement.get_column_positions() {
-                    self.column_positions.insert(table.to_string(), Rc::new(pos));
-                }
+            if !self.column_positions.contains_key(table) && statement.is_insert() {
+                let insert_statement = <&InsertStatement>::try_from(statement)?;
+                self.column_positions.insert(table.to_string(), Rc::new(insert_statement.get_column_positions()));
             };
         }
+        Ok(())
     }
 
     fn capture_data_types(&mut self, statement: &SqlStatement) {
@@ -349,7 +355,7 @@ impl Tracker {
     }
 
     fn capture(&mut self, statement: &SqlStatement, current_table: &Option<String>) -> EmptyResult {
-        self.capture_positions(statement, current_table);
+        self.capture_positions(statement, current_table)?;
         self.capture_data_types(statement);
         Ok(())
     }
