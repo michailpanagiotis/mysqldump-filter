@@ -75,9 +75,9 @@ fn main() -> Result<(), anyhow::Error> {
         panic!("Problem exploding to files: {e:?}");
     });
 
-    // let mut collection = CheckCollection::new(config.filters.iter().chain(&config.cascades))?;
-    // collection.process(working_file_path.as_path())?;
-    // gather(&working_file_path, &output_file)?;
+    let mut collection = CheckCollection::new(config.filters.iter().chain(&config.cascades))?;
+    collection.process(working_file_path.as_path())?;
+    gather(&working_file_path, &output_file)?;
 
     if let Some(dir) = temp_dir {
        let _ = dir.close();

@@ -257,19 +257,6 @@ impl SqlStatement {
         }
     }
 
-    fn parse_inline_file(&self) -> Result<Option<(String, PathBuf)>, anyhow::Error> {
-        match &self.parts {
-            SqlStatementParts::InlineTable => {
-                let st = self.line.replace("--- INLINE ", "").replace("\n", "").to_string();
-                let mut split = st.split(" ");
-                let filename = split.next().ok_or(anyhow::anyhow!("cannot parse filename"))?;
-                let table = split.next().ok_or(anyhow::anyhow!("cannot parse table"))?;
-                Ok(Some((table.to_string(), PathBuf::from(filename))))
-            }
-            _ => Ok(None),
-        }
-    }
-
     pub fn is_insert(&self) -> bool {
         matches!(&self.parts, SqlStatementParts::Insert(_))
     }
