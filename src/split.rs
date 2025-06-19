@@ -594,6 +594,15 @@ impl<F: TransformFn> Iterator for TransformedStatements<F> {
     }
 }
 
+fn process_statements<I: Iterator<Item=IteratorItem>>(statements: I, writers: &mut Writers) -> EmptyResult {
+    for st in statements {
+        let statement = st?;
+        writers.write_statement(statement.get_table(), &statement.as_bytes())?;
+    };
+    writers.flush()?;
+    Ok(())
+}
+
 fn process_input_file<F: TransformFn>(
     sqldump_filepath: &Path,
     tracker_cell: &TrackerCell,
@@ -619,7 +628,8 @@ pub fn explode_to_files<F>(
     let mut writers = Writers::new(working_file_path, false)?;
 
     let tracker_cell = Tracker::new(working_file_path, &[], false)?;
-    process_input_file(input_filepath, &tracker_cell, transform, &mut writers)?;
+    let statements = TransformedStatements::from_file(input_filepath, &tracker_cell, transform)?;
+    process_statements(statements, &mut writers)?;
 
     Ok(tracker_cell.borrow().get_captured_values().clone())
 }
@@ -638,7 +648,9 @@ pub fn process_table_inserts<F>(
     let input_filepath = &writers.get_table_file(table)?;
 
     let tracker_cell = Tracker::new(working_file_path, tracked_columns, true)?;
-    process_input_file(input_filepath, &tracker_cell, transform, &mut writers)?;
+
+    let statements = TransformedStatements::from_file(input_filepath, &tracker_cell, transform)?;
+    process_statements(statements, &mut writers)?;
 
     Ok(tracker_cell.borrow().get_captured_values().clone())
 }
