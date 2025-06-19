@@ -280,13 +280,6 @@ impl SqlStatement {
 
 }
 
-impl<'a> TryFrom<&'a mut SqlStatement> for InsertStatement {
-    type Error = anyhow::Error;
-    fn try_from(other: &'a mut SqlStatement) -> Result<InsertStatement, Self::Error> {
-        InsertStatement::new(&other.line)
-    }
-}
-
 impl<'a> TryFrom<&'a SqlStatement> for InsertStatement {
     type Error = anyhow::Error;
     fn try_from(other: &'a SqlStatement) -> Result<InsertStatement, Self::Error> {
@@ -294,23 +287,10 @@ impl<'a> TryFrom<&'a SqlStatement> for InsertStatement {
     }
 }
 
-impl<'a> TryFrom<&'a mut SqlStatement> for &'a mut InsertStatement {
+impl<'a> TryFrom<&'a mut InsertStatement> for SqlStatement {
     type Error = anyhow::Error;
-    fn try_from(other: &'a mut SqlStatement) -> Result<&'a mut InsertStatement, Self::Error> {
-        match other.parts {
-            SqlStatementParts::Insert(ref mut insert_statement) => Ok(insert_statement),
-            _ => Err(anyhow::anyhow!("cannot convert statement to insert statement")),
-        }
-    }
-}
-
-impl<'a> TryFrom<&'a SqlStatement> for &'a InsertStatement {
-    type Error = anyhow::Error;
-    fn try_from(other: &'a SqlStatement) -> Result<&'a InsertStatement, Self::Error> {
-        match other.parts {
-            SqlStatementParts::Insert(ref insert_statement) => Ok(insert_statement),
-            _ => Err(anyhow::anyhow!("cannot convert statement to insert statement")),
-        }
+    fn try_from(other: &'a mut InsertStatement) -> Result<SqlStatement, Self::Error> {
+        SqlStatement::new(&other.as_string(), &Some(other.get_table().to_owned()))
     }
 }
 
@@ -350,7 +330,7 @@ impl Tracker {
     fn capture_positions(&mut self, statement: &SqlStatement, current_table: &Option<String>) -> EmptyResult {
         if let Some(table) = current_table {
             if !self.column_positions.contains_key(table) && statement.is_insert() {
-                let insert_statement = <&InsertStatement>::try_from(statement)?;
+                let insert_statement = InsertStatement::try_from(statement)?;
                 self.column_positions.insert(table.to_string(), Rc::new(insert_statement.get_column_positions()));
             };
         }
@@ -551,7 +531,7 @@ impl<F: TransformFn> TransformedStatements<F> {
         Ok(())
     }
 
-    fn transform_statement(&mut self, insert_statement: &mut InsertStatement) -> OptionalStatementResult
+    fn transform_insert_statement(&mut self, insert_statement: &mut InsertStatement) -> Result<SqlStatement, anyhow::Error>
         where F: TransformFn
     {
         if self.try_share_meta(insert_statement).is_err() {
@@ -561,23 +541,24 @@ impl<F: TransformFn> TransformedStatements<F> {
         if transformed.is_some() {
             self.try_capture_values(insert_statement)?;
         }
-        Ok(transformed)
+        let statement: SqlStatement = SqlStatement::try_from(insert_statement)?;
+        Ok(statement)
     }
 
-    fn transform_iteration_item(&mut self, mut item: IteratorItem) -> Option<IteratorItem> {
+    fn transform_iteration_item(&mut self, item: IteratorItem) -> Option<IteratorItem> {
         match item {
             Err(e) => Some(Err(e)),
-            Ok(ref mut st) => {
+            Ok(ref st) => {
                 if !st.is_insert() {
                     return Some(item);
                 }
                 match InsertStatement::try_from(st) {
                     Err(e) => Some(Err(e)),
                     Ok(ref mut insert_statement) => {
-                        match self.transform_statement(insert_statement) {
+                        match self.transform_insert_statement(insert_statement) {
                             Err(e) => Some(Err(e)),
-                            Ok(transformed_option) => {
-                                transformed_option.map(|()| { item })
+                            Ok(transformed_statement) => {
+                                Some(Ok(transformed_statement))
                             }
                         }
                     }
