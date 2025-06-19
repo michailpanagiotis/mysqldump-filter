@@ -176,36 +176,36 @@ impl InsertStatement {
 #[derive(Clone)]
 #[derive(Debug)]
 enum SqlStatementParts {
-    Generic(String),
-    TableUnlock(String),
-    TableDataDumpComment(String),
-    InlineTable(String),
-    CreateTable(String),
+    Generic,
+    TableUnlock,
+    TableDataDumpComment,
+    InlineTable,
+    CreateTable,
     Insert(InsertStatement),
 }
 
 impl SqlStatementParts {
     fn new(st: &str) -> Result<Self, anyhow::Error> {
         if st.starts_with("UNLOCK TABLES;") {
-            return Ok(SqlStatementParts::TableUnlock(st.to_string()));
+            return Ok(SqlStatementParts::TableUnlock);
         }
         if st.starts_with("-- Dumping data for table") {
-            return Ok(SqlStatementParts::TableDataDumpComment(st.to_string()));
+            return Ok(SqlStatementParts::TableDataDumpComment);
         }
         if st.starts_with("UNLOCK TABLES;") {
-            return Ok(SqlStatementParts::TableUnlock(st.to_string()));
+            return Ok(SqlStatementParts::TableUnlock);
         }
         if st.starts_with("--- INLINE") {
-            return Ok(SqlStatementParts::InlineTable(st.to_string()));
+            return Ok(SqlStatementParts::InlineTable);
         }
         if st.starts_with("CREATE TABLE") {
-            return Ok(SqlStatementParts::CreateTable(st.to_string()));
+            return Ok(SqlStatementParts::CreateTable);
         }
         if st.starts_with("INSERT") {
             return Ok(SqlStatementParts::Insert(InsertStatement::new(st)?));
         }
 
-        Ok(SqlStatementParts::Generic(st.to_string()))
+        Ok(SqlStatementParts::Generic)
     }
 }
 
@@ -228,11 +228,11 @@ impl SqlStatement {
 
     pub fn as_string(&self) -> &str {
         match &self.parts {
-            SqlStatementParts::Generic(_)
-            | SqlStatementParts::CreateTable(_)
-            | SqlStatementParts::TableUnlock(_)
-            | SqlStatementParts::TableDataDumpComment(_)
-            | SqlStatementParts::InlineTable(_)
+            SqlStatementParts::Generic
+            | SqlStatementParts::CreateTable
+            | SqlStatementParts::TableUnlock
+            | SqlStatementParts::TableDataDumpComment
+            | SqlStatementParts::InlineTable
                 => &self.line,
             SqlStatementParts::Insert(s) => s.as_string(),
         }
@@ -255,8 +255,8 @@ impl SqlStatement {
 
     fn parse_inline_file(&self) -> Result<Option<(String, PathBuf)>, anyhow::Error> {
         match &self.parts {
-            SqlStatementParts::InlineTable(line) => {
-                let st = line.replace("--- INLINE ", "").replace("\n", "").to_string();
+            SqlStatementParts::InlineTable => {
+                let st = self.line.replace("--- INLINE ", "").replace("\n", "").to_string();
                 let mut split = st.split(" ");
                 let filename = split.next().ok_or(anyhow::anyhow!("cannot parse filename"))?;
                 let table = split.next().ok_or(anyhow::anyhow!("cannot parse table"))?;
@@ -270,15 +270,11 @@ impl SqlStatement {
         matches!(&self.parts, SqlStatementParts::Insert(_))
     }
 
-    fn is_table_unlock(&self) -> bool {
-        matches!(&self.parts, SqlStatementParts::TableUnlock(_))
-    }
-
     fn get_data_types(&self) -> Option<DataTypes> {
         match &self.parts {
-            SqlStatementParts::CreateTable(st) => {
+            SqlStatementParts::CreateTable => {
                 let dialect = MySqlDialect {};
-                let ast = SqlParser::parse_sql(&dialect, st).unwrap();
+                let ast = SqlParser::parse_sql(&dialect, &self.line).unwrap();
                 for st in ast.into_iter().filter(|x| matches!(x, sqlparser::ast::Statement::CreateTable(_))) {
                     if let sqlparser::ast::Statement::CreateTable(ct) = st {
                         let table = ct.name.0[0].as_ident().unwrap().value.to_string();
@@ -293,16 +289,6 @@ impl SqlStatement {
                     }
                 }
                 None
-            },
-            _ => None,
-        }
-    }
-
-    fn extract_table(&mut self) -> Option<&str>{
-        match &self.parts {
-            SqlStatementParts::TableDataDumpComment(comment) => {
-                let table = TABLE_DUMP_RE.captures(comment).unwrap().get(1).unwrap().as_str();
-                Some(table)
             },
             _ => None,
         }
@@ -483,19 +469,37 @@ impl TrackedStatements {
         })
     }
 
-    fn capture_table(&mut self, table: Option<String>) -> Result<(), anyhow::Error> {
-        if let Some(t) = &table {
-            println!("reading table {}", &t);
-        }
-        self.current_table = table;
-        Ok(())
+    fn extract_table(statement: &str) -> Result<&str, anyhow::Error> {
+        let Some(captures) = TABLE_DUMP_RE.captures(statement) else {
+            return Err(anyhow::anyhow!("cannot extract table"));
+        };
+
+        let Some(captured) = captures.get(1) else {
+            return Err(anyhow::anyhow!("cannot extract table"));
+        };
+
+        Ok(captured.as_str())
     }
 
     fn read_statement(&mut self) -> Option<SqlStatementResult> {
         let next = self.iter.next()?;
+
+        if self.unlock_next {
+            self.current_table = None;
+            self.unlock_next = false;
+        } else if next.starts_with("-- Dumping data for table") {
+            let Ok(table) = TrackedStatements::extract_table(&next) else {
+                return Some(Err(anyhow::anyhow!("cannot extract table")));
+            };
+            self.current_table = Some(table.to_owned());
+        }
+
+        if next.starts_with("UNLOCK TABLES;") {
+            self.unlock_next = true;
+        }
+
         Some(SqlStatement::new(&next, &self.current_table))
     }
-
 }
 
 impl Iterator for TrackedStatements {
@@ -504,21 +508,6 @@ impl Iterator for TrackedStatements {
         let mut statement = self.read_statement()?;
 
         if let Ok(st) = &mut statement {
-            if self.unlock_next {
-                if let Err(e) = self.capture_table(None) {
-                    return Some(Err(anyhow::anyhow!(e)));
-                }
-                self.unlock_next = false;
-            } else if let Some(table) = st.extract_table() {
-                if let Err(e) = self.capture_table(Some(table.to_string())) {
-                    return Some(Err(anyhow::anyhow!(e)));
-                }
-            }
-
-            if st.is_table_unlock() {
-                self.unlock_next = true;
-            }
-
             if let Err(e) = self.tracker.borrow_mut().capture(st, &self.current_table) {
                 return Some(Err(e));
             }
@@ -613,7 +602,7 @@ fn process_input_file<F: TransformFn>(
     let statements = TransformedStatements::from_file(sqldump_filepath, tracker_cell, transform)?;
     for st in statements {
         let statement = st?;
-        writers.write_statement(&statement.get_table(), &statement.as_bytes())?;
+        writers.write_statement(statement.get_table(), &statement.as_bytes())?;
     };
     writers.flush()?;
     Ok(())
