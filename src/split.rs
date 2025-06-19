@@ -526,9 +526,10 @@ struct TransformedStatements<F: TransformFn> {
 }
 
 impl<F: TransformFn> TransformedStatements<F> {
-    fn from_file(sqldump_filepath: &Path, tracker: &TrackerCell, transform: F, preprocess_file: &Option<&Path>) -> Result<Self, anyhow::Error> {
+    fn from_file(sqldump_filepath: &Path, tracked_columns: &[&str], transform: F, preprocess_file: &Option<&Path>) -> Result<Self, anyhow::Error> {
+        let tracker = Tracker::new(tracked_columns)?;
         Ok(TransformedStatements {
-            iter: TrackedStatements::from_file(sqldump_filepath, tracker, preprocess_file)?,
+            iter: TrackedStatements::from_file(sqldump_filepath, &tracker, preprocess_file)?,
             transform,
         })
     }
@@ -579,6 +580,16 @@ impl<F: TransformFn> TransformedStatements<F> {
             }
         }
     }
+
+    fn process_all(self, writers: &mut Writers) -> Result<CapturedValues, anyhow::Error> {
+        let tracker = Rc::clone(&self.iter.tracker);
+        for st in self {
+            let statement = st?;
+            writers.write_statement(statement.get_table(), &statement.as_bytes())?;
+        };
+        writers.flush()?;
+        Ok(tracker.borrow().get_captured_values().clone())
+    }
 }
 
 impl<F: TransformFn> Iterator for TransformedStatements<F> {
@@ -596,15 +607,6 @@ impl<F: TransformFn> Iterator for TransformedStatements<F> {
     }
 }
 
-fn process_statements<I: Iterator<Item=IteratorItem>>(statements: I, writers: &mut Writers) -> EmptyResult {
-    for st in statements {
-        let statement = st?;
-        writers.write_statement(statement.get_table(), &statement.as_bytes())?;
-    };
-    writers.flush()?;
-    Ok(())
-}
-
 pub fn explode_to_files<F>(
     working_file_path: &Path,
     input_filepath: &Path,
@@ -614,12 +616,10 @@ pub fn explode_to_files<F>(
 {
     let mut writers = Writers::new(working_file_path, false)?;
 
-    let tracker_cell = Tracker::new(&[])?;
-    let statements = TransformedStatements::from_file(input_filepath, &tracker_cell, transform, &None)?;
+    let statements = TransformedStatements::from_file(input_filepath, &[], transform, &None)?;
+    let res = statements.process_all(&mut writers)?;
 
-    process_statements(statements, &mut writers)?;
-
-    Ok(tracker_cell.borrow().get_captured_values().clone())
+    Ok(res)
 }
 
 pub fn process_table_inserts<F>(
@@ -635,12 +635,10 @@ pub fn process_table_inserts<F>(
     let mut writers = Writers::new(working_file_path, true)?;
     let input_filepath = &writers.get_table_file(table)?;
 
-    let tracker_cell = Tracker::new(tracked_columns)?;
-    let statements = TransformedStatements::from_file(input_filepath, &tracker_cell, transform, &Some(working_file_path))?;
+    let statements = TransformedStatements::from_file(input_filepath, tracked_columns, transform, &Some(working_file_path))?;
+    let res = statements.process_all(&mut writers)?;
 
-    process_statements(statements, &mut writers)?;
-
-    Ok(tracker_cell.borrow().get_captured_values().clone())
+    Ok(res)
 }
 
 #[allow(dead_code)]
