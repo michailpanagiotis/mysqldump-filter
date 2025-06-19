@@ -25,6 +25,7 @@ type IteratorItem = SqlStatementResult;
 type CapturedValues = HashMap<String, HashSet<String>>;
 type TrackerCell = Rc<RefCell<Tracker>>;
 
+type SqlStatement = (String, Option<String>);
 type SqlStatementResult = Result<SqlStatement, anyhow::Error>;
 type OptionalStatementResult = Result<Option<()>, anyhow::Error>;
 type EmptyResult = Result<(), anyhow::Error>;
@@ -37,6 +38,10 @@ impl<T: FnMut(&mut InsertStatement) -> OptionalStatementResult> TransformFn for 
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
+}
+
+fn new_statement(line: String, table: Option<String>) -> SqlStatement {
+    (line, table)
 }
 
 fn get_data_types(create_statement: &str) -> Result<Option<(String, TableDataTypes)>, anyhow::Error> {
@@ -207,33 +212,17 @@ impl InsertStatement {
     }
 }
 
-#[derive(Clone)]
-#[derive(Debug)]
-pub struct SqlStatement {
-    line: String,
-    table: Option<String>,
-}
-
-impl SqlStatement {
-    fn new(statement: &str, table: &Option<String>) -> Result<Self, anyhow::Error> {
-        Ok(SqlStatement {
-            line: statement.to_string(),
-            table: table.to_owned(),
-        })
-    }
-}
-
 impl<'a> TryFrom<&'a SqlStatement> for InsertStatement {
     type Error = anyhow::Error;
     fn try_from(other: &'a SqlStatement) -> Result<InsertStatement, Self::Error> {
-        InsertStatement::new(&other.line)
+        InsertStatement::new(&other.0)
     }
 }
 
 impl<'a> TryFrom<&'a mut InsertStatement> for SqlStatement {
     type Error = anyhow::Error;
     fn try_from(other: &'a mut InsertStatement) -> Result<SqlStatement, Self::Error> {
-        SqlStatement::new(other.as_string(), &Some(other.get_table().to_owned()))
+        Ok(new_statement(other.as_string().to_string(), Some(other.get_table().to_owned())))
     }
 }
 
@@ -272,7 +261,7 @@ impl Tracker {
 
     fn capture_positions(&mut self, statement: &SqlStatement, current_table: &Option<String>) -> EmptyResult {
         if let Some(table) = current_table {
-            if !self.column_positions.contains_key(table) && is_insert(&statement.line) {
+            if !self.column_positions.contains_key(table) && is_insert(&statement.0) {
                 let insert_statement = InsertStatement::try_from(statement)?;
                 self.column_positions.insert(table.to_string(), Rc::new(insert_statement.get_column_positions()));
             };
@@ -281,8 +270,8 @@ impl Tracker {
     }
 
     fn capture_data_types(&mut self, statement: &SqlStatement) -> EmptyResult {
-        if is_create_table(&statement.line) {
-            if let Some((table, data_types)) = get_data_types(&statement.line)? {
+        if is_create_table(&statement.0) {
+            if let Some((table, data_types)) = get_data_types(&statement.0)? {
                 self.data_types.insert(table.to_string(), data_types);
             }
         }
@@ -424,7 +413,7 @@ impl TrackedStatements {
             self.unlock_next = true;
         }
 
-        Some(SqlStatement::new(&next, &self.current_table))
+        Some(Ok(new_statement(next.to_string(), self.current_table.to_owned())))
     }
 }
 
@@ -492,7 +481,7 @@ impl<F: TransformFn> TransformedStatements<F> {
         match item {
             Err(e) => Some(Err(e)),
             Ok(ref st) => {
-                if !is_insert(&st.line) {
+                if !is_insert(&st.0) {
                     return Some(item);
                 }
                 match InsertStatement::try_from(st) {
@@ -514,7 +503,7 @@ impl<F: TransformFn> TransformedStatements<F> {
         let tracker = Rc::clone(&self.iter.tracker);
         for st in self {
             let statement = st?;
-            writers.write_statement(&statement.table, statement.line.as_bytes())?;
+            writers.write_statement(&statement.1, statement.0.as_bytes())?;
         };
         writers.flush()?;
         Ok(tracker.borrow().get_captured_values().clone())
