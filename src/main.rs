@@ -11,6 +11,7 @@ mod split;
 mod sql;
 mod sql_parser;
 mod traits;
+mod writers;
 
 use table::CheckCollection;
 use split::{explode_to_files, gather};
