@@ -677,7 +677,7 @@ impl<F: TransformFn> TransformedStatements<F> {
             }
             let file = fs::OpenOptions::new().append(true).open(&filepath)?;
             if let Some(writer) = &self.current_writer {
-                writer.borrow_mut().flush();
+                writer.borrow_mut().flush()?;
             }
             self.current_writer = Some(Rc::new(RefCell::new(BufWriter::new(file))));
         }
