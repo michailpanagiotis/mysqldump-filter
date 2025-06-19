@@ -30,8 +30,8 @@ type EmptyResult = Result<(), anyhow::Error>;
 type Values = HashMap<String, Value>;
 
 // trait alias for transform functions
-pub trait TransformFn: FnMut(&mut SqlStatement) -> OptionalStatementResult  {}
-impl<T: FnMut(&mut SqlStatement) -> OptionalStatementResult> TransformFn for T {}
+pub trait TransformFn: FnMut(&mut InsertStatement) -> OptionalStatementResult  {}
+impl<T: FnMut(&mut InsertStatement) -> OptionalStatementResult> TransformFn for T {}
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -105,7 +105,7 @@ impl Value {
 
 #[derive(Clone)]
 #[derive(Debug)]
-struct InsertStatement {
+pub struct InsertStatement {
     statement: String,
     table: String,
     values_part: String,
@@ -118,6 +118,10 @@ impl InsertStatement {
     fn new(statement: &str) -> Result<Self, anyhow::Error> {
         let (table, _, values_part) = insert_parts(statement)?;
         Ok(Self { statement: statement.to_string(), table, values_part, value_per_field: None, data_types: None, positions: None })
+    }
+
+    pub fn get_table(&self) -> &str {
+        &self.table
     }
 
     fn get_column_positions(&self) -> HashMap<String, usize> {
@@ -291,15 +295,6 @@ impl SqlStatement {
                 None
             },
             _ => None,
-        }
-    }
-
-    pub fn get_values(&mut self) -> Result<&HashMap<String, Value>, anyhow::Error> {
-        match self.parts {
-            SqlStatementParts::Insert(ref mut insert_statement) => {
-                insert_statement.get_values()
-            },
-            _ => Err(anyhow::anyhow!("can only get values of insert statements")),
         }
     }
 }
@@ -547,7 +542,7 @@ impl<F: TransformFn> TransformedStatements<F> {
     fn try_capture_values(&mut self, input_statement: &mut SqlStatement) -> EmptyResult {
         let mut borrowed = self.iter.tracker.borrow_mut();
         if borrowed.is_capturing_columns() {
-            let value_per_field = input_statement.get_values()?;
+            let value_per_field = <&mut InsertStatement>::try_from(input_statement)?.get_values()?;
             borrowed.capture_values(value_per_field);
         }
         Ok(())
@@ -560,7 +555,7 @@ impl<F: TransformFn> TransformedStatements<F> {
             return Err(anyhow::anyhow!("cannot share meta"));
         }
         if input_statement.is_insert() {
-            let transformed = (self.transform)(input_statement)?;
+            let transformed = (self.transform)(<&mut InsertStatement>::try_from(&mut *input_statement)?)?;
             if transformed.is_some() {
                 self.try_capture_values(input_statement)?;
             }
