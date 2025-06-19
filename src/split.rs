@@ -561,7 +561,9 @@ impl<F: TransformFn> TransformedStatements<F> {
         }
         if input_statement.is_insert() {
             let transformed = (self.transform)(input_statement)?;
-            self.try_capture_values(input_statement)?;
+            if transformed.is_some() {
+                self.try_capture_values(input_statement)?;
+            }
             return Ok(transformed);
         }
         Ok(Some(()))
