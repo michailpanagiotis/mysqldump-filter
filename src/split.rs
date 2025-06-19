@@ -562,11 +562,11 @@ impl<F: TransformFn> TransformedStatements<F> {
     fn transform_statement(&mut self, input_statement: &mut SqlStatement) -> OptionalStatementResult
         where F: TransformFn
     {
-        let mut borrowed = self.iter.tracker.borrow_mut();
-        if borrowed.try_share_meta(input_statement).is_err() {
-            return Err(anyhow::anyhow!("cannot share meta"));
-        }
         if input_statement.is_insert() {
+            let mut borrowed = self.iter.tracker.borrow_mut();
+            if borrowed.try_share_meta(input_statement).is_err() {
+                return Err(anyhow::anyhow!("cannot share meta"));
+            }
             let transformed = (self.transform)(input_statement)?;
             borrowed.try_capture_values(input_statement)?;
             return Ok(transformed);
