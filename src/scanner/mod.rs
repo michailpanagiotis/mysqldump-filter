@@ -56,6 +56,14 @@ fn get_data_types(create_statement: &str) -> Result<Option<(String, TableDataTyp
     Ok(None)
 }
 
+fn is_insert(statement: &str) -> bool {
+    statement.starts_with("INSERT")
+}
+
+fn is_create_table(statement: &str) -> bool {
+    statement.starts_with("CREATE TABLE")
+}
+
 #[derive(Clone)]
 #[derive(Debug)]
 pub enum Value {
@@ -213,27 +221,6 @@ impl SqlStatement {
             table: table.to_owned(),
         })
     }
-
-    pub fn as_string(&self) -> &str {
-        &self.line
-    }
-
-    pub fn as_bytes(&self) -> Vec<u8> {
-        Vec::from(self.as_string().as_bytes())
-    }
-
-    pub fn get_table(&self) -> &Option<String> {
-        &self.table
-    }
-
-    fn is_insert(&self) -> bool {
-        self.line.starts_with("INSERT")
-    }
-
-    fn is_create_table(&self) -> bool {
-        self.line.starts_with("CREATE TABLE")
-    }
-
 }
 
 impl<'a> TryFrom<&'a SqlStatement> for InsertStatement {
@@ -285,7 +272,7 @@ impl Tracker {
 
     fn capture_positions(&mut self, statement: &SqlStatement, current_table: &Option<String>) -> EmptyResult {
         if let Some(table) = current_table {
-            if !self.column_positions.contains_key(table) && statement.is_insert() {
+            if !self.column_positions.contains_key(table) && is_insert(&statement.line) {
                 let insert_statement = InsertStatement::try_from(statement)?;
                 self.column_positions.insert(table.to_string(), Rc::new(insert_statement.get_column_positions()));
             };
@@ -294,8 +281,8 @@ impl Tracker {
     }
 
     fn capture_data_types(&mut self, statement: &SqlStatement) -> EmptyResult {
-        if statement.is_create_table() {
-            if let Some((table, data_types)) = get_data_types(statement.as_string())? {
+        if is_create_table(&statement.line) {
+            if let Some((table, data_types)) = get_data_types(&statement.line)? {
                 self.data_types.insert(table.to_string(), data_types);
             }
         }
@@ -505,7 +492,7 @@ impl<F: TransformFn> TransformedStatements<F> {
         match item {
             Err(e) => Some(Err(e)),
             Ok(ref st) => {
-                if !st.is_insert() {
+                if !is_insert(&st.line) {
                     return Some(item);
                 }
                 match InsertStatement::try_from(st) {
@@ -527,7 +514,7 @@ impl<F: TransformFn> TransformedStatements<F> {
         let tracker = Rc::clone(&self.iter.tracker);
         for st in self {
             let statement = st?;
-            writers.write_statement(statement.get_table(), &statement.as_bytes())?;
+            writers.write_statement(&statement.table, statement.line.as_bytes())?;
         };
         writers.flush()?;
         Ok(tracker.borrow().get_captured_values().clone())
