@@ -186,7 +186,7 @@ fn parse_test_definition(definition: &str) -> Result<(String, Vec<String>), anyh
     Ok((column_name, foreign_keys))
 }
 
-pub fn determine_target_tables(definition: &str) -> Result<Vec<String>, anyhow::Error> {
+fn determine_target_tables(definition: &str) -> Result<Vec<String>, anyhow::Error> {
     let mut target_tables = Vec::new();
     let (_, deps) = parse_test_definition(definition)?;
     for key in deps.iter() {
@@ -200,7 +200,7 @@ pub fn determine_target_tables(definition: &str) -> Result<Vec<String>, anyhow::
     Ok(target_tables)
 }
 
-pub fn determine_checks_per_table(definitions: &[(String, String)]) -> Result<HashMap<String, Vec<String>>, anyhow::Error> {
+fn determine_checks_per_table(definitions: &[(String, String)]) -> Result<HashMap<String, Vec<String>>, anyhow::Error> {
     let mut checks: HashMap<String, Vec<String>> = HashMap::new();
     for (table, definition) in definitions.iter() {
         if !checks.contains_key(table) {
@@ -216,7 +216,7 @@ pub fn determine_checks_per_table(definitions: &[(String, String)]) -> Result<Ha
     Ok(checks)
 }
 
-pub fn determine_references_per_table(definitions: &[(String, String)]) -> Result<HashMap<String, Vec<String>>, anyhow::Error> {
+fn determine_references_per_table(definitions: &[(String, String)]) -> Result<HashMap<String, Vec<String>>, anyhow::Error> {
     let mut references: HashMap<String, Vec<String>> = HashMap::new();
     for (table, definition) in definitions.iter() {
         let (_, deps) = parse_test_definition(definition)?;
@@ -244,7 +244,7 @@ pub fn determine_references_per_table(definitions: &[(String, String)]) -> Resul
     Ok(references)
 }
 
-pub fn determine_all_checked_tables(definitions: &[(String, String)]) -> Result<HashSet<String>, anyhow::Error> {
+fn determine_all_checked_tables(definitions: &[(String, String)]) -> Result<HashSet<String>, anyhow::Error> {
     let mut all_tables: HashSet<String> = HashSet::new();
     for (table, definition) in definitions.iter() {
         all_tables.insert(table.to_owned());
@@ -264,6 +264,7 @@ pub struct TableChecks {
 }
 
 impl TableChecks {
+
     pub fn new(table: &str, check_definitions: &[String], references: &[String]) -> Result<Self, anyhow::Error> {
         let mut foreign_tables = Vec::new();
 
@@ -288,6 +289,17 @@ impl TableChecks {
         }
         Ok(checks)
     }
+}
+
+pub fn get_checks_per_table(definitions: &[(String, String)]) -> Result<HashMap<String, TableChecks>, anyhow::Error> {
+    let checks = determine_checks_per_table(definitions)?;
+    let references = determine_references_per_table(definitions)?;
+    let all_tables = determine_all_checked_tables(definitions)?;
+    let mut grouped: HashMap<String, TableChecks> = HashMap::new();
+    for table in all_tables.iter() {
+        grouped.insert(table.to_owned(), TableChecks::new(table, &checks[table], &references[table])?);
+    }
+    Ok(grouped)
 }
 
 pub type PlainCheckType = Box<dyn PlainColumnCheck>;

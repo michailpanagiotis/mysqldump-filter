@@ -4,7 +4,7 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::rc::{Rc, Weak};
 
-use crate::checks::{PlainCheckType, TableChecks, determine_all_checked_tables, determine_checks_per_table, determine_references_per_table};
+use crate::checks::{get_checks_per_table, PlainCheckType, TableChecks};
 use crate::scanner::process_table_inserts;
 
 fn process_inserts<'a, C: Iterator<Item=&'a PlainCheckType>>(
@@ -52,14 +52,14 @@ pub struct TableMeta {
     tested_at_pass: Option<usize>,
 }
 
-impl TryFrom<TableChecks> for TableMetaCell {
+impl TryFrom<&TableChecks> for TableMetaCell {
     type Error = anyhow::Error;
-    fn try_from(table_checks: TableChecks) -> Result<Self, Self::Error> {
+    fn try_from(table_checks: &TableChecks) -> Result<Self, Self::Error> {
         let checks = table_checks.get_checks()?;
         Ok(Rc::new(RefCell::new(TableMeta {
-            table: table_checks.table,
-            foreign_tables: table_checks.foreign_tables,
-            references: table_checks.references,
+            table: table_checks.table.clone(),
+            foreign_tables: table_checks.foreign_tables.clone(),
+            references: table_checks.references.clone(),
             checks,
             dependencies: Vec::new(),
             tested_at_pass: None,
@@ -134,14 +134,11 @@ impl CheckCollection {
             conds.iter().map(|c| (table.to_owned(), c.to_owned()))
         }).collect();
 
-        let checks = determine_checks_per_table(&definitions)?;
-        let references = determine_references_per_table(&definitions)?;
-        let all_tables = determine_all_checked_tables(&definitions)?;
+        let checks_per_table = get_checks_per_table(&definitions)?;
 
         let mut grouped: HashMap<String, Rc<RefCell<TableMeta>>> = HashMap::new();
-        for table in all_tables.iter() {
-            let table_checks = TableChecks::new(table, &checks[table], &references[table])?;
-            grouped.insert(table.to_owned(), TableMetaCell::try_from(table_checks)?);
+        for (table, checks) in checks_per_table.iter() {
+            grouped.insert(table.to_owned(), TableMetaCell::try_from(checks)?);
         }
 
         // set dependencies
@@ -154,7 +151,6 @@ impl CheckCollection {
         }
 
         dbg!(&grouped);
-        dbg!(&all_tables);
         Ok(CheckCollection {
             table_meta: grouped,
         })
