@@ -5,11 +5,29 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::rc::{Rc, Weak};
 
-use crate::traits::Dependency;
 use crate::column::ColumnMeta;
 use crate::checks::{PlainCheckType, new_plain_test, parse_test_definition};
 use crate::scanner::process_table_inserts;
 
+pub trait Dependency {
+    fn set_fulfilled_at_depth(&mut self, depth: &usize);
+    fn has_been_fulfilled(&self) -> bool;
+
+    fn get_dependencies(&self) -> &[Weak<RefCell<dyn Dependency>>];
+
+    fn has_fulfilled_dependencies(&self) -> bool {
+        self.get_dependencies().iter().all(|d| {
+            d.upgrade().unwrap().borrow().has_been_fulfilled()
+        })
+    }
+
+    fn fulfill_dependency(&mut self, depth: &usize) {
+        if !self.has_been_fulfilled() {
+            self.set_fulfilled_at_depth(depth);
+        }
+        assert!(self.has_been_fulfilled());
+    }
+}
 
 fn process_inserts<'a, C: Iterator<Item=&'a PlainCheckType>>(
     working_file_path: &Path,

@@ -8,7 +8,6 @@ mod checks;
 mod column;
 mod table;
 mod scanner;
-mod traits;
 mod writers;
 
 use table::CheckCollection;
