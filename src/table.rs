@@ -6,7 +6,7 @@ use std::path::Path;
 use std::rc::{Rc, Weak};
 
 use crate::column::ColumnMeta;
-use crate::checks::{PlainCheckType, get_target_tables, new_plain_test, parse_test_definition};
+use crate::checks::{PlainCheckType, determine_target_tables, new_plain_test, parse_test_definition};
 use crate::scanner::process_table_inserts;
 
 pub trait Dependency {
@@ -106,14 +106,11 @@ impl Extend<ColumnMeta> for Rc<RefCell<TableMeta>> {
 }
 
 impl TableMeta {
-    fn add_references(&mut self, references: &[String]) {
+    fn set_checks_and_references(&mut self, checks: &[String], references: &[String]) -> Result<(), anyhow::Error> {
         self.references = Vec::from(references);
-    }
-
-    fn add_checks(&mut self, checks: &[String]) -> Result<(), anyhow::Error> {
         for check in checks {
             self.checks.push(new_plain_test(&self.table, check)?);
-            for t in get_target_tables(check)? {
+            for t in determine_target_tables(check)? {
                 self.foreign_tables.push(t.to_owned());
                 self.foreign_tables.dedup();
             }
@@ -249,15 +246,18 @@ impl CheckCollection {
         let checks = determine_checks(&definitions)?;
         dbg!(&checks);
 
+        // set checks
         for table_meta in grouped.values() {
             let table = table_meta.borrow().table.to_owned();
-            let mut table_borrow = table_meta.borrow_mut();
-            table_borrow.add_references(&references[&table]);
-            table_borrow.add_checks(&checks[&table]);
-            let foreign_tables = table_borrow.get_foreign_tables();
+            table_meta.borrow_mut().set_checks_and_references(&checks[&table], &references[&table])?;
+        }
+
+        // set dependencies
+        for table_meta in grouped.values() {
+            let foreign_tables = table_meta.borrow().get_foreign_tables();
             for target_table in foreign_tables.iter() {
                 let target_table_meta = &grouped[target_table];
-                table_borrow.add_dependency(target_table_meta);
+                table_meta.borrow_mut().add_dependency(target_table_meta);
             }
         }
 
