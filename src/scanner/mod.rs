@@ -32,6 +32,8 @@ type OptionalStatementResult = Result<Option<()>, anyhow::Error>;
 type EmptyResult = Result<(), anyhow::Error>;
 
 type Values = HashMap<String, Value>;
+type ValueTuple = (String, sqlparser::ast::DataType);
+type ValueTuples = HashMap<String, ValueTuple>;
 
 // trait alias for transform functions
 pub trait TransformFn: FnMut(&mut InsertStatement) -> OptionalStatementResult  {}
@@ -115,7 +117,7 @@ impl Value {
             .timestamp()
     }
 
-    fn parse(value: &str, data_type: &sqlparser::ast::DataType) -> Self {
+    pub fn parse(value: &str, data_type: &sqlparser::ast::DataType) -> Self {
         if value == "NULL" {
             return Value::Null { string: value.to_string(), data_type: data_type.clone() };
         }
@@ -150,7 +152,7 @@ pub struct InsertStatement {
     values_part: String,
     data_types: Option<TableDataTypes>,
     positions: Option<TableColumnPositions>,
-    value_per_field: Option<HashMap<String, Value>>,
+    value_per_field: Option<ValueTuples>,
 }
 
 impl InsertStatement {
@@ -185,7 +187,7 @@ impl InsertStatement {
         self.data_types = Some(Rc::clone(data_types));
     }
 
-    pub fn get_values(&mut self) -> Result<&HashMap<String, Value>, anyhow::Error> {
+    pub fn get_values(&mut self) -> Result<&ValueTuples, anyhow::Error> {
         if self.value_per_field.is_none() {
             let Some(ref positions) = self.positions else {
                 return Err(anyhow::anyhow!("statement with no positions"));
@@ -194,15 +196,12 @@ impl InsertStatement {
                 return Err(anyhow::anyhow!("statement with no data types"));
             };
             let value_array = self.get_value_array()?;
-            let values: Values = positions
+            let values: ValueTuples = positions
                 .iter()
                 .map(|(column_name, position)| {
-                    (
-                        column_name.to_owned(),
-                        Value::parse(value_array[*position], &data_types[column_name])
-                    )
+                    (column_name.to_owned(), (value_array[*position].to_string(), data_types[column_name].to_owned()))
                 })
-                .collect::<Values>();
+                .collect();
             self.value_per_field = Some(values);
         }
         let Some(ref values) = self.value_per_field else {
@@ -299,13 +298,12 @@ impl Tracker {
         &self.column_positions[table]
     }
 
-    fn capture_values(&mut self, value_per_field: &HashMap<String, Value>) {
+    fn capture_values(&mut self, value_per_field: &HashMap<String, ValueTuple>) {
         if self.is_capturing_columns() {
             for (key, column) in &self.tracked_column_per_key {
                 let value = &value_per_field[column];
                 if let Some(set) = self.captured_values.get_mut(key) {
-                    let key: &str = value.into();
-                    set.insert(key.to_string());
+                    set.insert(value.0.clone());
                 }
             }
         }
