@@ -11,10 +11,7 @@ use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use sqlparser::dialect::MySqlDialect;
-use sqlparser::parser::Parser as SqlParser;
-
-use crate::scanner::sql_parser::{get_data_types, insert_parts, values};
+use crate::scanner::sql_parser::{get_column_positions, get_data_types, insert_parts, values};
 use crate::scanner::writers::Writers;
 
 type TableDataTypes = Rc<HashMap<String, sqlparser::ast::DataType>>;
@@ -71,16 +68,6 @@ impl InsertStatement {
 
     pub fn get_table(&self) -> &str {
         &self.table
-    }
-
-    fn get_column_positions(&self) -> HashMap<String, usize> {
-        let dialect = MySqlDialect {};
-        let ast = SqlParser::parse_sql(&dialect, &self.statement).unwrap();
-
-        let st = ast.first().unwrap();
-        let sqlparser::ast::Statement::Insert(x) = st else { panic!("stop") };
-
-        x.columns.iter().enumerate().map(|(idx, x)| (x.value.to_owned(), idx)).collect()
     }
 
     fn as_string(&self) -> &str {
@@ -174,7 +161,7 @@ impl Tracker {
         if let Some(table) = current_table {
             if !self.column_positions.contains_key(table) && is_insert(&statement.0) {
                 let insert_statement = InsertStatement::try_from(statement)?;
-                self.column_positions.insert(table.to_string(), Rc::new(insert_statement.get_column_positions()));
+                self.column_positions.insert(table.to_string(), Rc::new(get_column_positions(&insert_statement.statement)?));
             };
         }
         Ok(())

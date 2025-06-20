@@ -82,3 +82,13 @@ pub fn get_data_types(create_statement: &str) -> Result<Option<(String, HashMap<
     }
     Ok(None)
 }
+
+pub fn get_column_positions(insert_statement: &str) -> Result<HashMap<String, usize>, anyhow::Error> {
+    let dialect = MySqlDialect {};
+    let ast = SqlParser::parse_sql(&dialect, insert_statement)?;
+
+    let st = ast.first().unwrap();
+    let sqlparser::ast::Statement::Insert(x) = st else { return Err(anyhow::anyhow!("cannot get positions of insert statement")) };
+
+    Ok(x.columns.iter().enumerate().map(|(idx, x)| (x.value.to_owned(), idx)).collect())
+}
