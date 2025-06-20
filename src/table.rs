@@ -110,6 +110,13 @@ impl TableMeta {
         self.references = Vec::from(references);
     }
 
+    fn add_checks(&mut self, checks: &[String]) -> Result<(), anyhow::Error> {
+        for check in checks {
+            self.checks.push(new_plain_test(&self.table, check)?);
+        }
+        Ok(())
+    }
+
     fn add_column_meta(&mut self, elem: ColumnMeta) {
         if self.table.is_empty() {
             self.table = elem.get_table_name().to_owned();
@@ -118,10 +125,6 @@ impl TableMeta {
         }
 
         let key = elem.get_column_name().to_owned();
-
-        for check in elem.get_checks() {
-            self.checks.push(new_plain_test(&self.table, check).unwrap())
-        }
         match self.columns.get_mut(&key) {
             None => {
                 self.columns.insert(key.to_owned(), elem);
@@ -171,6 +174,22 @@ impl TableMeta {
 
         Ok(Some(captured))
     }
+}
+
+fn determine_checks(definitions: &[(String, String)]) -> Result<HashMap<String, Vec<String>>, anyhow::Error> {
+    let mut checks: HashMap<String, Vec<String>> = HashMap::new();
+    for (table, definition) in definitions.iter() {
+        if !checks.contains_key(table) {
+            checks.insert(table.to_owned(), Vec::new());
+        }
+
+        let Some(t_checks) = checks.get_mut(table) else {
+            return Err(anyhow::anyhow!("cannot get references of table"));
+        };
+        t_checks.push(definition.to_owned());
+        t_checks.dedup();
+    }
+    Ok(checks)
 }
 
 fn determine_references(definitions: &[(String, String)]) -> Result<HashMap<String, Vec<String>>, anyhow::Error> {
@@ -237,10 +256,14 @@ impl CheckCollection {
         let references = determine_references(&definitions)?;
         dbg!(&references);
 
+        let checks = determine_checks(&definitions)?;
+        dbg!(&checks);
+
         for table_meta in grouped.values() {
             let table = table_meta.borrow().table.to_owned();
             let mut table_borrow = table_meta.borrow_mut();
             table_borrow.add_references(&references[&table]);
+            table_borrow.add_checks(&checks[&table]);
             let foreign_tables = table_borrow.get_foreign_tables()?;
             for target_table in foreign_tables.iter() {
                 let target_table_meta = &grouped[target_table];
