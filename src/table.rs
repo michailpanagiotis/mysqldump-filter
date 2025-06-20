@@ -7,26 +7,6 @@ use std::rc::{Rc, Weak};
 use crate::checks::{PlainCheckType, determine_target_tables, new_plain_test, parse_test_definition};
 use crate::scanner::process_table_inserts;
 
-pub trait Dependency {
-    fn set_fulfilled_at_depth(&mut self, depth: &usize);
-    fn has_been_fulfilled(&self) -> bool;
-
-    fn get_dependencies(&self) -> &[Weak<RefCell<dyn Dependency>>];
-
-    fn has_fulfilled_dependencies(&self) -> bool {
-        self.get_dependencies().iter().all(|d| {
-            d.upgrade().unwrap().borrow().has_been_fulfilled()
-        })
-    }
-
-    fn fulfill_dependency(&mut self, depth: &usize) {
-        if !self.has_been_fulfilled() {
-            self.set_fulfilled_at_depth(depth);
-        }
-        assert!(self.has_been_fulfilled());
-    }
-}
-
 fn process_inserts<'a, C: Iterator<Item=&'a PlainCheckType>>(
     working_file_path: &Path,
     checks: C,
@@ -58,7 +38,7 @@ fn process_inserts<'a, C: Iterator<Item=&'a PlainCheckType>>(
     Ok(captured)
 }
 
-type DependencyType = Weak<RefCell<dyn Dependency>>;
+type DependencyType = Weak<RefCell<TableMeta>>;
 
 #[derive(Debug)]
 #[derive(Default)]
@@ -69,20 +49,6 @@ pub struct TableMeta {
     checks: Vec<PlainCheckType>,
     dependencies: Vec<DependencyType>,
     tested_at_pass: Option<usize>,
-}
-
-impl Dependency for TableMeta {
-    fn get_dependencies(&self) -> &[Weak<RefCell<dyn Dependency>>] {
-        &self.dependencies
-    }
-
-    fn set_fulfilled_at_depth(&mut self, depth: &usize) {
-        self.tested_at_pass = Some(depth.to_owned());
-    }
-
-    fn has_been_fulfilled(&self) -> bool {
-        self.tested_at_pass.is_some()
-    }
 }
 
 impl TableMeta {
@@ -124,6 +90,22 @@ impl TableMeta {
         self.references.iter().map(|x| x.as_str()).collect()
     }
 
+    fn has_been_fulfilled(&self) -> bool {
+        self.tested_at_pass.is_some()
+    }
+
+    fn has_fulfilled_dependencies(&self) -> bool {
+        self.dependencies.iter().all(|d| {
+            d.upgrade().unwrap().borrow().has_been_fulfilled()
+        })
+    }
+
+    fn fulfill_dependency(&mut self, depth: &usize) {
+        if !self.has_been_fulfilled() {
+            self.tested_at_pass = Some(depth.to_owned());
+        }
+        assert!(self.has_been_fulfilled());
+    }
 
     pub fn process_data_file(
         &mut self,
