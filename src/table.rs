@@ -106,6 +106,27 @@ impl Extend<ColumnMeta> for Rc<RefCell<TableMeta>> {
 }
 
 impl TableMeta {
+    fn new(table: &str, check_definitions: &[String], references: &[String]) -> Result<Rc<RefCell<Self>>, anyhow::Error> {
+        let mut checks = Vec::new();
+        let mut foreign_tables = Vec::new();
+
+        for check in check_definitions {
+            checks.push(new_plain_test(table, check)?);
+            for t in determine_target_tables(check)? {
+                foreign_tables.push(t.to_owned());
+                foreign_tables.dedup();
+            }
+        }
+        Ok(Rc::new(RefCell::new(TableMeta {
+            table: table.to_owned(),
+            foreign_tables,
+            references: Vec::from(references),
+            checks,
+            dependencies: Vec::new(),
+            tested_at_pass: None,
+        })))
+    }
+
     fn set_checks_and_references(&mut self, checks: &[String], references: &[String]) -> Result<(), anyhow::Error> {
         self.references = Vec::from(references);
         for check in checks {
@@ -163,7 +184,7 @@ impl TableMeta {
     }
 }
 
-fn determine_checks(definitions: &[(String, String)]) -> Result<HashMap<String, Vec<String>>, anyhow::Error> {
+fn determine_checks_per_table(definitions: &[(String, String)]) -> Result<HashMap<String, Vec<String>>, anyhow::Error> {
     let mut checks: HashMap<String, Vec<String>> = HashMap::new();
     for (table, definition) in definitions.iter() {
         if !checks.contains_key(table) {
@@ -179,7 +200,7 @@ fn determine_checks(definitions: &[(String, String)]) -> Result<HashMap<String, 
     Ok(checks)
 }
 
-fn determine_references(definitions: &[(String, String)]) -> Result<HashMap<String, Vec<String>>, anyhow::Error> {
+fn determine_references_per_table(definitions: &[(String, String)]) -> Result<HashMap<String, Vec<String>>, anyhow::Error> {
     let mut references: HashMap<String, Vec<String>> = HashMap::new();
     for (table, definition) in definitions.iter() {
         let (_, deps) = parse_test_definition(definition)?;
@@ -220,6 +241,17 @@ impl CheckCollection {
             conds.iter().map(|c| (table.to_owned(), c.to_owned()))
         }).collect();
 
+        let checks = determine_checks_per_table(&definitions)?;
+        let references = determine_references_per_table(&definitions)?;
+
+        let mut all_tables: HashSet<String> = HashSet::new();
+        for (table, definition) in definitions.iter() {
+            all_tables.insert(table.to_owned());
+            let target_tables = determine_target_tables(definition)?;
+            for target_table in target_tables {
+                all_tables.insert(target_table.to_owned());
+            }
+        }
 
         let mut tracked_cols: Vec<TrackedColumnType> = Vec::new();
 
@@ -240,11 +272,6 @@ impl CheckCollection {
             .into_grouping_map_by(|t| t.get_table_name().to_owned())
             .collect();
 
-        let references = determine_references(&definitions)?;
-        dbg!(&references);
-
-        let checks = determine_checks(&definitions)?;
-        dbg!(&checks);
 
         // set checks
         for table_meta in grouped.values() {
@@ -262,6 +289,7 @@ impl CheckCollection {
         }
 
         dbg!(&grouped);
+        dbg!(&all_tables);
         Ok(CheckCollection {
             table_meta: grouped,
         })
