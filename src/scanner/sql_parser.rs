@@ -9,6 +9,9 @@ use sqlparser::dialect::MySqlDialect;
 use sqlparser::parser::Parser as SqlParser;
 use std::collections::HashMap;
 
+pub type TableDataTypes = HashMap<String, sqlparser::ast::DataType>;
+pub type TableColumnPositions = HashMap<String, usize>;
+
 fn quoted(i: &str) -> IResult<&str, &str> {
     recognize(delimited(
         tag("\'"),
@@ -68,7 +71,7 @@ pub fn insert_parts(insert_statement: &str) -> Result<(String, String, String), 
     }
 }
 
-pub fn get_data_types(create_statement: &str) -> Result<Option<(String, HashMap<String, sqlparser::ast::DataType>)>, anyhow::Error> {
+pub fn get_data_types(create_statement: &str) -> Result<Option<(String, TableDataTypes)>, anyhow::Error> {
     let dialect = MySqlDialect {};
     let ast = SqlParser::parse_sql(&dialect, create_statement)?;
     for st in ast.into_iter().filter(|x| matches!(x, sqlparser::ast::Statement::CreateTable(_))) {

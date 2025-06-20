@@ -11,13 +11,12 @@ use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use crate::scanner::sql_parser::{get_column_positions, get_data_types, insert_parts, values};
+use crate::scanner::sql_parser::{TableColumnPositions, TableDataTypes, get_column_positions, get_data_types, insert_parts, values};
 use crate::scanner::writers::Writers;
 
-type TableDataTypes = Rc<HashMap<String, sqlparser::ast::DataType>>;
-type DataTypes = HashMap<String, TableDataTypes>;
-type TableColumnPositions = Rc<HashMap<String, usize>>;
-type ColumnPositions = HashMap<String, TableColumnPositions>;
+type RcTableDataTypes = Rc<TableDataTypes>;
+type RcTableColumnPositions = Rc<TableColumnPositions>;
+
 type IteratorItem = SqlStatementResult;
 type CapturedValues = HashMap<String, HashSet<String>>;
 type TrackerCell = Rc<RefCell<Tracker>>;
@@ -52,8 +51,8 @@ pub struct InsertStatement {
     statement: String,
     table: String,
     values_part: String,
-    data_types: Option<TableDataTypes>,
-    positions: Option<TableColumnPositions>,
+    data_types: Option<RcTableDataTypes>,
+    positions: Option<RcTableColumnPositions>,
     value_per_field: Option<ValueTuples>,
 }
 
@@ -74,7 +73,7 @@ impl InsertStatement {
         &self.statement
     }
 
-    fn set_meta(&mut self, column_positions: &TableColumnPositions, data_types: &TableDataTypes) {
+    fn set_meta(&mut self, column_positions: &RcTableColumnPositions, data_types: &RcTableDataTypes) {
         self.positions = Some(Rc::clone(column_positions));
         self.data_types = Some(Rc::clone(data_types));
     }
@@ -126,8 +125,8 @@ impl<'a> TryFrom<&'a mut InsertStatement> for SqlStatement {
 
 #[derive(Debug)]
 pub struct Tracker {
-    data_types: DataTypes,
-    column_positions: ColumnPositions,
+    data_types: HashMap<String, RcTableDataTypes>,
+    column_positions: HashMap<String, RcTableColumnPositions>,
     captured_values: CapturedValues,
     tracked_column_per_key: HashMap<String, String>,
 }
@@ -182,11 +181,11 @@ impl Tracker {
         Ok(())
     }
 
-    fn get_table_data_types(&self, table: &str) -> &TableDataTypes {
+    fn get_table_data_types(&self, table: &str) -> &RcTableDataTypes {
         &self.data_types[table]
     }
 
-    fn get_table_column_positions(&self, table: &str) -> &TableColumnPositions {
+    fn get_table_column_positions(&self, table: &str) -> &RcTableColumnPositions {
         &self.column_positions[table]
     }
 
