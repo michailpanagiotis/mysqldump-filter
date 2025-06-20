@@ -4,7 +4,7 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::rc::{Rc, Weak};
 
-use crate::checks::{PlainCheckType, determine_all_checked_tables, determine_checks_per_table, determine_references_per_table, determine_target_tables, new_plain_test};
+use crate::checks::{PlainCheckType, TableChecks, determine_all_checked_tables, determine_checks_per_table, determine_references_per_table, determine_target_tables, new_plain_test};
 use crate::scanner::process_table_inserts;
 
 fn process_inserts<'a, C: Iterator<Item=&'a PlainCheckType>>(
@@ -38,7 +38,8 @@ fn process_inserts<'a, C: Iterator<Item=&'a PlainCheckType>>(
     Ok(captured)
 }
 
-type DependencyType = Weak<RefCell<TableMeta>>;
+type TableMetaCell = Rc<RefCell<TableMeta>>;
+type WeakDependencyType = Weak<RefCell<TableMeta>>;
 
 #[derive(Debug)]
 #[derive(Default)]
@@ -47,7 +48,7 @@ pub struct TableMeta {
     foreign_tables: Vec<String>,
     references: Vec<String>,
     checks: Vec<PlainCheckType>,
-    dependencies: Vec<DependencyType>,
+    dependencies: Vec<WeakDependencyType>,
     tested_at_pass: Option<usize>,
 }
 
@@ -65,18 +66,25 @@ fn determine_meta_table(table: &str, check_definitions: &[String]) -> Result<(Ve
     Ok((checks, foreign_tables))
 }
 
-impl TableMeta {
-    fn new(table: &str, checks: Vec<PlainCheckType>, references: Vec<String>, foreign_tables: Vec<String>) -> Result<Rc<RefCell<Self>>, anyhow::Error> {
+impl TryFrom<TableChecks> for TableMetaCell {
+    type Error = anyhow::Error;
+    fn try_from(table_checks: TableChecks) -> Result<Self, Self::Error> {
+        let mut checks = Vec::new();
+        for check in table_checks.check_definitions {
+            checks.push(new_plain_test(&table_checks.table, &check)?);
+        }
         Ok(Rc::new(RefCell::new(TableMeta {
-            table: table.to_owned(),
-            foreign_tables,
-            references,
+            table: table_checks.table,
+            foreign_tables: table_checks.foreign_tables,
+            references: table_checks.references,
             checks,
             dependencies: Vec::new(),
             tested_at_pass: None,
         })))
     }
+}
 
+impl TableMeta {
     pub fn get_foreign_tables(&self) -> Vec<String> {
         self.foreign_tables.clone()
     }
@@ -149,8 +157,8 @@ impl CheckCollection {
 
         let mut grouped: HashMap<String, Rc<RefCell<TableMeta>>> = HashMap::new();
         for table in all_tables.iter() {
-            let (checks, foreign_tables) = determine_meta_table(table, &checks[table])?;
-            grouped.insert(table.to_owned(), TableMeta::new(table, checks, references[table].clone(), foreign_tables)?);
+            let table_checks = TableChecks::new(table, &checks[table], &references[table])?;
+            grouped.insert(table.to_owned(), TableMetaCell::try_from(table_checks)?);
         }
 
         // set dependencies
