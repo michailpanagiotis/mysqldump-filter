@@ -10,7 +10,6 @@ pub struct ColumnMeta {
     foreign_keys: Vec<String>,
     is_referenced: bool,
     checks: Vec<String>,
-    tested_at_pass: Option<usize>,
 }
 
 impl ColumnMeta {
@@ -39,7 +38,6 @@ impl ColumnMeta {
             is_referenced: false,
             foreign_keys: foreign_keys.iter().map(|x| x.to_string()).collect(),
             checks: Vec::new(),
-            tested_at_pass: None,
         })
     }
 
@@ -93,14 +91,6 @@ impl ColumnMeta {
 
     pub fn set_referenced(&mut self) {
         self.is_referenced = true
-    }
-
-    pub fn set_fulfilled_at_depth(&mut self, depth: &usize) {
-        self.tested_at_pass = Some(depth.to_owned());
-    }
-
-    pub fn has_been_fulfilled(&self) -> bool {
-        self.tested_at_pass.is_some()
     }
 
     pub fn extend(&mut self, other: &ColumnMeta) {

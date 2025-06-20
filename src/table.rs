@@ -79,6 +79,7 @@ pub struct TableMeta {
     references: Vec<String>,
     checks: Vec<PlainCheckType>,
     dependencies: Vec<DependencyType>,
+    tested_at_pass: Option<usize>,
 }
 
 impl Dependency for TableMeta {
@@ -87,11 +88,11 @@ impl Dependency for TableMeta {
     }
 
     fn set_fulfilled_at_depth(&mut self, depth: &usize) {
-        self.columns.values_mut().for_each(|v| v.set_fulfilled_at_depth(depth))
+        self.tested_at_pass = Some(depth.to_owned());
     }
 
     fn has_been_fulfilled(&self) -> bool {
-        self.columns.values().all(|v| v.has_been_fulfilled())
+        self.tested_at_pass.is_some()
     }
 }
 
