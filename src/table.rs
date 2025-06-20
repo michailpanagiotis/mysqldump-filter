@@ -106,6 +106,10 @@ impl Extend<ColumnMeta> for Rc<RefCell<TableMeta>> {
 }
 
 impl TableMeta {
+    fn add_references(&mut self, references: &[String]) {
+        self.references = Vec::from(references);
+    }
+
     fn add_column_meta(&mut self, elem: ColumnMeta) {
         if self.table.is_empty() {
             self.table = elem.get_table_name().to_owned();
@@ -125,9 +129,6 @@ impl TableMeta {
             Some(cm) => {
                 cm.extend(&elem);
             }
-        }
-        if self.columns[&key].is_referenced() {
-            self.references.push(self.columns[&key].get_column_key().to_owned());
         }
     }
 
@@ -172,6 +173,34 @@ impl TableMeta {
     }
 }
 
+fn determine_references(definitions: &[(String, String)]) -> Result<HashMap<String, Vec<String>>, anyhow::Error> {
+    let mut references: HashMap<String, Vec<String>> = HashMap::new();
+    for (table, definition) in definitions.iter() {
+        let (_, deps) = parse_test_definition(definition)?;
+        if !references.contains_key(table) {
+            references.insert(table.to_owned(), Vec::new());
+        }
+
+        for key in deps.iter() {
+            let mut split = key.split('.');
+            dbg!(&key);
+            let (Some(target_table), Some(_), None) = (split.next(), split.next(), split.next()) else {
+                return Err(anyhow::anyhow!("malformed key {}", key));
+            };
+            if !references.contains_key(target_table) {
+                references.insert(target_table.to_owned(), Vec::new());
+            }
+
+            let Some(refs) = references.get_mut(target_table) else {
+                return Err(anyhow::anyhow!("cannot get references of table"));
+            };
+            refs.push(key.to_owned());
+            refs.dedup();
+        }
+    }
+    Ok(references)
+}
+
 #[derive(Debug)]
 pub struct CheckCollection {
     table_meta: HashMap<String, Rc<RefCell<TableMeta>>>,
@@ -184,6 +213,7 @@ impl CheckCollection {
         let definitions: Vec<(String, String)> = conditions.flat_map(|(table, conds)| {
             conds.iter().map(|c| (table.to_owned(), c.to_owned()))
         }).collect();
+
 
         let mut tracked_cols: Vec<TrackedColumnType> = Vec::new();
 
@@ -198,13 +228,19 @@ impl CheckCollection {
                 tracked_cols.push(ColumnMeta::from_foreign_key(key)?);
             }
         }
+
         let grouped: HashMap<String, Rc<RefCell<TableMeta>>> = tracked_cols
             .into_iter()
             .into_grouping_map_by(|t| t.get_table_name().to_owned())
             .collect();
 
+        let references = determine_references(&definitions)?;
+        dbg!(&references);
+
         for table_meta in grouped.values() {
+            let table = table_meta.borrow().table.to_owned();
             let mut table_borrow = table_meta.borrow_mut();
+            table_borrow.add_references(&references[&table]);
             let foreign_tables = table_borrow.get_foreign_tables()?;
             for target_table in foreign_tables.iter() {
                 let target_table_meta = &grouped[target_table];
