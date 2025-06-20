@@ -6,7 +6,7 @@ use std::path::Path;
 use std::rc::{Rc, Weak};
 
 use crate::column::ColumnMeta;
-use crate::checks::{PlainCheckType, new_plain_test, parse_test_definition};
+use crate::checks::{PlainCheckType, get_target_tables, new_plain_test, parse_test_definition};
 use crate::scanner::process_table_inserts;
 
 pub trait Dependency {
@@ -74,8 +74,8 @@ impl From<&ColumnMeta> for ColumnType {
 #[derive(Default)]
 pub struct TableMeta {
     pub table: String,
-    pub columns: HashMap<String, ColumnMeta>,
-    // trait ReferenceTracker
+    // pub columns: HashMap<String, ColumnMeta>,
+    foreign_tables: Vec<String>,
     references: Vec<String>,
     checks: Vec<PlainCheckType>,
     dependencies: Vec<DependencyType>,
@@ -113,6 +113,10 @@ impl TableMeta {
     fn add_checks(&mut self, checks: &[String]) -> Result<(), anyhow::Error> {
         for check in checks {
             self.checks.push(new_plain_test(&self.table, check)?);
+            for t in get_target_tables(check)? {
+                self.foreign_tables.push(t.to_owned());
+                self.foreign_tables.dedup();
+            }
         }
         Ok(())
     }
@@ -123,24 +127,10 @@ impl TableMeta {
         } else if self.table != elem.get_table_name() {
             panic!("mismatched table names");
         }
-
-        let key = elem.get_column_name().to_owned();
-        match self.columns.get_mut(&key) {
-            None => {
-                self.columns.insert(key.to_owned(), elem);
-            },
-            Some(cm) => {
-                cm.extend(&elem);
-            }
-        }
     }
 
-    pub fn get_foreign_tables(&self) -> Result<Vec<String>, anyhow::Error> {
-        let mut tables: Vec<String> = Vec::new();
-        for cm in self.columns.values() {
-            tables.extend(cm.get_foreign_tables()?);
-        }
-        Ok(tables)
+    pub fn get_foreign_tables(&self) -> Vec<String> {
+        self.foreign_tables.clone()
     }
 
     fn add_dependency(&mut self, target: &Rc<RefCell<TableMeta>>) {
@@ -264,7 +254,7 @@ impl CheckCollection {
             let mut table_borrow = table_meta.borrow_mut();
             table_borrow.add_references(&references[&table]);
             table_borrow.add_checks(&checks[&table]);
-            let foreign_tables = table_borrow.get_foreign_tables()?;
+            let foreign_tables = table_borrow.get_foreign_tables();
             for target_table in foreign_tables.iter() {
                 let target_table_meta = &grouped[target_table];
                 table_borrow.add_dependency(target_table_meta);

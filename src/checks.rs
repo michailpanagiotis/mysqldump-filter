@@ -186,4 +186,18 @@ pub fn parse_test_definition(definition: &str) -> Result<(String, Vec<String>), 
     Ok((column_name, foreign_keys))
 }
 
+pub fn get_target_tables(definition: &str) -> Result<Vec<String>, anyhow::Error> {
+    let mut target_tables = Vec::new();
+    let (_, deps) = parse_test_definition(definition)?;
+    for key in deps.iter() {
+        let mut split = key.split('.');
+        let (Some(target_table), Some(_), None) = (split.next(), split.next(), split.next()) else {
+            return Err(anyhow::anyhow!("malformed key {}", key));
+        };
+        target_tables.push(target_table.to_owned());
+        target_tables.dedup();
+    }
+    Ok(target_tables)
+}
+
 pub type PlainCheckType = Box<dyn PlainColumnCheck>;
