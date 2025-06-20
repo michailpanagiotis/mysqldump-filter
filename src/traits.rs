@@ -4,17 +4,6 @@ use thiserror::Error;
 use std::rc::Weak;
 use std::cell::RefCell;
 
-pub trait ReferenceTracker {
-    fn get_references(&self) -> &HashMap<String, HashSet<String>>;
-    fn get_references_mut(&mut self) -> &mut HashMap<String, HashSet<String>>;
-
-    fn capture_reference(&mut self, key: &str, value: &str) -> Result<(), anyhow::Error> {
-        let Some(set) = self.get_references_mut().get_mut(key) else { return Err(anyhow::anyhow!("unknown reference key")) };
-        set.insert(value.to_owned());
-        Ok(())
-    }
-}
-
 pub trait Dependency {
     fn set_fulfilled_at_depth(&mut self, depth: &usize);
     fn has_been_fulfilled(&self) -> bool;

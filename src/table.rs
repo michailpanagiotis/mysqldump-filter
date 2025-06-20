@@ -5,7 +5,7 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::rc::{Rc, Weak};
 
-use crate::traits::{ReferenceTracker, Dependency};
+use crate::traits::Dependency;
 use crate::column::ColumnMeta;
 use crate::checks::{PlainCheckType, new_plain_test, parse_test_definition};
 use crate::scanner::process_table_inserts;
@@ -58,19 +58,9 @@ pub struct TableMeta {
     pub table: String,
     pub columns: HashMap<String, ColumnMeta>,
     // trait ReferenceTracker
-    references: HashMap<String, HashSet<String>>,
+    references: Vec<String>,
     checks: Vec<PlainCheckType>,
     dependencies: Vec<DependencyType>,
-}
-
-impl ReferenceTracker for TableMeta {
-    fn get_references(&self) -> &HashMap<String, HashSet<String>> {
-        &self.references
-    }
-
-    fn get_references_mut(&mut self) -> &mut HashMap<String, HashSet<String>> {
-        &mut self.references
-    }
 }
 
 impl Dependency for TableMeta {
@@ -118,7 +108,7 @@ impl TableMeta {
             }
         }
         if self.columns[&key].is_referenced() {
-            self.references.insert(self.columns[&key].get_column_key().to_owned(), HashSet::new());
+            self.references.push(self.columns[&key].get_column_key().to_owned());
         }
     }
 
@@ -140,7 +130,7 @@ impl TableMeta {
     }
 
     fn get_tracked_columns(&self) -> Vec<&str> {
-        self.get_references().keys().map(|k| k.as_str()).collect()
+        self.references.iter().map(|x| x.as_str()).collect()
     }
 
 
@@ -149,17 +139,17 @@ impl TableMeta {
         current_pass: &usize,
         lookup_table: &HashMap<String, HashSet<String>>,
         working_file_path: &Path,
-    ) -> Result<(), anyhow::Error> {
+    ) -> Result<Option<HashMap<String, HashSet<String>>>, anyhow::Error> {
         if !self.has_fulfilled_dependencies() {
             println!("Skipping table {} since it still has dependencies", &self.table);
-            return Ok(());
+            return Ok(None);
         }
 
-        self.references = process_inserts(working_file_path, self.get_checks(), &self.get_tracked_columns(), lookup_table)?;
+        let captured = process_inserts(working_file_path, self.get_checks(), &self.get_tracked_columns(), lookup_table)?;
 
         self.fulfill_dependency(current_pass);
 
-        Ok(())
+        Ok(Some(captured))
     }
 }
 
@@ -213,36 +203,30 @@ impl CheckCollection {
         self.table_meta.values().filter(|v| !v.borrow().has_been_fulfilled()).map(|v| v.borrow().table.to_owned()).collect()
     }
 
-    fn get_lookup_table(&self) -> HashMap<String, HashSet<String>> {
-        let mut lookup_table: HashMap<String, HashSet<String>> = HashMap::new();
-
-        for table_meta in self.table_meta.values() {
-            lookup_table.extend(table_meta.borrow().get_references().iter().map(|(k, v)| (k.to_owned(), v.to_owned())));
-        }
-        lookup_table
-    }
-
     pub fn process(
         &mut self,
         working_file_path: &Path,
     ) -> Result<(), anyhow::Error> {
         let mut current_pass = 1;
+        let mut lookup_table = HashMap::new();
         while !self.get_pending_tables().is_empty() {
             let pending = self.get_pending_tables();
-            let lookup_table = self.get_lookup_table();
             println!("Running pass {current_pass}");
             dbg!(&pending);
             dbg!(&lookup_table);
             for table_meta in self.table_meta.values_mut().filter(|t| pending.iter().any(|p| p == &t.borrow().table)) {
-                table_meta.borrow_mut().process_data_file(
+                let captured_option = table_meta.borrow_mut().process_data_file(
                     &current_pass,
                     &lookup_table,
                     working_file_path,
                 )?;
+                if let Some(captured) = captured_option {
+                    lookup_table.extend(captured);
+                }
             }
             current_pass += 1;
         }
-        dbg!(self.get_lookup_table());
+        dbg!(&lookup_table);
         Ok(())
     }
 }

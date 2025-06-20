@@ -7,7 +7,6 @@ use tempdir::TempDir;
 mod checks;
 mod column;
 mod table;
-mod sql;
 mod scanner;
 mod traits;
 mod writers;
