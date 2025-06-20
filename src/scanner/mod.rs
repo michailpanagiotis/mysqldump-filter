@@ -1,7 +1,6 @@
 mod sql_parser;
 mod writers;
 
-use chrono::NaiveDateTime;
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::cell::RefCell;
@@ -15,7 +14,7 @@ use std::rc::Rc;
 use sqlparser::dialect::MySqlDialect;
 use sqlparser::parser::Parser as SqlParser;
 
-use crate::scanner::sql_parser::{insert_parts, values};
+use crate::scanner::sql_parser::{get_data_types, insert_parts, values};
 use crate::scanner::writers::Writers;
 
 type TableDataTypes = Rc<HashMap<String, sqlparser::ast::DataType>>;
@@ -42,105 +41,12 @@ lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
 }
 
-fn new_statement(line: String, table: Option<String>) -> SqlStatement {
-    (line, table)
-}
-
-fn get_data_types(create_statement: &str) -> Result<Option<(String, TableDataTypes)>, anyhow::Error> {
-    let dialect = MySqlDialect {};
-    let ast = SqlParser::parse_sql(&dialect, create_statement)?;
-    for st in ast.into_iter().filter(|x| matches!(x, sqlparser::ast::Statement::CreateTable(_))) {
-        if let sqlparser::ast::Statement::CreateTable(ct) = st {
-            let table = ct.name.0[0].as_ident().unwrap().value.to_string();
-            let data_types: TableDataTypes = Rc::new(
-                HashMap::from_iter(
-                    ct.columns.iter().map(|column| (column.name.value.to_string(), column.data_type.to_owned())),
-                ),
-            );
-            return Ok(Some((table, data_types)));
-        }
-    }
-    Ok(None)
-}
-
 fn is_insert(statement: &str) -> bool {
     statement.starts_with("INSERT")
 }
 
 fn is_create_table(statement: &str) -> bool {
     statement.starts_with("CREATE TABLE")
-}
-
-#[derive(Clone)]
-#[derive(Debug)]
-pub enum Value {
-    Int {
-        string: String,
-        parsed: i64,
-        data_type: sqlparser::ast::DataType,
-    },
-    Date {
-        string: String,
-        parsed: i64,
-        data_type: sqlparser::ast::DataType,
-    },
-    String {
-        string: String,
-        parsed: String,
-        data_type: sqlparser::ast::DataType,
-    },
-    Null {
-        string: String,
-        data_type: sqlparser::ast::DataType,
-    }
-}
-
-impl Value {
-    fn parse_int(s: &str) -> i64 {
-        s.parse().unwrap_or_else(|_| panic!("cannot parse int {s}"))
-    }
-
-    fn parse_string(s: &str) -> String {
-        s.replace("'", "")
-    }
-
-    fn parse_date(s: &str) -> i64 {
-        let date = Value::parse_string(s);
-        let to_parse = if date.len() == 10 { date.to_owned() + " 00:00:00" } else { date.to_owned() };
-        if to_parse.starts_with("0000-00-00") {
-            return NaiveDateTime::MIN.and_utc().timestamp();
-        }
-        NaiveDateTime::parse_from_str(&to_parse, "%Y-%m-%d %H:%M:%S")
-            .unwrap_or_else(|_| panic!("cannot parse timestamp {s}"))
-            .and_utc()
-            .timestamp()
-    }
-
-    pub fn parse(value: &str, data_type: &sqlparser::ast::DataType) -> Self {
-        if value == "NULL" {
-            return Value::Null { string: value.to_string(), data_type: data_type.clone() };
-        }
-        match data_type {
-            sqlparser::ast::DataType::TinyInt(_) | sqlparser::ast::DataType::Int(_) => {
-                Value::Int{ string: value.to_string(), parsed: Value::parse_int(value), data_type: data_type.clone() }
-            },
-            sqlparser::ast::DataType::Datetime(_) | sqlparser::ast::DataType::Date => {
-                Value::Date{ string: value.to_string(), parsed: Value::parse_date(value), data_type: data_type.clone() }
-            },
-            _ => Value::String{ string: value.to_string(), parsed: Value::parse_string(value), data_type: data_type.clone() }
-        }
-    }
-}
-
-impl<'a> From<&'a Value> for &'a str {
-    fn from(value: &'a Value) -> Self {
-        match value {
-            Value::Int{ string, .. } => string.as_str(),
-            Value::Date{ string, .. } => string.as_str(),
-            Value::String{ string, .. } => string.as_str(),
-            Value::Null{ string, .. } => string.as_str(),
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -227,7 +133,7 @@ impl<'a> TryFrom<&'a SqlStatement> for InsertStatement {
 impl<'a> TryFrom<&'a mut InsertStatement> for SqlStatement {
     type Error = anyhow::Error;
     fn try_from(other: &'a mut InsertStatement) -> Result<SqlStatement, Self::Error> {
-        Ok(new_statement(other.as_string().to_string(), Some(other.get_table().to_owned())))
+        Ok((other.as_string().to_string(), Some(other.get_table().to_owned())))
     }
 }
 
@@ -277,7 +183,7 @@ impl Tracker {
     fn capture_data_types(&mut self, statement: &SqlStatement) -> EmptyResult {
         if is_create_table(&statement.0) {
             if let Some((table, data_types)) = get_data_types(&statement.0)? {
-                self.data_types.insert(table.to_string(), data_types);
+                self.data_types.insert(table.to_string(), Rc::new(data_types));
             }
         }
         Ok(())
@@ -418,7 +324,7 @@ impl TrackedStatements {
             self.unlock_next = true;
         }
 
-        Some(Ok(new_statement(next.to_string(), self.current_table.to_owned())))
+        Some(Ok((next.to_string(), self.current_table.to_owned())))
     }
 }
 

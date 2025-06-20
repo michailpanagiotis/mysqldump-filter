@@ -5,6 +5,9 @@ use nom::character::complete::multispace0;
 use nom::combinator::{opt, recognize};
 use nom::multi::many0;
 use nom::sequence::{delimited, preceded};
+use sqlparser::dialect::MySqlDialect;
+use sqlparser::parser::Parser as SqlParser;
+use std::collections::HashMap;
 
 fn quoted(i: &str) -> IResult<&str, &str> {
     recognize(delimited(
@@ -63,4 +66,19 @@ pub fn insert_parts(insert_statement: &str) -> Result<(String, String, String), 
         },
         Err(_) => Err(anyhow::anyhow!("cannot parse"))
     }
+}
+
+pub fn get_data_types(create_statement: &str) -> Result<Option<(String, HashMap<String, sqlparser::ast::DataType>)>, anyhow::Error> {
+    let dialect = MySqlDialect {};
+    let ast = SqlParser::parse_sql(&dialect, create_statement)?;
+    for st in ast.into_iter().filter(|x| matches!(x, sqlparser::ast::Statement::CreateTable(_))) {
+        if let sqlparser::ast::Statement::CreateTable(ct) = st {
+            let table = ct.name.0[0].as_ident().unwrap().value.to_string();
+            let data_types = HashMap::from_iter(
+                ct.columns.iter().map(|column| (column.name.value.to_string(), column.data_type.to_owned())),
+            );
+            return Ok(Some((table, data_types)));
+        }
+    }
+    Ok(None)
 }
