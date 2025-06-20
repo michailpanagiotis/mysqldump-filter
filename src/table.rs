@@ -51,7 +51,7 @@ pub struct TableMeta {
     tested_at_pass: Option<usize>,
 }
 
-fn determine_meta_table(table: &str, check_definitions: &[String], references: &[String]) -> Result<(Vec<PlainCheckType>, Vec<String>, Vec<String>), anyhow::Error> {
+fn determine_meta_table(table: &str, check_definitions: &[String]) -> Result<(Vec<PlainCheckType>, Vec<String>), anyhow::Error> {
     let mut checks = Vec::new();
     let mut foreign_tables = Vec::new();
 
@@ -62,12 +62,11 @@ fn determine_meta_table(table: &str, check_definitions: &[String], references: &
             foreign_tables.dedup();
         }
     }
-    Ok((checks, Vec::from(references), foreign_tables))
+    Ok((checks, foreign_tables))
 }
 
 impl TableMeta {
-    fn new(table: &str, check_definitions: &[String], references: &[String]) -> Result<Rc<RefCell<Self>>, anyhow::Error> {
-        let (checks, references, foreign_tables) = determine_meta_table(table, check_definitions, references)?;
+    fn new(table: &str, checks: Vec<PlainCheckType>, references: Vec<String>, foreign_tables: Vec<String>) -> Result<Rc<RefCell<Self>>, anyhow::Error> {
         Ok(Rc::new(RefCell::new(TableMeta {
             table: table.to_owned(),
             foreign_tables,
@@ -150,7 +149,8 @@ impl CheckCollection {
 
         let mut grouped: HashMap<String, Rc<RefCell<TableMeta>>> = HashMap::new();
         for table in all_tables.iter() {
-            grouped.insert(table.to_owned(), TableMeta::new(table, &checks[table], &references[table])?);
+            let (checks, foreign_tables) = determine_meta_table(table, &checks[table])?;
+            grouped.insert(table.to_owned(), TableMeta::new(table, checks, references[table].clone(), foreign_tables)?);
         }
 
         // set dependencies
