@@ -14,9 +14,6 @@ use std::rc::Rc;
 use crate::scanner::sql_parser::{TableColumnPositions, TableDataTypes, get_column_positions, get_data_types, insert_parts, values};
 use crate::scanner::writers::Writers;
 
-type RcTableDataTypes = Rc<TableDataTypes>;
-type RcTableColumnPositions = Rc<TableColumnPositions>;
-
 type IteratorItem = SqlStatementResult;
 type CapturedValues = HashMap<String, HashSet<String>>;
 type TrackerCell = Rc<RefCell<Tracker>>;
@@ -51,8 +48,8 @@ pub struct InsertStatement {
     statement: String,
     table: String,
     values_part: String,
-    data_types: Option<RcTableDataTypes>,
-    positions: Option<RcTableColumnPositions>,
+    data_types: Option<Rc<TableDataTypes>>,
+    positions: Option<Rc<TableColumnPositions>>,
     value_per_field: Option<ValueTuples>,
 }
 
@@ -73,7 +70,7 @@ impl InsertStatement {
         &self.statement
     }
 
-    fn set_meta(&mut self, column_positions: &RcTableColumnPositions, data_types: &RcTableDataTypes) {
+    fn set_meta(&mut self, column_positions: &Rc<TableColumnPositions>, data_types: &Rc<TableDataTypes>) {
         self.positions = Some(Rc::clone(column_positions));
         self.data_types = Some(Rc::clone(data_types));
     }
@@ -125,8 +122,8 @@ impl<'a> TryFrom<&'a mut InsertStatement> for SqlStatement {
 
 #[derive(Debug)]
 pub struct Tracker {
-    data_types: HashMap<String, RcTableDataTypes>,
-    column_positions: HashMap<String, RcTableColumnPositions>,
+    data_types: HashMap<String, Rc<TableDataTypes>>,
+    column_positions: HashMap<String, Rc<TableColumnPositions>>,
     captured_values: CapturedValues,
     tracked_column_per_key: HashMap<String, String>,
 }
@@ -181,11 +178,11 @@ impl Tracker {
         Ok(())
     }
 
-    fn get_table_data_types(&self, table: &str) -> &RcTableDataTypes {
+    fn get_table_data_types(&self, table: &str) -> &Rc<TableDataTypes> {
         &self.data_types[table]
     }
 
-    fn get_table_column_positions(&self, table: &str) -> &RcTableColumnPositions {
+    fn get_table_column_positions(&self, table: &str) -> &Rc<TableColumnPositions> {
         &self.column_positions[table]
     }
 
