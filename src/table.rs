@@ -4,7 +4,7 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::rc::{Rc, Weak};
 
-use crate::checks::{PlainCheckType, determine_target_tables, new_plain_test, parse_test_definition};
+use crate::checks::{PlainCheckType, determine_all_checked_tables, determine_checks_per_table, determine_references_per_table, determine_target_tables, new_plain_test};
 use crate::scanner::process_table_inserts;
 
 fn process_inserts<'a, C: Iterator<Item=&'a PlainCheckType>>(
@@ -51,22 +51,27 @@ pub struct TableMeta {
     tested_at_pass: Option<usize>,
 }
 
+fn determine_meta_table(table: &str, check_definitions: &[String], references: &[String]) -> Result<(Vec<PlainCheckType>, Vec<String>, Vec<String>), anyhow::Error> {
+    let mut checks = Vec::new();
+    let mut foreign_tables = Vec::new();
+
+    for check in check_definitions {
+        checks.push(new_plain_test(table, check)?);
+        for t in determine_target_tables(check)? {
+            foreign_tables.push(t.to_owned());
+            foreign_tables.dedup();
+        }
+    }
+    Ok((checks, Vec::from(references), foreign_tables))
+}
+
 impl TableMeta {
     fn new(table: &str, check_definitions: &[String], references: &[String]) -> Result<Rc<RefCell<Self>>, anyhow::Error> {
-        let mut checks = Vec::new();
-        let mut foreign_tables = Vec::new();
-
-        for check in check_definitions {
-            checks.push(new_plain_test(table, check)?);
-            for t in determine_target_tables(check)? {
-                foreign_tables.push(t.to_owned());
-                foreign_tables.dedup();
-            }
-        }
+        let (checks, references, foreign_tables) = determine_meta_table(table, check_definitions, references)?;
         Ok(Rc::new(RefCell::new(TableMeta {
             table: table.to_owned(),
             foreign_tables,
-            references: Vec::from(references),
+            references,
             checks,
             dependencies: Vec::new(),
             tested_at_pass: None,
@@ -126,50 +131,6 @@ impl TableMeta {
     }
 }
 
-fn determine_checks_per_table(definitions: &[(String, String)]) -> Result<HashMap<String, Vec<String>>, anyhow::Error> {
-    let mut checks: HashMap<String, Vec<String>> = HashMap::new();
-    for (table, definition) in definitions.iter() {
-        if !checks.contains_key(table) {
-            checks.insert(table.to_owned(), Vec::new());
-        }
-
-        let Some(t_checks) = checks.get_mut(table) else {
-            return Err(anyhow::anyhow!("cannot get references of table"));
-        };
-        t_checks.push(definition.to_owned());
-        t_checks.dedup();
-    }
-    Ok(checks)
-}
-
-fn determine_references_per_table(definitions: &[(String, String)]) -> Result<HashMap<String, Vec<String>>, anyhow::Error> {
-    let mut references: HashMap<String, Vec<String>> = HashMap::new();
-    for (table, definition) in definitions.iter() {
-        let (_, deps) = parse_test_definition(definition)?;
-        if !references.contains_key(table) {
-            references.insert(table.to_owned(), Vec::new());
-        }
-
-        for key in deps.iter() {
-            let mut split = key.split('.');
-            dbg!(&key);
-            let (Some(target_table), Some(_), None) = (split.next(), split.next(), split.next()) else {
-                return Err(anyhow::anyhow!("malformed key {}", key));
-            };
-            if !references.contains_key(target_table) {
-                references.insert(target_table.to_owned(), Vec::new());
-            }
-
-            let Some(refs) = references.get_mut(target_table) else {
-                return Err(anyhow::anyhow!("cannot get references of table"));
-            };
-            refs.push(key.to_owned());
-            refs.dedup();
-        }
-    }
-    Ok(references)
-}
-
 #[derive(Debug)]
 pub struct CheckCollection {
     table_meta: HashMap<String, Rc<RefCell<TableMeta>>>,
@@ -185,15 +146,7 @@ impl CheckCollection {
 
         let checks = determine_checks_per_table(&definitions)?;
         let references = determine_references_per_table(&definitions)?;
-
-        let mut all_tables: HashSet<String> = HashSet::new();
-        for (table, definition) in definitions.iter() {
-            all_tables.insert(table.to_owned());
-            let target_tables = determine_target_tables(definition)?;
-            for target_table in target_tables {
-                all_tables.insert(target_table.to_owned());
-            }
-        }
+        let all_tables = determine_all_checked_tables(&definitions)?;
 
         let mut grouped: HashMap<String, Rc<RefCell<TableMeta>>> = HashMap::new();
         for table in all_tables.iter() {

@@ -177,7 +177,7 @@ pub fn new_plain_test(table: &str, definition: &str) -> Result<PlainCheckType, a
     Ok(item)
 }
 
-pub fn parse_test_definition(definition: &str) -> Result<(String, Vec<String>), anyhow::Error> {
+fn parse_test_definition(definition: &str) -> Result<(String, Vec<String>), anyhow::Error> {
     let (column_name, foreign_keys) = if definition.contains("->") {
         PlainLookupTest::get_column_info(definition)?
     } else {
@@ -199,5 +199,62 @@ pub fn determine_target_tables(definition: &str) -> Result<Vec<String>, anyhow::
     }
     Ok(target_tables)
 }
+
+pub fn determine_checks_per_table(definitions: &[(String, String)]) -> Result<HashMap<String, Vec<String>>, anyhow::Error> {
+    let mut checks: HashMap<String, Vec<String>> = HashMap::new();
+    for (table, definition) in definitions.iter() {
+        if !checks.contains_key(table) {
+            checks.insert(table.to_owned(), Vec::new());
+        }
+
+        let Some(t_checks) = checks.get_mut(table) else {
+            return Err(anyhow::anyhow!("cannot get references of table"));
+        };
+        t_checks.push(definition.to_owned());
+        t_checks.dedup();
+    }
+    Ok(checks)
+}
+
+pub fn determine_references_per_table(definitions: &[(String, String)]) -> Result<HashMap<String, Vec<String>>, anyhow::Error> {
+    let mut references: HashMap<String, Vec<String>> = HashMap::new();
+    for (table, definition) in definitions.iter() {
+        let (_, deps) = parse_test_definition(definition)?;
+        if !references.contains_key(table) {
+            references.insert(table.to_owned(), Vec::new());
+        }
+
+        for key in deps.iter() {
+            let mut split = key.split('.');
+            dbg!(&key);
+            let (Some(target_table), Some(_), None) = (split.next(), split.next(), split.next()) else {
+                return Err(anyhow::anyhow!("malformed key {}", key));
+            };
+            if !references.contains_key(target_table) {
+                references.insert(target_table.to_owned(), Vec::new());
+            }
+
+            let Some(refs) = references.get_mut(target_table) else {
+                return Err(anyhow::anyhow!("cannot get references of table"));
+            };
+            refs.push(key.to_owned());
+            refs.dedup();
+        }
+    }
+    Ok(references)
+}
+
+pub fn determine_all_checked_tables(definitions: &[(String, String)]) -> Result<HashSet<String>, anyhow::Error> {
+    let mut all_tables: HashSet<String> = HashSet::new();
+    for (table, definition) in definitions.iter() {
+        all_tables.insert(table.to_owned());
+        let target_tables = determine_target_tables(definition)?;
+        for target_table in target_tables {
+            all_tables.insert(target_table.to_owned());
+        }
+    }
+    Ok(all_tables)
+}
+
 
 pub type PlainCheckType = Box<dyn PlainColumnCheck>;
