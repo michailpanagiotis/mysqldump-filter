@@ -11,7 +11,8 @@ pub trait PlainColumnCheck {
     fn test(
         &self,
         column_name: &str,
-        value: &Value,
+        value: &str,
+        data_type: &sqlparser::ast::DataType,
         lookup_table: &HashMap<String, HashSet<String>>,
     ) -> Result<bool, anyhow::Error>;
 
@@ -52,7 +53,8 @@ impl PlainCelTest {
             .timestamp()
     }
 
-    fn build_context(&self, column_name: &str, value: &Value) -> Result<Context, anyhow::Error> {
+    fn build_context(&self, column_name: &str, str_value: &str, data_type: &sqlparser::ast::DataType) -> Result<Context, anyhow::Error> {
+        let value: Value = Value::parse(str_value, data_type);
         let mut context = Context::default();
         context.add_function("timestamp", |d: Arc<String>| {
             PlainCelTest::parse_date(&d)
@@ -86,10 +88,11 @@ impl PlainColumnCheck for PlainCelTest {
     fn test(
         &self,
         column_name: &str,
-        value: &Value,
+        value: &str,
+        data_type: &sqlparser::ast::DataType,
         _lookup_table: &HashMap<String, HashSet<String>>,
     ) -> Result<bool, anyhow::Error> {
-        let context = self.build_context(column_name, value)?;
+        let context = self.build_context(column_name, value, data_type)?;
         match self.program.execute(&context)? {
             cel_interpreter::objects::Value::Bool(v) => {
                 // println!("testing {}.{} {} -> {}", self.table, self.column, &other_value, &v);
@@ -148,7 +151,8 @@ impl PlainColumnCheck for PlainLookupTest {
     fn test(
         &self,
         _column_name: &str,
-        value: &Value,
+        value: &str,
+        _data_type: &sqlparser::ast::DataType,
         lookup_table: &HashMap<String, HashSet<String>>,
     ) -> Result<bool, anyhow::Error> {
         let Some(set) = lookup_table.get(&self.target_column_key) else { return Ok(true) };

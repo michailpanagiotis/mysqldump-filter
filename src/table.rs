@@ -5,7 +5,7 @@ use std::path::Path;
 use std::rc::{Rc, Weak};
 
 use crate::checks::{get_checks_per_table, PlainCheckType, TableChecks};
-use crate::scanner::{Value, process_table_inserts};
+use crate::scanner::process_table_inserts;
 
 fn process_inserts<'a, C: Iterator<Item=&'a PlainCheckType>>(
     working_file_path: &Path,
@@ -30,8 +30,7 @@ fn process_inserts<'a, C: Iterator<Item=&'a PlainCheckType>>(
         for check in checks.iter() {
             let col_name = check.get_column_name();
             let (str_value, data_type): &(String, sqlparser::ast::DataType) = &value_per_field[col_name];
-            let value: Value = Value::parse(str_value, data_type);
-            if !check.test(col_name, &value, lookup_table)? {
+            if !check.test(col_name, str_value, data_type, lookup_table)? {
                 return Ok(None);
             }
         }
