@@ -11,7 +11,7 @@ use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use crate::scanner::sql_parser::{TableColumnPositions, TableDataTypes, get_column_positions, get_data_types, insert_parts, values};
+use crate::scanner::sql_parser::{TableColumnPositions, TableDataTypes, get_column_positions, get_data_types, insert_parts, is_create_table, is_insert, values};
 use crate::scanner::writers::Writers;
 
 type IteratorItem = SqlStatementResult;
@@ -34,14 +34,6 @@ lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
 }
 
-fn is_insert(statement: &str) -> bool {
-    statement.starts_with("INSERT")
-}
-
-fn is_create_table(statement: &str) -> bool {
-    statement.starts_with("CREATE TABLE")
-}
-
 #[derive(Clone)]
 #[derive(Debug)]
 pub struct InsertStatement {
@@ -55,7 +47,7 @@ pub struct InsertStatement {
 
 impl InsertStatement {
     fn new(statement: &str) -> Result<Self, anyhow::Error> {
-        if !statement.starts_with("INSERT") {
+        if !is_insert(statement) {
             return Err(anyhow::anyhow!("not an insert statement"));
         }
         let (table, _, values_part) = insert_parts(statement)?;

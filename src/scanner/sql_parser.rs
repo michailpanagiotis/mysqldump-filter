@@ -71,6 +71,14 @@ pub fn insert_parts(insert_statement: &str) -> Result<(String, String, String), 
     }
 }
 
+pub fn is_insert(statement: &str) -> bool {
+    statement.starts_with("INSERT")
+}
+
+pub fn is_create_table(statement: &str) -> bool {
+    statement.starts_with("CREATE TABLE")
+}
+
 pub fn get_data_types(create_statement: &str) -> Result<Option<(String, TableDataTypes)>, anyhow::Error> {
     let dialect = MySqlDialect {};
     let ast = SqlParser::parse_sql(&dialect, create_statement)?;
