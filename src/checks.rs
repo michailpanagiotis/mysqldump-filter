@@ -13,7 +13,7 @@ pub trait PlainColumnCheck {
         column_name: &str,
         value: &Value,
         lookup_table: &HashMap<String, HashSet<String>>,
-    ) -> bool;
+    ) -> Result<bool, anyhow::Error>;
 
     fn get_table_name(&self) -> &str;
 
@@ -52,7 +52,7 @@ impl PlainCelTest {
             .timestamp()
     }
 
-    fn build_context(&self, column_name: &str, value: &Value) -> Context {
+    fn build_context(&self, column_name: &str, value: &Value) -> Result<Context, anyhow::Error> {
         let mut context = Context::default();
         context.add_function("timestamp", |d: Arc<String>| {
             PlainCelTest::parse_date(&d)
@@ -65,7 +65,7 @@ impl PlainCelTest {
             Value::Null { .. } => context.add_variable(column_name, false),
         };
 
-        context
+        Ok(context)
     }
 }
 
@@ -88,12 +88,12 @@ impl PlainColumnCheck for PlainCelTest {
         column_name: &str,
         value: &Value,
         _lookup_table: &HashMap<String, HashSet<String>>,
-    ) -> bool {
-        let context = self.build_context(column_name, value);
-        match self.program.execute(&context).unwrap() {
+    ) -> Result<bool, anyhow::Error> {
+        let context = self.build_context(column_name, value)?;
+        match self.program.execute(&context)? {
             cel_interpreter::objects::Value::Bool(v) => {
                 // println!("testing {}.{} {} -> {}", self.table, self.column, &other_value, &v);
-                v
+                Ok(v)
             }
             _ => panic!("filter does not return a boolean"),
         }
@@ -150,10 +150,10 @@ impl PlainColumnCheck for PlainLookupTest {
         _column_name: &str,
         value: &Value,
         lookup_table: &HashMap<String, HashSet<String>>,
-    ) -> bool {
-        let Some(set) = lookup_table.get(&self.target_column_key) else { return true };
+    ) -> Result<bool, anyhow::Error> {
+        let Some(set) = lookup_table.get(&self.target_column_key) else { return Ok(true) };
         let key: &str = value.into();
-        set.contains(key)
+        Ok(set.contains(key))
     }
 
     fn get_definition(&self) -> &str {

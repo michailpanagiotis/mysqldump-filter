@@ -26,16 +26,16 @@ fn process_inserts<'a, C: Iterator<Item=&'a PlainCheckType>>(
 
     let captured = process_table_inserts(working_file_path, table, tracked_columns, |statement| {
         let value_per_field = statement.get_values()?;
-        if checks.iter().all(|t| {
-            let col_name = t.get_column_name();
-            let (str_value, data_type): &(String, sqlparser::ast::DataType) = &value_per_field[col_name];
-            let value: Value = Value::parse(&str_value, &data_type);
-            t.test(col_name, &value, lookup_table)
-        }) {
-            return Ok(Some(()));
-        }
 
-        Ok(None)
+        for check in checks.iter() {
+            let col_name = check.get_column_name();
+            let (str_value, data_type): &(String, sqlparser::ast::DataType) = &value_per_field[col_name];
+            let value: Value = Value::parse(str_value, data_type);
+            if !check.test(col_name, &value, lookup_table)? {
+                return Ok(None);
+            }
+        }
+        Ok(Some(()))
     })?;
     Ok(captured)
 }
