@@ -4,7 +4,7 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::rc::{Rc, Weak};
 
-use crate::checks::{PlainCheckType, TableChecks, determine_all_checked_tables, determine_checks_per_table, determine_references_per_table, determine_target_tables, new_plain_test};
+use crate::checks::{PlainCheckType, TableChecks, determine_all_checked_tables, determine_checks_per_table, determine_references_per_table};
 use crate::scanner::process_table_inserts;
 
 fn process_inserts<'a, C: Iterator<Item=&'a PlainCheckType>>(
@@ -52,27 +52,10 @@ pub struct TableMeta {
     tested_at_pass: Option<usize>,
 }
 
-fn determine_meta_table(table: &str, check_definitions: &[String]) -> Result<(Vec<PlainCheckType>, Vec<String>), anyhow::Error> {
-    let mut checks = Vec::new();
-    let mut foreign_tables = Vec::new();
-
-    for check in check_definitions {
-        checks.push(new_plain_test(table, check)?);
-        for t in determine_target_tables(check)? {
-            foreign_tables.push(t.to_owned());
-            foreign_tables.dedup();
-        }
-    }
-    Ok((checks, foreign_tables))
-}
-
 impl TryFrom<TableChecks> for TableMetaCell {
     type Error = anyhow::Error;
     fn try_from(table_checks: TableChecks) -> Result<Self, Self::Error> {
-        let mut checks = Vec::new();
-        for check in table_checks.check_definitions {
-            checks.push(new_plain_test(&table_checks.table, &check)?);
-        }
+        let checks = table_checks.get_checks()?;
         Ok(Rc::new(RefCell::new(TableMeta {
             table: table_checks.table,
             foreign_tables: table_checks.foreign_tables,

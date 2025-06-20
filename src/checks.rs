@@ -280,6 +280,14 @@ impl TableChecks {
             references: Vec::from(references),
         })
     }
+
+    pub fn get_checks(&self) -> Result<Vec<PlainCheckType>, anyhow::Error>{
+        let mut checks = Vec::new();
+        for check in &self.check_definitions {
+            checks.push(new_plain_test(&self.table, check)?);
+        }
+        Ok(checks)
+    }
 }
 
 pub type PlainCheckType = Box<dyn PlainColumnCheck>;
