@@ -3,7 +3,49 @@ use chrono::NaiveDateTime;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::scanner::Value;
+enum Value {
+    Int(i64),
+    Date(i64),
+    String(String),
+    Null
+}
+
+impl Value {
+    fn parse_int(s: &str) -> i64 {
+        s.parse().unwrap_or_else(|_| panic!("cannot parse int {s}"))
+    }
+
+    fn parse_string(s: &str) -> String {
+        s.replace("'", "")
+    }
+
+    fn parse_date(s: &str) -> i64 {
+        let date = Value::parse_string(s);
+        let to_parse = if date.len() == 10 { date.to_owned() + " 00:00:00" } else { date.to_owned() };
+        if to_parse.starts_with("0000-00-00") {
+            return NaiveDateTime::MIN.and_utc().timestamp();
+        }
+        NaiveDateTime::parse_from_str(&to_parse, "%Y-%m-%d %H:%M:%S")
+            .unwrap_or_else(|_| panic!("cannot parse timestamp {s}"))
+            .and_utc()
+            .timestamp()
+    }
+
+    fn parse(value: &str, data_type: &sqlparser::ast::DataType) -> Self {
+        if value == "NULL" {
+            return Value::Null;
+        }
+        match data_type {
+            sqlparser::ast::DataType::TinyInt(_) | sqlparser::ast::DataType::Int(_) => {
+                Value::Int(Value::parse_int(value))
+            },
+            sqlparser::ast::DataType::Datetime(_) | sqlparser::ast::DataType::Date => {
+                Value::Date(Value::parse_date(value))
+            },
+            _ => Value::String(Value::parse_string(value))
+        }
+    }
+}
 
 pub trait PlainColumnCheck {
     fn new(definition: &str, table: &str) -> Result<impl PlainColumnCheck + 'static, anyhow::Error> where Self: Sized;
@@ -60,12 +102,13 @@ impl PlainCelTest {
             PlainCelTest::parse_date(&d)
         });
 
+        let e = anyhow::anyhow!("Cannot add variable to context");
         match value {
-            Value::Int { parsed, .. } => context.add_variable(column_name, parsed),
-            Value::Date { parsed, .. } => context.add_variable(column_name, parsed),
-            Value::String { parsed, .. } => context.add_variable(column_name, parsed),
-            Value::Null { .. } => context.add_variable(column_name, false),
-        };
+            Value::Int(parsed) => context.add_variable(column_name, parsed),
+            Value::Date(parsed) => context.add_variable(column_name, parsed),
+            Value::String(parsed) => context.add_variable(column_name, parsed),
+            Value::Null => context.add_variable(column_name, false),
+        }.map_err(|_| e)?;
 
         Ok(context)
     }
@@ -156,8 +199,7 @@ impl PlainColumnCheck for PlainLookupTest {
         lookup_table: &HashMap<String, HashSet<String>>,
     ) -> Result<bool, anyhow::Error> {
         let Some(set) = lookup_table.get(&self.target_column_key) else { return Ok(true) };
-        let key: &str = value.into();
-        Ok(set.contains(key))
+        Ok(set.contains(value))
     }
 
     fn get_definition(&self) -> &str {

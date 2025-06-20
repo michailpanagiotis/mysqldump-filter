@@ -31,7 +31,6 @@ type SqlStatementResult = Result<SqlStatement, anyhow::Error>;
 type OptionalStatementResult = Result<Option<()>, anyhow::Error>;
 type EmptyResult = Result<(), anyhow::Error>;
 
-type Values = HashMap<String, Value>;
 type ValueTuple = (String, sqlparser::ast::DataType);
 type ValueTuples = HashMap<String, ValueTuple>;
 
