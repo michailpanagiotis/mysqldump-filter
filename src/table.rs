@@ -1,11 +1,9 @@
-use itertools::Itertools;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::path::Path;
 use std::rc::{Rc, Weak};
 
-use crate::column::ColumnMeta;
 use crate::checks::{PlainCheckType, determine_target_tables, new_plain_test, parse_test_definition};
 use crate::scanner::process_table_inserts;
 
@@ -60,21 +58,12 @@ fn process_inserts<'a, C: Iterator<Item=&'a PlainCheckType>>(
     Ok(captured)
 }
 
-type ColumnType = ColumnMeta;
-pub type TrackedColumnType = ColumnMeta;
 type DependencyType = Weak<RefCell<dyn Dependency>>;
-
-impl From<&ColumnMeta> for ColumnType {
-    fn from(c: &ColumnMeta) -> Self {
-        c.to_owned()
-    }
-}
 
 #[derive(Debug)]
 #[derive(Default)]
 pub struct TableMeta {
     pub table: String,
-    // pub columns: HashMap<String, ColumnMeta>,
     foreign_tables: Vec<String>,
     references: Vec<String>,
     checks: Vec<PlainCheckType>,
@@ -93,15 +82,6 @@ impl Dependency for TableMeta {
 
     fn has_been_fulfilled(&self) -> bool {
         self.tested_at_pass.is_some()
-    }
-}
-
-impl Extend<ColumnMeta> for Rc<RefCell<TableMeta>> {
-    fn extend<T: IntoIterator<Item=ColumnMeta>>(&mut self, iter: T) {
-        let mut borrowed_self = self.borrow_mut();
-        for elem in iter {
-            borrowed_self.add_column_meta(elem);
-        }
     }
 }
 
@@ -125,26 +105,6 @@ impl TableMeta {
             dependencies: Vec::new(),
             tested_at_pass: None,
         })))
-    }
-
-    fn set_checks_and_references(&mut self, checks: &[String], references: &[String]) -> Result<(), anyhow::Error> {
-        self.references = Vec::from(references);
-        for check in checks {
-            self.checks.push(new_plain_test(&self.table, check)?);
-            for t in determine_target_tables(check)? {
-                self.foreign_tables.push(t.to_owned());
-                self.foreign_tables.dedup();
-            }
-        }
-        Ok(())
-    }
-
-    fn add_column_meta(&mut self, elem: ColumnMeta) {
-        if self.table.is_empty() {
-            self.table = elem.get_table_name().to_owned();
-        } else if self.table != elem.get_table_name() {
-            panic!("mismatched table names");
-        }
     }
 
     pub fn get_foreign_tables(&self) -> Vec<String> {
@@ -253,30 +213,9 @@ impl CheckCollection {
             }
         }
 
-        let mut tracked_cols: Vec<TrackedColumnType> = Vec::new();
-
-        for (table, definition) in definitions.iter() {
-            let (column_name, deps) = parse_test_definition(definition)?;
-            let mut column_meta = ColumnMeta::new(table, &column_name, &deps)?;
-            column_meta.add_check(definition);
-            tracked_cols.push(column_meta);
-
-            // track target columns
-            for key in deps.iter() {
-                tracked_cols.push(ColumnMeta::from_foreign_key(key)?);
-            }
-        }
-
-        let grouped: HashMap<String, Rc<RefCell<TableMeta>>> = tracked_cols
-            .into_iter()
-            .into_grouping_map_by(|t| t.get_table_name().to_owned())
-            .collect();
-
-
-        // set checks
-        for table_meta in grouped.values() {
-            let table = table_meta.borrow().table.to_owned();
-            table_meta.borrow_mut().set_checks_and_references(&checks[&table], &references[&table])?;
+        let mut grouped: HashMap<String, Rc<RefCell<TableMeta>>> = HashMap::new();
+        for table in all_tables.iter() {
+            grouped.insert(table.to_owned(), TableMeta::new(table, &checks[table], &references[table])?);
         }
 
         // set dependencies

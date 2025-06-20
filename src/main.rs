@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use tempdir::TempDir;
 
 mod checks;
-mod column;
 mod table;
 mod scanner;
 
@@ -72,7 +71,7 @@ fn main() -> Result<(), anyhow::Error> {
     // });
 
     let mut collection = CheckCollection::new(config.filters.iter().chain(&config.cascades))?;
-    // collection.process(working_file_path.as_path())?;
+    collection.process(working_file_path.as_path())?;
     // gather(&working_file_path, &output_file)?;
     //
     // dbg!(collection);
