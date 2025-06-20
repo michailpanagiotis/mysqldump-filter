@@ -91,15 +91,6 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn as_string(&self) -> &str {
-        match self {
-            Value::Int{ string, .. } => string.as_str(),
-            Value::Date{ string, .. } => string.as_str(),
-            Value::String{ string, .. } => string.as_str(),
-            Value::Null{ string, .. } => string.as_str(),
-        }
-    }
-
     fn parse_int(s: &str) -> i64 {
         s.parse().unwrap_or_else(|_| panic!("cannot parse int {s}"))
     }
@@ -132,6 +123,17 @@ impl Value {
                 Value::Date{ string: value.to_string(), parsed: Value::parse_date(value) }
             },
             _ => Value::String{ string: value.to_string(), parsed: Value::parse_string(value) }
+        }
+    }
+}
+
+impl<'a> From<&'a Value> for &'a str {
+    fn from(value: &'a Value) -> Self {
+        match value {
+            Value::Int{ string, .. } => string.as_str(),
+            Value::Date{ string, .. } => string.as_str(),
+            Value::String{ string, .. } => string.as_str(),
+            Value::Null{ string, .. } => string.as_str(),
         }
     }
 }
@@ -298,7 +300,8 @@ impl Tracker {
             for (key, column) in &self.tracked_column_per_key {
                 let value = &value_per_field[column];
                 if let Some(set) = self.captured_values.get_mut(key) {
-                    set.insert(value.as_string().to_owned());
+                    let key: &str = value.into();
+                    set.insert(key.to_string());
                 }
             }
         }

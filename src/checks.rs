@@ -152,7 +152,8 @@ impl PlainColumnCheck for PlainLookupTest {
         lookup_table: &HashMap<String, HashSet<String>>,
     ) -> bool {
         let Some(set) = lookup_table.get(&self.target_column_key) else { return true };
-        set.contains(value.as_string())
+        let key: &str = value.into();
+        set.contains(key)
     }
 
     fn get_definition(&self) -> &str {
