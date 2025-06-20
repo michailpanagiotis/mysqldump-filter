@@ -1,4 +1,5 @@
-pub mod sql_parser;
+mod sql_parser;
+mod writers;
 
 use chrono::NaiveDateTime;
 use lazy_static::lazy_static;
@@ -15,7 +16,7 @@ use sqlparser::dialect::MySqlDialect;
 use sqlparser::parser::Parser as SqlParser;
 
 use crate::scanner::sql_parser::{insert_parts, values};
-use crate::writers::Writers;
+use crate::scanner::writers::Writers;
 
 type TableDataTypes = Rc<HashMap<String, sqlparser::ast::DataType>>;
 type DataTypes = HashMap<String, TableDataTypes>;

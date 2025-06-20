@@ -8,7 +8,6 @@ mod checks;
 mod column;
 mod table;
 mod scanner;
-mod writers;
 
 use table::CheckCollection;
 use scanner::{explode_to_files, gather};
