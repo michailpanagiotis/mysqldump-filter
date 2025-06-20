@@ -75,18 +75,22 @@ fn is_create_table(statement: &str) -> bool {
 pub enum Value {
     Int {
         string: String,
-        parsed: i64
+        parsed: i64,
+        data_type: sqlparser::ast::DataType,
     },
     Date {
         string: String,
-        parsed: i64
+        parsed: i64,
+        data_type: sqlparser::ast::DataType,
     },
     String {
         string: String,
         parsed: String,
+        data_type: sqlparser::ast::DataType,
     },
     Null {
         string: String,
+        data_type: sqlparser::ast::DataType,
     }
 }
 
@@ -113,16 +117,16 @@ impl Value {
 
     fn parse(value: &str, data_type: &sqlparser::ast::DataType) -> Self {
         if value == "NULL" {
-            return Value::Null { string: value.to_string() };
+            return Value::Null { string: value.to_string(), data_type: data_type.clone() };
         }
         match data_type {
             sqlparser::ast::DataType::TinyInt(_) | sqlparser::ast::DataType::Int(_) => {
-                Value::Int{ string: value.to_string(), parsed: Value::parse_int(value) }
+                Value::Int{ string: value.to_string(), parsed: Value::parse_int(value), data_type: data_type.clone() }
             },
             sqlparser::ast::DataType::Datetime(_) | sqlparser::ast::DataType::Date => {
-                Value::Date{ string: value.to_string(), parsed: Value::parse_date(value) }
+                Value::Date{ string: value.to_string(), parsed: Value::parse_date(value), data_type: data_type.clone() }
             },
-            _ => Value::String{ string: value.to_string(), parsed: Value::parse_string(value) }
+            _ => Value::String{ string: value.to_string(), parsed: Value::parse_string(value), data_type: data_type.clone() }
         }
     }
 }
