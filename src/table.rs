@@ -4,22 +4,20 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::rc::{Rc, Weak};
 
-use crate::checks::{get_checks_per_table, get_table_of_checks, test_checks, PlainCheckType, TableChecks};
+use crate::checks::{get_checks_per_table, test_checks, PlainCheckType, TableChecks};
 use crate::scanner::process_table_inserts;
 
-fn process_inserts<'a, C: Iterator<Item=&'a PlainCheckType>>(
+fn process_inserts(
     working_file_path: &Path,
-    checks: C,
+    table: &str,
+    checks: &[PlainCheckType],
     tracked_columns: &[&str],
     lookup_table: &HashMap<String, HashSet<String>>,
 ) -> Result<HashMap<String, HashSet<String>>, anyhow::Error> {
-    let checks: Vec<&PlainCheckType> = checks.collect();
-    let table = get_table_of_checks(&checks)?;
-
     let captured = process_table_inserts(working_file_path, table, tracked_columns, |statement| {
         let value_per_field = statement.get_values()?;
 
-        match test_checks(&checks, value_per_field, lookup_table)? {
+        match test_checks(checks, value_per_field, lookup_table)? {
             false => Ok(None),
             true => Ok(Some(()))
         }
@@ -66,10 +64,6 @@ impl TableMeta {
         self.dependencies.push(weak);
     }
 
-    fn get_checks(&self) -> impl Iterator<Item=&PlainCheckType> {
-        self.checks.iter()
-    }
-
     fn get_tracked_columns(&self) -> Vec<&str> {
         self.references.iter().map(|x| x.as_str()).collect()
     }
@@ -102,7 +96,7 @@ impl TableMeta {
             return Ok(None);
         }
 
-        let captured = process_inserts(working_file_path, self.get_checks(), &self.get_tracked_columns(), lookup_table)?;
+        let captured = process_inserts(working_file_path, &self.table, &self.checks, &self.get_tracked_columns(), lookup_table)?;
 
         self.fulfill_dependency(current_pass);
 
