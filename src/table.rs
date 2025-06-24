@@ -26,7 +26,6 @@ fn process_inserts(
 }
 
 type TableMetaCell = Rc<RefCell<TableMeta>>;
-type WeakDependencyType = Weak<RefCell<TableMeta>>;
 type DependencyCell = Rc<RefCell<Dependency>>;
 type WeakDependencyRef = Weak<RefCell<Dependency>>;
 
@@ -72,8 +71,6 @@ pub struct TableMeta {
     foreign_tables: Vec<String>,
     references: Vec<String>,
     checks: Vec<PlainCheckType>,
-    dependencies: Vec<WeakDependencyType>,
-    tested_at_pass: Option<usize>,
     dependency: DependencyCell,
 }
 
@@ -86,8 +83,6 @@ impl TryFrom<&TableChecks> for TableMetaCell {
             foreign_tables: table_checks.foreign_tables.clone(),
             references: table_checks.references.clone(),
             checks,
-            dependencies: Vec::new(),
-            tested_at_pass: None,
             dependency: Dependency::new(),
         })))
     }
@@ -98,30 +93,12 @@ impl TableMeta {
         self.foreign_tables.clone()
     }
 
-    fn add_dependency(&mut self, target: &Rc<RefCell<TableMeta>>) {
-        let weak = Rc::downgrade(target);
-        self.dependencies.push(weak);
-    }
-
     fn get_tracked_columns(&self) -> Vec<&str> {
         self.references.iter().map(|x| x.as_str()).collect()
     }
 
-    fn has_been_fulfilled(&self) -> bool {
-        self.tested_at_pass.is_some()
-    }
-
-    fn has_fulfilled_dependencies(&self) -> bool {
-        self.dependencies.iter().all(|d| {
-            d.upgrade().unwrap().borrow().has_been_fulfilled()
-        })
-    }
-
-    fn fulfill_dependency(&mut self, depth: &usize) {
-        if !self.has_been_fulfilled() {
-            self.tested_at_pass = Some(depth.to_owned());
-        }
-        assert!(self.has_been_fulfilled());
+    fn add_dependency(&mut self, target: &Rc<RefCell<TableMeta>>) {
+        self.dependency.borrow_mut().add_dependency(&target.borrow().dependency);
     }
 
     pub fn process_data_file(
@@ -130,14 +107,14 @@ impl TableMeta {
         lookup_table: &HashMap<String, HashSet<String>>,
         working_file_path: &Path,
     ) -> Result<Option<HashMap<String, HashSet<String>>>, anyhow::Error> {
-        if !self.has_fulfilled_dependencies() {
+        if !self.dependency.borrow().has_fulfilled_dependencies() {
             println!("Skipping table {} since it still has dependencies", &self.table);
             return Ok(None);
         }
 
         let captured = process_inserts(working_file_path, &self.table, &self.checks, &self.get_tracked_columns(), lookup_table)?;
 
-        self.fulfill_dependency(current_pass);
+        self.dependency.borrow_mut().fulfill_dependency(current_pass);
 
         Ok(Some(captured))
     }
@@ -179,7 +156,7 @@ impl CheckCollection {
     }
 
     fn get_pending_tables(&self) -> Vec<String>{
-        self.table_meta.values().filter(|v| !v.borrow().has_been_fulfilled()).map(|v| v.borrow().table.to_owned()).collect()
+        self.table_meta.values().filter(|v| !v.borrow().dependency.borrow().has_been_fulfilled()).map(|v| v.borrow().table.to_owned()).collect()
     }
 
     pub fn process(
