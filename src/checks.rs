@@ -362,4 +362,19 @@ pub fn get_table_of_checks<'a>(checks: &'a[&PlainCheckType]) -> Result<&'a str, 
     Ok(table)
 }
 
+pub fn test_checks(
+    checks: &[&PlainCheckType],
+    value_per_field: &HashMap<String, (String, sqlparser::ast::DataType)>,
+    lookup_table: &HashMap<String, HashSet<String>>,
+) -> Result<bool, anyhow::Error> {
+    for check in checks.iter() {
+        let col_name = check.get_column_name();
+        let (str_value, data_type): &(String, sqlparser::ast::DataType) = &value_per_field[col_name];
+        if !check.test(col_name, str_value, data_type, lookup_table)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 pub type PlainCheckType = Box<dyn PlainColumnCheck>;

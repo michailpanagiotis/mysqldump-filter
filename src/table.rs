@@ -4,7 +4,7 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::rc::{Rc, Weak};
 
-use crate::checks::{get_checks_per_table, get_table_of_checks, PlainCheckType, TableChecks};
+use crate::checks::{get_checks_per_table, get_table_of_checks, test_checks, PlainCheckType, TableChecks};
 use crate::scanner::process_table_inserts;
 
 fn process_inserts<'a, C: Iterator<Item=&'a PlainCheckType>>(
@@ -19,14 +19,10 @@ fn process_inserts<'a, C: Iterator<Item=&'a PlainCheckType>>(
     let captured = process_table_inserts(working_file_path, table, tracked_columns, |statement| {
         let value_per_field = statement.get_values()?;
 
-        for check in checks.iter() {
-            let col_name = check.get_column_name();
-            let (str_value, data_type): &(String, sqlparser::ast::DataType) = &value_per_field[col_name];
-            if !check.test(col_name, str_value, data_type, lookup_table)? {
-                return Ok(None);
-            }
+        match test_checks(&checks, value_per_field, lookup_table)? {
+            false => Ok(None),
+            true => Ok(Some(()))
         }
-        Ok(Some(()))
     })?;
     Ok(captured)
 }
