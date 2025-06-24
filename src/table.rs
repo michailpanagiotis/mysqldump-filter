@@ -4,7 +4,7 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::rc::{Rc, Weak};
 
-use crate::checks::{get_checks_per_table, PlainCheckType, TableChecks};
+use crate::checks::{get_checks_per_table, get_table_of_checks, PlainCheckType, TableChecks};
 use crate::scanner::process_table_inserts;
 
 fn process_inserts<'a, C: Iterator<Item=&'a PlainCheckType>>(
@@ -14,15 +14,7 @@ fn process_inserts<'a, C: Iterator<Item=&'a PlainCheckType>>(
     lookup_table: &HashMap<String, HashSet<String>>,
 ) -> Result<HashMap<String, HashSet<String>>, anyhow::Error> {
     let checks: Vec<&PlainCheckType> = checks.collect();
-    if checks.is_empty() {
-        return Err(anyhow::anyhow!("no checks"));
-    }
-    let mut tables: Vec<&str> = checks.iter().map(|c| c.get_table_name()).collect();
-    tables.dedup();
-    if tables.len() != 1 {
-        return Err(anyhow::anyhow!("checks for multiple tables"));
-    }
-    let table = tables[0];
+    let table = get_table_of_checks(&checks)?;
 
     let captured = process_table_inserts(working_file_path, table, tracked_columns, |statement| {
         let value_per_field = statement.get_values()?;

@@ -349,4 +349,17 @@ pub fn get_checks_per_table(definitions: &[(String, String)]) -> Result<HashMap<
     Ok(grouped)
 }
 
+pub fn get_table_of_checks<'a>(checks: &'a[&PlainCheckType]) -> Result<&'a str, anyhow::Error> {
+    if checks.is_empty() {
+        return Err(anyhow::anyhow!("no checks"));
+    }
+    let mut tables: Vec<&str> = checks.iter().map(|c| c.get_table_name()).collect();
+    tables.dedup();
+    if tables.len() != 1 {
+        return Err(anyhow::anyhow!("checks for multiple tables"));
+    }
+    let table = tables[0];
+    Ok(table)
+}
+
 pub type PlainCheckType = Box<dyn PlainColumnCheck>;
