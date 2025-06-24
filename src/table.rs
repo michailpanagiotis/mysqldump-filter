@@ -27,6 +27,43 @@ fn process_inserts(
 
 type TableMetaCell = Rc<RefCell<TableMeta>>;
 type WeakDependencyType = Weak<RefCell<TableMeta>>;
+type DependencyCell = Rc<RefCell<Dependency>>;
+type WeakDependencyRef = Weak<RefCell<Dependency>>;
+
+#[derive(Debug)]
+#[derive(Default)]
+struct Dependency {
+    dependencies: Vec<WeakDependencyRef>,
+    tested_at_pass: Option<usize>,
+}
+
+impl Dependency {
+    fn new() -> Rc<RefCell<Self>> {
+        Rc::new(RefCell::new(Dependency { dependencies: Vec::new(), tested_at_pass: None }))
+    }
+
+    fn add_dependency(&mut self, target: &Rc<RefCell<Dependency>>) {
+        let weak = Rc::downgrade(target);
+        self.dependencies.push(weak);
+    }
+
+    fn has_been_fulfilled(&self) -> bool {
+        self.tested_at_pass.is_some()
+    }
+
+    fn has_fulfilled_dependencies(&self) -> bool {
+        self.dependencies.iter().all(|d| {
+            d.upgrade().unwrap().borrow().has_been_fulfilled()
+        })
+    }
+
+    fn fulfill_dependency(&mut self, depth: &usize) {
+        if !self.has_been_fulfilled() {
+            self.tested_at_pass = Some(depth.to_owned());
+        }
+        assert!(self.has_been_fulfilled());
+    }
+}
 
 #[derive(Debug)]
 #[derive(Default)]
@@ -37,6 +74,7 @@ pub struct TableMeta {
     checks: Vec<PlainCheckType>,
     dependencies: Vec<WeakDependencyType>,
     tested_at_pass: Option<usize>,
+    dependency: DependencyCell,
 }
 
 impl TryFrom<&TableChecks> for TableMetaCell {
@@ -50,6 +88,7 @@ impl TryFrom<&TableChecks> for TableMetaCell {
             checks,
             dependencies: Vec::new(),
             tested_at_pass: None,
+            dependency: Dependency::new(),
         })))
     }
 }
