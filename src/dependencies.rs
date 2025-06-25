@@ -1,12 +1,10 @@
-use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fmt::Debug;
-use std::path::Path;
-use std::rc::{Rc, Weak};
+use crate::checks::determine_target_tables;
 
 
 #[derive(Debug)]
-pub struct DependencyNode {
+struct DependencyNode {
     key: String,
     dependents: Vec<DependencyNode>,
 }
@@ -19,7 +17,7 @@ impl DependencyNode {
         }
     }
 
-    pub fn new() -> Self {
+    fn new() -> Self {
         DependencyNode {
             key: String::from("root"),
             dependents: Vec::new(),
@@ -36,7 +34,7 @@ impl DependencyNode {
         false
     }
 
-    pub fn add_child(&mut self, key: &str) {
+    fn add_child(&mut self, key: &str) {
         if !self.has_child(key) {
             self.dependents.push(DependencyNode::new_node(key));
         }
@@ -69,7 +67,7 @@ impl DependencyNode {
         None
     }
 
-    pub fn move_under(&mut self, parent_key: &str, child_key: &str) -> Result<(), anyhow::Error> {
+    fn move_under(&mut self, parent_key: &str, child_key: &str) -> Result<(), anyhow::Error> {
         println!("Moving {child_key} under {parent_key}");
         let child = self.pop_child(child_key).unwrap_or(DependencyNode::new_node(child_key));
         if !self.has_child(parent_key) {
@@ -79,7 +77,7 @@ impl DependencyNode {
         Ok(())
     }
 
-    pub fn group_by_depth(&self) -> Vec<HashSet<String>> {
+    fn group_by_depth(&self) -> Vec<HashSet<String>> {
         let mut depths: Vec<HashSet<String>> = Vec::new();
         let mut dfs: Vec<(&DependencyNode, usize)> = Vec::new();
         for dep in self.dependents.iter() { dfs.push((dep, 0)) };
@@ -102,4 +100,18 @@ impl DependencyNode {
 
         depths
     }
+}
+
+pub fn get_dependency_order(definitions: &[(String, String)]) -> Result<Vec<HashSet<String>>, anyhow::Error> {
+    let mut root = DependencyNode::new();
+    for (table, definition) in definitions.iter() {
+        root.add_child(table);
+        let target_tables = determine_target_tables(definition)?;
+        for target_table in target_tables {
+            root.move_under(&target_table, table)?;
+        }
+    }
+    dbg!(&root);
+    dbg!(&root.group_by_depth());
+    Ok(root.group_by_depth())
 }

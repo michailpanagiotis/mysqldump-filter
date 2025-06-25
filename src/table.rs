@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::checks::{determine_target_tables, get_checks_per_table, test_checks, PlainCheckType, TableChecks};
 use crate::scanner::process_table_inserts;
-use crate::dependencies::DependencyNode;
+use crate::dependencies::get_dependency_order;
 
 fn process_inserts(
     working_file_path: &Path,
@@ -71,7 +71,7 @@ impl TableMeta {
 #[derive(Debug)]
 pub struct CheckCollection {
     table_meta: HashMap<String, TableMeta>,
-    grouped_tables: Vec<HashSet<String>>,
+    definitions: Vec<(String, String)>,
 }
 
 impl CheckCollection {
@@ -82,17 +82,6 @@ impl CheckCollection {
             conds.iter().map(|c| (table.to_owned(), c.to_owned()))
         }).collect();
 
-        let mut root = DependencyNode::new();
-        for (table, definition) in definitions.iter() {
-            root.add_child(table);
-            let target_tables = determine_target_tables(definition)?;
-            for target_table in target_tables {
-                root.move_under(&target_table, table)?;
-            }
-        }
-
-        dbg!(&root);
-        dbg!(&root.group_by_depth());
 
         let checks_per_table = get_checks_per_table(&definitions)?;
 
@@ -102,8 +91,8 @@ impl CheckCollection {
         }
 
         Ok(CheckCollection {
+            definitions: definitions.clone(),
             table_meta: grouped,
-            grouped_tables: root.group_by_depth(),
         })
     }
 
@@ -113,7 +102,7 @@ impl CheckCollection {
     ) -> Result<(), anyhow::Error> {
         let mut current_pass = 1;
         let mut lookup_table = HashMap::new();
-        for pending in self.grouped_tables.iter() {
+        for pending in get_dependency_order(&self.definitions)? {
             println!("Running pass {current_pass}");
             dbg!(&pending);
             dbg!(&lookup_table);
