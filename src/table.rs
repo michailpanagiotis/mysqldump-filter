@@ -34,11 +34,12 @@ type WeakDependencyRef = Weak<RefCell<Dependency>>;
 struct Dependency {
     dependencies: Vec<WeakDependencyRef>,
     tested_at_pass: Option<usize>,
+    depth: usize,
 }
 
 impl Dependency {
     fn new() -> Rc<RefCell<Self>> {
-        Rc::new(RefCell::new(Dependency { dependencies: Vec::new(), tested_at_pass: None }))
+        Rc::new(RefCell::new(Dependency { dependencies: Vec::new(), tested_at_pass: None, depth: 0 }))
     }
 
     fn add_dependency(&mut self, target: &Rc<RefCell<Dependency>>) {
@@ -61,6 +62,23 @@ impl Dependency {
             self.tested_at_pass = Some(depth.to_owned());
         }
         assert!(self.has_been_fulfilled());
+    }
+}
+
+struct DependencyTree {
+    nodes: HashMap<String, Rc<RefCell<Dependency>>>,
+}
+
+impl DependencyTree {
+    fn add_node(&mut self, key: &str) {
+        self.nodes.insert(key.to_owned(), Dependency::new());
+    }
+
+    fn add_dependency(&mut self, from: &str, to: &str) -> Result<(), anyhow::Error> {
+        let target = Rc::downgrade(self.nodes.get(to).ok_or(anyhow::anyhow!("cannot get target node"))?);
+        let mut source = self.nodes.get_mut(from).ok_or(anyhow::anyhow!("cannot get source node"))?.borrow_mut();
+        source.dependencies.push(target);
+        Ok(())
     }
 }
 
