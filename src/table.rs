@@ -5,8 +5,9 @@ use std::path::Path;
 use std::rc::{Rc, Weak};
 
 
-use crate::checks::{get_checks_per_table, test_checks, PlainCheckType, TableChecks};
+use crate::checks::{determine_target_tables, get_checks_per_table, test_checks, PlainCheckType, TableChecks};
 use crate::scanner::process_table_inserts;
+use crate::dependencies::DependencyNode;
 
 fn process_inserts(
     working_file_path: &Path,
@@ -65,135 +66,6 @@ impl Dependency {
     }
 }
 
-#[derive(Debug)]
-#[derive(Default)]
-struct DependencyTree {
-    nodes: HashMap<String, Rc<RefCell<Dependency>>>,
-}
-
-impl DependencyTree {
-    fn new() -> Self {
-        DependencyTree::default()
-    }
-
-    fn add_node(&mut self, key: &str) {
-        if !self.nodes.contains_key(key) {
-            self.nodes.insert(key.to_owned(), Dependency::new());
-        }
-    }
-
-    fn add_dependency(&mut self, from: &str, to: &str) -> Result<(), anyhow::Error> {
-        if !self.nodes.contains_key(from) {
-            self.add_node(from);
-        }
-        if !self.nodes.contains_key(to) {
-            self.add_node(to);
-        }
-        let target = Rc::downgrade(self.nodes.get(to).ok_or(anyhow::anyhow!("cannot get target node"))?);
-        let mut source = self.nodes.get_mut(from).ok_or(anyhow::anyhow!("cannot get source node"))?.borrow_mut();
-        source.dependencies.push(target);
-        Ok(())
-    }
-}
-
-#[derive(Debug)]
-struct DependencyNode {
-    key: String,
-    dependents: Vec<DependencyNode>,
-}
-
-impl DependencyNode {
-    fn new(key: &str) -> Self {
-        DependencyNode {
-            key: key.to_string(),
-            dependents: Vec::new(),
-        }
-    }
-
-    fn root() -> Self {
-        DependencyNode {
-            key: String::from("root"),
-            dependents: Vec::new(),
-        }
-    }
-
-    fn has_child(&self, key: &str) -> bool {
-        if self.key == key {
-            return true;
-        }
-        if self.dependents.iter().any(|d| d.has_child(key)) {
-            return true;
-        }
-        false
-    }
-
-    fn add_child(&mut self, key: &str) {
-        if !self.has_child(key) {
-            self.dependents.push(DependencyNode::new(key));
-        }
-    }
-
-    fn pop_child(&mut self, key: &str) -> Option<DependencyNode> {
-        if let Some(index) = self.dependents.iter().position(|value| value.key == key) {
-            Some(self.dependents.swap_remove(index))
-        } else {
-            for dep in self.dependents.iter_mut() {
-                let child = dep.pop_child(key);
-                if child.is_some() {
-                    return child;
-                }
-            }
-            None
-        }
-    }
-
-    fn get_node_mut<'a>(&'a mut self, key: &str) -> Option<&'a mut DependencyNode> {
-        if self.key == key {
-            return Some(self);
-        }
-        for dep in self.dependents.iter_mut() {
-            let child = dep.get_node_mut(key);
-            if child.is_some() {
-                return child;
-            }
-        }
-        None
-    }
-
-    fn move_under(&mut self, parent_key: &str, child_key: &str) -> Result<(), anyhow::Error> {
-        println!("Moving {child_key} under {parent_key}");
-        let child = self.pop_child(child_key).unwrap_or(DependencyNode::new(child_key));
-        if !self.has_child(parent_key) {
-            self.add_child(parent_key);
-        }
-        self.get_node_mut(parent_key).ok_or(anyhow::anyhow!("cannot find parent node {parent_key}"))?.dependents.push(child);
-        Ok(())
-    }
-
-    fn by_depth(&self) -> Vec<HashSet<String>> {
-        let mut depths: Vec<HashSet<String>> = Vec::new();
-        let mut dfs: Vec<(&DependencyNode, usize)> = Vec::new();
-        for dep in self.dependents.iter() { dfs.push((dep, 0)) };
-
-        let mut popped = dfs.pop();
-
-        while popped.is_some() {
-            let (node, depth) = popped.unwrap();
-            if depths.len() == depth {
-                depths.push(HashSet::new());
-            }
-
-            for dep in node.dependents.iter() {
-                dfs.push((dep, depth + 1));
-            }
-
-            depths[depth].insert(node.key.to_owned());
-            popped = dfs.pop();
-        }
-
-        depths
-    }
-}
 
 #[derive(Debug)]
 #[derive(Default)]
@@ -264,25 +136,25 @@ impl CheckCollection {
             conds.iter().map(|c| (table.to_owned(), c.to_owned()))
         }).collect();
 
+        let mut root = DependencyNode::new();
+        for (table, definition) in definitions.iter() {
+            root.add_child(table);
+            let target_tables = determine_target_tables(definition)?;
+            for target_table in target_tables {
+                root.move_under(&target_table, table)?;
+            }
+        }
+
+        dbg!(&root);
+        dbg!(&root.group_by_depth());
+        panic!("stop");
+
+
         let checks_per_table = get_checks_per_table(&definitions)?;
 
         let mut grouped: HashMap<String, Rc<RefCell<TableMeta>>> = HashMap::new();
         for (table, checks) in checks_per_table.iter() {
             grouped.insert(table.to_owned(), TableMetaCell::try_from(checks)?);
-        }
-
-        let mut root = DependencyNode::root();
-
-        let mut tree = DependencyTree::new();
-        for table_meta in grouped.values() {
-            let source_table = &table_meta.borrow().table;
-            tree.add_node(source_table);
-            root.add_child(source_table);
-            let foreign_tables = table_meta.borrow().get_foreign_tables();
-            for target_table in foreign_tables.iter() {
-                tree.add_dependency(source_table, target_table)?;
-                root.move_under(target_table, source_table)?;
-            }
         }
 
         // set dependencies
@@ -294,10 +166,6 @@ impl CheckCollection {
             }
         }
 
-
-        dbg!(&root);
-        dbg!(&root.by_depth());
-        panic!("stop");
         Ok(CheckCollection {
             table_meta: grouped,
         })

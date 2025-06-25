@@ -233,7 +233,7 @@ fn parse_test_definition(definition: &str) -> Result<(String, Vec<String>), anyh
     Ok((column_name, foreign_keys))
 }
 
-fn determine_target_tables(definition: &str) -> Result<Vec<String>, anyhow::Error> {
+pub fn determine_target_tables(definition: &str) -> Result<Vec<String>, anyhow::Error> {
     let mut target_tables = Vec::new();
     let (_, deps) = parse_test_definition(definition)?;
     for key in deps.iter() {
