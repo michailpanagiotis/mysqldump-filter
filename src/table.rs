@@ -65,16 +65,30 @@ impl Dependency {
     }
 }
 
+#[derive(Debug)]
+#[derive(Default)]
 struct DependencyTree {
     nodes: HashMap<String, Rc<RefCell<Dependency>>>,
 }
 
 impl DependencyTree {
+    fn new() -> Self {
+        DependencyTree::default()
+    }
+
     fn add_node(&mut self, key: &str) {
-        self.nodes.insert(key.to_owned(), Dependency::new());
+        if !self.nodes.contains_key(key) {
+            self.nodes.insert(key.to_owned(), Dependency::new());
+        }
     }
 
     fn add_dependency(&mut self, from: &str, to: &str) -> Result<(), anyhow::Error> {
+        if !self.nodes.contains_key(from) {
+            self.add_node(from);
+        }
+        if !self.nodes.contains_key(to) {
+            self.add_node(to);
+        }
         let target = Rc::downgrade(self.nodes.get(to).ok_or(anyhow::anyhow!("cannot get target node"))?);
         let mut source = self.nodes.get_mut(from).ok_or(anyhow::anyhow!("cannot get source node"))?.borrow_mut();
         source.dependencies.push(target);
@@ -158,6 +172,16 @@ impl CheckCollection {
             grouped.insert(table.to_owned(), TableMetaCell::try_from(checks)?);
         }
 
+        let mut tree = DependencyTree::new();
+        for table_meta in grouped.values() {
+            let source_table = &table_meta.borrow().table;
+            tree.add_node(source_table);
+            let foreign_tables = table_meta.borrow().get_foreign_tables();
+            for target_table in foreign_tables.iter() {
+                tree.add_dependency(source_table, target_table)?;
+            }
+        }
+
         // set dependencies
         for table_meta in grouped.values() {
             let foreign_tables = table_meta.borrow().get_foreign_tables();
@@ -167,7 +191,10 @@ impl CheckCollection {
             }
         }
 
+
         dbg!(&grouped);
+        dbg!(&tree);
+        panic!("stop");
         Ok(CheckCollection {
             table_meta: grouped,
         })
