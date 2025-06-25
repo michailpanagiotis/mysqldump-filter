@@ -4,7 +4,6 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::rc::{Rc, Weak};
 
-use anyhow::anyhow;
 
 use crate::checks::{get_checks_per_table, test_checks, PlainCheckType, TableChecks};
 use crate::scanner::process_table_inserts;
@@ -100,14 +99,21 @@ impl DependencyTree {
 #[derive(Debug)]
 struct DependencyNode {
     key: String,
-    dependencies: Vec<DependencyNode>,
+    dependents: Vec<DependencyNode>,
 }
 
 impl DependencyNode {
     fn new(key: &str) -> Self {
         DependencyNode {
             key: key.to_string(),
-            dependencies: Vec::new(),
+            dependents: Vec::new(),
+        }
+    }
+
+    fn root() -> Self {
+        DependencyNode {
+            key: String::from("root"),
+            dependents: Vec::new(),
         }
     }
 
@@ -115,7 +121,7 @@ impl DependencyNode {
         if self.key == key {
             return true;
         }
-        if self.dependencies.iter().any(|d| d.has_child(key)) {
+        if self.dependents.iter().any(|d| d.has_child(key)) {
             return true;
         }
         false
@@ -123,23 +129,15 @@ impl DependencyNode {
 
     fn add_child(&mut self, key: &str) {
         if !self.has_child(key) {
-            self.dependencies.push(DependencyNode::new(key));
+            self.dependents.push(DependencyNode::new(key));
         }
-    }
-
-    fn determine_leaves(&self) -> Vec<String> {
-        let mut leaves: Vec<String> = self.dependencies.iter().filter(|d| d.dependencies.is_empty()).map(|d| d.key.to_owned()).collect();
-        for dep in self.dependencies.iter().filter(|d| !d.dependencies.is_empty()) {
-            leaves.extend(dep.determine_leaves());
-        }
-        leaves
     }
 
     fn pop_child(&mut self, key: &str) -> Option<DependencyNode> {
-        if let Some(index) = self.dependencies.iter().position(|value| value.key == key) {
-            Some(self.dependencies.swap_remove(index))
+        if let Some(index) = self.dependents.iter().position(|value| value.key == key) {
+            Some(self.dependents.swap_remove(index))
         } else {
-            for dep in self.dependencies.iter_mut() {
+            for dep in self.dependents.iter_mut() {
                 let child = dep.pop_child(key);
                 if child.is_some() {
                     return child;
@@ -149,23 +147,12 @@ impl DependencyNode {
         }
     }
 
-    fn pop_leaves(&mut self) -> Vec<String> {
-        let keys = self.determine_leaves();
-        let mut children = Vec::new();
-        for key in keys {
-            if let Some(child) = self.pop_child(&key) {
-                children.push(child.key);
-            }
-        }
-        children
-    }
-
-    fn get_child_mut<'a>(&'a mut self, key: &str) -> Option<&'a mut DependencyNode> {
+    fn get_node_mut<'a>(&'a mut self, key: &str) -> Option<&'a mut DependencyNode> {
         if self.key == key {
             return Some(self);
         }
-        for dep in self.dependencies.iter_mut() {
-            let child = dep.get_child_mut(key);
+        for dep in self.dependents.iter_mut() {
+            let child = dep.get_node_mut(key);
             if child.is_some() {
                 return child;
             }
@@ -173,43 +160,38 @@ impl DependencyNode {
         None
     }
 
-    fn move_under(&mut self, child_key: &str, parent_key: &str) -> Result<(), anyhow::Error> {
+    fn move_under(&mut self, parent_key: &str, child_key: &str) -> Result<(), anyhow::Error> {
+        println!("Moving {child_key} under {parent_key}");
         let child = self.pop_child(child_key).unwrap_or(DependencyNode::new(child_key));
         if !self.has_child(parent_key) {
             self.add_child(parent_key);
         }
-        self.get_child_mut(parent_key).ok_or(anyhow::anyhow!("cannot find parent node {parent_key}"))?.dependencies.push(child);
+        self.get_node_mut(parent_key).ok_or(anyhow::anyhow!("cannot find parent node {parent_key}"))?.dependents.push(child);
         Ok(())
     }
 
-    fn group_by_height(&mut self) -> Vec<Vec<String>> {
-        let mut grouped = Vec::new();
-        while {
-            let popped = self.pop_leaves();
-            grouped.push(popped);
-            !self.dependencies.is_empty()
-        } {
-        }
-        grouped
-    }
+    fn by_depth(&self) -> Vec<HashSet<String>> {
+        let mut depths: Vec<HashSet<String>> = Vec::new();
+        let mut dfs: Vec<(&DependencyNode, usize)> = Vec::new();
+        for dep in self.dependents.iter() { dfs.push((dep, 0)) };
 
-    fn get_heights(&self) -> HashMap<String, usize> {
-        let mut height_per_key = HashMap::new();
+        let mut popped = dfs.pop();
 
-        for dep in self.dependencies.iter() {
-            let heights = dep.get_heights();
-            height_per_key.extend(heights);
-        }
-
-        height_per_key.insert(
-            self.key.to_owned(),
-            match height_per_key.values().max() {
-                Some(m) => m + 1,
-                None => 0,
+        while popped.is_some() {
+            let (node, depth) = popped.unwrap();
+            if depths.len() == depth {
+                depths.push(HashSet::new());
             }
-        );
 
-        height_per_key
+            for dep in node.dependents.iter() {
+                dfs.push((dep, depth + 1));
+            }
+
+            depths[depth].insert(node.key.to_owned());
+            popped = dfs.pop();
+        }
+
+        depths
     }
 }
 
@@ -289,7 +271,7 @@ impl CheckCollection {
             grouped.insert(table.to_owned(), TableMetaCell::try_from(checks)?);
         }
 
-        let mut root = DependencyNode::new("root");
+        let mut root = DependencyNode::root();
 
         let mut tree = DependencyTree::new();
         for table_meta in grouped.values() {
@@ -313,9 +295,8 @@ impl CheckCollection {
         }
 
 
-        dbg!(&grouped);
         dbg!(&root);
-        dbg!(&root.get_heights());
+        dbg!(&root.by_depth());
         panic!("stop");
         Ok(CheckCollection {
             table_meta: grouped,
