@@ -4,8 +4,6 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::rc::{Rc, Weak};
 
-use itertools::Itertools;
-
 use crate::checks::{get_checks_per_table, test_checks, PlainCheckType, TableChecks};
 use crate::scanner::process_table_inserts;
 
@@ -36,12 +34,11 @@ type WeakDependencyRef = Weak<RefCell<Dependency>>;
 struct Dependency {
     dependencies: Vec<WeakDependencyRef>,
     tested_at_pass: Option<usize>,
-    depth: usize,
 }
 
 impl Dependency {
     fn new() -> Rc<RefCell<Self>> {
-        Rc::new(RefCell::new(Dependency { dependencies: Vec::new(), tested_at_pass: None, depth: 0 }))
+        Rc::new(RefCell::new(Dependency { dependencies: Vec::new(), tested_at_pass: None }))
     }
 
     fn add_dependency(&mut self, target: &Rc<RefCell<Dependency>>) {
@@ -102,7 +99,6 @@ impl DependencyTree {
 struct DependencyNode {
     key: String,
     dependencies: Vec<DependencyNode>,
-    depth: usize,
 }
 
 impl DependencyNode {
@@ -110,7 +106,6 @@ impl DependencyNode {
         DependencyNode {
             key: key.to_string(),
             dependencies: Vec::new(),
-            depth: 0,
         }
     }
 
@@ -126,10 +121,16 @@ impl DependencyNode {
 
     fn add_child(&mut self, key: &str) {
         if !self.has_child(key) {
-            let mut dep = DependencyNode::new(key);
-            dep.set_depth(self.depth + 1);
-            self.dependencies.push(dep);
+            self.dependencies.push(DependencyNode::new(key));
         }
+    }
+
+    fn determine_leaves(&self) -> Vec<String> {
+        let mut leaves: Vec<String> = self.dependencies.iter().filter(|d| d.dependencies.is_empty()).map(|d| d.key.to_owned()).collect();
+        for dep in self.dependencies.iter().filter(|d| !d.dependencies.is_empty()) {
+            leaves.extend(dep.determine_leaves());
+        }
+        leaves
     }
 
     fn pop_child(&mut self, key: &str) -> Option<DependencyNode> {
@@ -146,6 +147,17 @@ impl DependencyNode {
         }
     }
 
+    fn pop_leaves(&mut self) -> Vec<String> {
+        let keys = self.determine_leaves();
+        let mut children = Vec::new();
+        for key in keys {
+            if let Some(child) = self.pop_child(&key) {
+                children.push(child.key);
+            }
+        }
+        children
+    }
+
     fn get_child_mut<'a>(&'a mut self, key: &str) -> Option<&'a mut DependencyNode> {
         if self.key == key {
             return Some(self);
@@ -159,30 +171,24 @@ impl DependencyNode {
         None
     }
 
-    fn link(&mut self, parent_key: &str, child_key: &str) -> Result<(), anyhow::Error> {
-        let mut child = self.pop_child(child_key).unwrap_or(DependencyNode::new(child_key));
+    fn move_under(&mut self, child_key: &str, parent_key: &str) -> Result<(), anyhow::Error> {
+        let child = self.pop_child(child_key).unwrap_or(DependencyNode::new(child_key));
         if !self.has_child(parent_key) {
             self.add_child(parent_key);
         }
-        let parent = self.get_child_mut(parent_key).ok_or(anyhow::anyhow!("cannot find parent node {parent_key}"))?;
-        child.set_depth(parent.depth + 1);
-        parent.dependencies.push(child);
+        self.get_child_mut(parent_key).ok_or(anyhow::anyhow!("cannot find parent node {parent_key}"))?.dependencies.push(child);
         Ok(())
     }
 
-    fn set_depth(&mut self, depth: usize) {
-        self.depth = depth.to_owned();
-        for dep in self.dependencies.iter_mut() {
-            dep.set_depth(depth + 1);
+    fn group_by_height(&mut self) -> Vec<Vec<String>> {
+        let mut grouped = Vec::new();
+        while {
+            let popped = self.pop_leaves();
+            grouped.push(popped);
+            !self.dependencies.is_empty()
+        } {
         }
-    }
-
-    fn bfs(&mut self) -> Vec<String> {
-        let mut stack: Vec<String> = Vec::new();
-        for dep in self.dependencies.iter() {
-            stack.push(dep.key.to_string());
-        }
-        stack
+        grouped
     }
 }
 
@@ -272,7 +278,7 @@ impl CheckCollection {
             let foreign_tables = table_meta.borrow().get_foreign_tables();
             for target_table in foreign_tables.iter() {
                 tree.add_dependency(source_table, target_table)?;
-                root.link(target_table, source_table)?;
+                root.move_under(target_table, source_table)?;
             }
         }
 
@@ -288,7 +294,8 @@ impl CheckCollection {
 
         dbg!(&grouped);
         dbg!(&root);
-        dbg!(&root.bfs());
+        dbg!(&root.group_by_height());
+        dbg!(&root);
         panic!("stop");
         Ok(CheckCollection {
             table_meta: grouped,
