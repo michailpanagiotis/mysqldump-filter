@@ -3,27 +3,9 @@ use std::fmt::Debug;
 use std::path::Path;
 
 
-use crate::checks::{get_checks_per_table, test_checks, PlainCheckType, TableChecks};
+use crate::checks::{get_checks_per_table, test_checks, TableChecks};
 use crate::scanner::process_table_inserts;
 use crate::dependencies::get_dependency_order;
-
-fn process_inserts(
-    working_file_path: &Path,
-    table: &str,
-    checks: &[PlainCheckType],
-    tracked_columns: &[&str],
-    lookup_table: &HashMap<String, HashSet<String>>,
-) -> Result<HashMap<String, HashSet<String>>, anyhow::Error> {
-    let captured = process_table_inserts(working_file_path, table, tracked_columns, |statement| {
-        let value_per_field = statement.get_values()?;
-
-        match test_checks(checks, value_per_field, lookup_table)? {
-            false => Ok(None),
-            true => Ok(Some(()))
-        }
-    })?;
-    Ok(captured)
-}
 
 
 fn process_data_file(
@@ -34,13 +16,14 @@ fn process_data_file(
 ) -> Result<Option<HashMap<String, HashSet<String>>>, anyhow::Error> {
     let checks = table_checks.get_checks()?;
     let tracked_columns: Vec<&str> = table_checks.references.iter().map(|x| x.as_str()).collect();
-    let captured = process_inserts(
-        working_file_path,
-        table,
-        &checks,
-        &tracked_columns,
-        lookup_table,
-    )?;
+    let captured = process_table_inserts(working_file_path, table, &tracked_columns, |statement| {
+        let value_per_field = statement.get_values()?;
+
+        match test_checks(&checks, value_per_field, lookup_table)? {
+            false => Ok(None),
+            true => Ok(Some(()))
+        }
+    })?;
     Ok(Some(captured))
 }
 

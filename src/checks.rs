@@ -3,6 +3,8 @@ use chrono::NaiveDateTime;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+type PlainCheckType = Box<dyn PlainColumnCheck>;
+
 enum Value {
     Int(i64),
     Date(i64),
@@ -311,7 +313,6 @@ pub struct TableChecks {
 }
 
 impl TableChecks {
-
     pub fn new(table: &str, check_definitions: &[String], references: &[String]) -> Result<Self, anyhow::Error> {
         Ok(TableChecks {
             table: table.to_owned(),
@@ -340,19 +341,6 @@ pub fn get_checks_per_table(definitions: &[(String, String)]) -> Result<HashMap<
     Ok(grouped)
 }
 
-pub fn get_table_of_checks<'a>(checks: &'a[&PlainCheckType]) -> Result<&'a str, anyhow::Error> {
-    if checks.is_empty() {
-        return Err(anyhow::anyhow!("no checks"));
-    }
-    let mut tables: Vec<&str> = checks.iter().map(|c| c.get_table_name()).collect();
-    tables.dedup();
-    if tables.len() != 1 {
-        return Err(anyhow::anyhow!("checks for multiple tables"));
-    }
-    let table = tables[0];
-    Ok(table)
-}
-
 pub fn test_checks(
     checks: &[PlainCheckType],
     value_per_field: &HashMap<String, (String, sqlparser::ast::DataType)>,
@@ -368,4 +356,3 @@ pub fn test_checks(
     Ok(true)
 }
 
-pub type PlainCheckType = Box<dyn PlainColumnCheck>;
