@@ -203,7 +203,10 @@ impl DependencyNode {
 
         height_per_key.insert(
             self.key.to_owned(),
-            height_per_key.values().max().unwrap_or(&0).to_owned() + 1,
+            match height_per_key.values().max() {
+                Some(m) => m + 1,
+                None => 0,
+            }
         );
 
         height_per_key
