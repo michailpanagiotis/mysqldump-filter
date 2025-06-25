@@ -53,10 +53,17 @@ impl TableMeta {
 
     fn process_data_file(
         &mut self,
+        table: &str,
         lookup_table: &HashMap<String, HashSet<String>>,
         working_file_path: &Path,
     ) -> Result<Option<HashMap<String, HashSet<String>>>, anyhow::Error> {
-        let captured = process_inserts(working_file_path, &self.table, &self.checks, &self.get_tracked_columns(), lookup_table)?;
+        let captured = process_inserts(
+            working_file_path,
+            table,
+            &self.checks,
+            &self.get_tracked_columns(),
+            lookup_table,
+        )?;
         Ok(Some(captured))
     }
 }
@@ -111,7 +118,9 @@ impl CheckCollection {
             dbg!(&pending);
             dbg!(&lookup_table);
             for table_meta in self.table_meta.values_mut().filter(|t| pending.iter().any(|p| p == &t.table)) {
+                let table = table_meta.table.to_owned();
                 let captured_option = table_meta.process_data_file(
+                    &table,
                     &lookup_table,
                     working_file_path,
                 )?;
