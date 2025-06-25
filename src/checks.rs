@@ -303,6 +303,7 @@ fn determine_all_checked_tables(definitions: &[(String, String)]) -> Result<Hash
     Ok(all_tables)
 }
 
+#[derive(Debug)]
 pub struct TableChecks {
     pub table: String,
     pub check_definitions: Vec<String>,
