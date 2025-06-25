@@ -306,25 +306,15 @@ fn determine_all_checked_tables(definitions: &[(String, String)]) -> Result<Hash
 pub struct TableChecks {
     pub table: String,
     pub check_definitions: Vec<String>,
-    pub foreign_tables: Vec<String>,
     pub references: Vec<String>,
 }
 
 impl TableChecks {
 
     pub fn new(table: &str, check_definitions: &[String], references: &[String]) -> Result<Self, anyhow::Error> {
-        let mut foreign_tables = Vec::new();
-
-        for check in check_definitions {
-            for t in determine_target_tables(check)? {
-                foreign_tables.push(t.to_owned());
-                foreign_tables.dedup();
-            }
-        }
         Ok(TableChecks {
             table: table.to_owned(),
             check_definitions: Vec::from(check_definitions),
-            foreign_tables,
             references: Vec::from(references),
         })
     }

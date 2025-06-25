@@ -1,8 +1,6 @@
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::path::Path;
-use std::rc::{Rc, Weak};
 
 
 use crate::checks::{determine_target_tables, get_checks_per_table, test_checks, PlainCheckType, TableChecks};
@@ -27,36 +25,28 @@ fn process_inserts(
     Ok(captured)
 }
 
-type TableMetaCell = Rc<RefCell<TableMeta>>;
-
 
 #[derive(Debug)]
 #[derive(Default)]
 pub struct TableMeta {
     pub table: String,
-    foreign_tables: Vec<String>,
     references: Vec<String>,
     checks: Vec<PlainCheckType>,
 }
 
-impl TryFrom<&TableChecks> for TableMetaCell {
+impl TryFrom<&TableChecks> for TableMeta {
     type Error = anyhow::Error;
     fn try_from(table_checks: &TableChecks) -> Result<Self, Self::Error> {
         let checks = table_checks.get_checks()?;
-        Ok(Rc::new(RefCell::new(TableMeta {
+        Ok(TableMeta {
             table: table_checks.table.clone(),
-            foreign_tables: table_checks.foreign_tables.clone(),
             references: table_checks.references.clone(),
             checks,
-        })))
+        })
     }
 }
 
 impl TableMeta {
-    pub fn get_foreign_tables(&self) -> Vec<String> {
-        self.foreign_tables.clone()
-    }
-
     fn get_tracked_columns(&self) -> Vec<&str> {
         self.references.iter().map(|x| x.as_str()).collect()
     }
@@ -73,7 +63,7 @@ impl TableMeta {
 
 #[derive(Debug)]
 pub struct CheckCollection {
-    table_meta: HashMap<String, Rc<RefCell<TableMeta>>>,
+    table_meta: HashMap<String, TableMeta>,
     grouped_tables: Vec<HashSet<String>>,
 }
 
@@ -99,9 +89,9 @@ impl CheckCollection {
 
         let checks_per_table = get_checks_per_table(&definitions)?;
 
-        let mut grouped: HashMap<String, Rc<RefCell<TableMeta>>> = HashMap::new();
+        let mut grouped: HashMap<String, TableMeta> = HashMap::new();
         for (table, checks) in checks_per_table.iter() {
-            grouped.insert(table.to_owned(), TableMetaCell::try_from(checks)?);
+            grouped.insert(table.to_owned(), TableMeta::try_from(checks)?);
         }
 
         Ok(CheckCollection {
@@ -120,8 +110,8 @@ impl CheckCollection {
             println!("Running pass {current_pass}");
             dbg!(&pending);
             dbg!(&lookup_table);
-            for table_meta in self.table_meta.values_mut().filter(|t| pending.iter().any(|p| p == &t.borrow().table)) {
-                let captured_option = table_meta.borrow_mut().process_data_file(
+            for table_meta in self.table_meta.values_mut().filter(|t| pending.iter().any(|p| p == &t.table)) {
+                let captured_option = table_meta.process_data_file(
                     &lookup_table,
                     working_file_path,
                 )?;
