@@ -4,6 +4,8 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::rc::{Rc, Weak};
 
+use itertools::Itertools;
+
 use crate::checks::{get_checks_per_table, test_checks, PlainCheckType, TableChecks};
 use crate::scanner::process_table_inserts;
 
@@ -97,6 +99,94 @@ impl DependencyTree {
 }
 
 #[derive(Debug)]
+struct DependencyNode {
+    key: String,
+    dependencies: Vec<DependencyNode>,
+    depth: usize,
+}
+
+impl DependencyNode {
+    fn new(key: &str) -> Self {
+        DependencyNode {
+            key: key.to_string(),
+            dependencies: Vec::new(),
+            depth: 0,
+        }
+    }
+
+    fn has_child(&self, key: &str) -> bool {
+        if self.key == key {
+            return true;
+        }
+        if self.dependencies.iter().any(|d| d.has_child(key)) {
+            return true;
+        }
+        false
+    }
+
+    fn add_child(&mut self, key: &str) {
+        if !self.has_child(key) {
+            let mut dep = DependencyNode::new(key);
+            dep.set_depth(self.depth + 1);
+            self.dependencies.push(dep);
+        }
+    }
+
+    fn pop_child(&mut self, key: &str) -> Option<DependencyNode> {
+        if let Some(index) = self.dependencies.iter().position(|value| value.key == key) {
+            Some(self.dependencies.swap_remove(index))
+        } else {
+            for dep in self.dependencies.iter_mut() {
+                let child = dep.pop_child(key);
+                if child.is_some() {
+                    return child;
+                }
+            }
+            None
+        }
+    }
+
+    fn get_child_mut<'a>(&'a mut self, key: &str) -> Option<&'a mut DependencyNode> {
+        if self.key == key {
+            return Some(self);
+        }
+        for dep in self.dependencies.iter_mut() {
+            let child = dep.get_child_mut(key);
+            if child.is_some() {
+                return child;
+            }
+        }
+        None
+    }
+
+    fn link(&mut self, parent_key: &str, child_key: &str) -> Result<(), anyhow::Error> {
+        let mut child = self.pop_child(child_key).unwrap_or(DependencyNode::new(child_key));
+        if !self.has_child(parent_key) {
+            self.add_child(parent_key);
+        }
+        let parent = self.get_child_mut(parent_key).ok_or(anyhow::anyhow!("cannot find parent node {parent_key}"))?;
+        child.set_depth(parent.depth + 1);
+        parent.dependencies.push(child);
+        Ok(())
+    }
+
+    fn set_depth(&mut self, depth: usize) {
+        self.depth = depth.to_owned();
+        for dep in self.dependencies.iter_mut() {
+            dep.set_depth(depth + 1);
+        }
+    }
+
+    fn bfs(&mut self) -> Vec<String> {
+        let mut stack: Vec<String> = Vec::new();
+        for dep in self.dependencies.iter() {
+            stack.push(dep.key.to_string());
+        }
+        stack
+    }
+}
+
+#[derive(Debug)]
 #[derive(Default)]
 pub struct TableMeta {
     pub table: String,
@@ -172,13 +262,17 @@ impl CheckCollection {
             grouped.insert(table.to_owned(), TableMetaCell::try_from(checks)?);
         }
 
+        let mut root = DependencyNode::new("root");
+
         let mut tree = DependencyTree::new();
         for table_meta in grouped.values() {
             let source_table = &table_meta.borrow().table;
             tree.add_node(source_table);
+            root.add_child(source_table);
             let foreign_tables = table_meta.borrow().get_foreign_tables();
             for target_table in foreign_tables.iter() {
                 tree.add_dependency(source_table, target_table)?;
+                root.link(target_table, source_table)?;
             }
         }
 
@@ -193,7 +287,8 @@ impl CheckCollection {
 
 
         dbg!(&grouped);
-        dbg!(&tree);
+        dbg!(&root);
+        dbg!(&root.bfs());
         panic!("stop");
         Ok(CheckCollection {
             table_meta: grouped,
