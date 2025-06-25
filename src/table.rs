@@ -4,6 +4,8 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::rc::{Rc, Weak};
 
+use anyhow::anyhow;
+
 use crate::checks::{get_checks_per_table, test_checks, PlainCheckType, TableChecks};
 use crate::scanner::process_table_inserts;
 
@@ -190,6 +192,22 @@ impl DependencyNode {
         }
         grouped
     }
+
+    fn get_heights(&self) -> HashMap<String, usize> {
+        let mut height_per_key = HashMap::new();
+
+        for dep in self.dependencies.iter() {
+            let heights = dep.get_heights();
+            height_per_key.extend(heights);
+        }
+
+        height_per_key.insert(
+            self.key.to_owned(),
+            height_per_key.values().max().unwrap_or(&0).to_owned() + 1,
+        );
+
+        height_per_key
+    }
 }
 
 #[derive(Debug)]
@@ -294,8 +312,7 @@ impl CheckCollection {
 
         dbg!(&grouped);
         dbg!(&root);
-        dbg!(&root.group_by_height());
-        dbg!(&root);
+        dbg!(&root.get_heights());
         panic!("stop");
         Ok(CheckCollection {
             table_meta: grouped,
