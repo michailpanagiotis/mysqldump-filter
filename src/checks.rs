@@ -335,19 +335,20 @@ pub fn get_passes(definitions: &[(String, String)]) -> Result<Vec<HashMap<String
     let definitions_per_table = determine_checks_per_table(definitions)?;
     let references_per_table = determine_references_per_table(definitions)?;
 
-    for tables in dependency_order.iter() {
-        let mut checks: HashMap<String, TableChecks> = HashMap::new();
-        for table in tables {
-            let mut compiled_checks = Vec::new();
-            for check in &definitions_per_table[table] {
-                compiled_checks.push(new_plain_test(table, check)?);
-            }
-            let table_checks = TableChecks::new(compiled_checks, &references_per_table[table])?;
-            checks.insert(table.to_owned(), table_checks);
-        }
-        passes.push(checks);
-    }
+    // for tables in dependency_order.iter() {
+    //     let mut checks: HashMap<String, TableChecks> = HashMap::new();
+    //     for table in tables {
+    //         let mut compiled_checks = Vec::new();
+    //         for check in &definitions_per_table[table] {
+    //             compiled_checks.push(new_plain_test(table, check)?);
+    //         }
+    //         let table_checks = TableChecks::new(compiled_checks, &references_per_table[table])?;
+    //         checks.insert(table.to_owned(), table_checks);
+    //     }
+    //     passes.push(checks);
+    // }
 
+    dbg!(&dependency_order);
     dbg!(&passes);
     panic!("stop");
     Ok(passes)

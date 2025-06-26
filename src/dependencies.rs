@@ -130,7 +130,8 @@ impl<T> DependencyNode<T>
     }
 }
 
-struct Test(String);
+#[derive(Debug)]
+pub struct Test(String);
 
 impl<'a> Into<&'a str> for &'a Test {
     fn into(self) -> &'a str {
