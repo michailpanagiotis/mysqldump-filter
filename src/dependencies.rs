@@ -3,28 +3,39 @@ use std::fmt::Debug;
 use crate::checks::parse_test_definition;
 
 #[derive(Debug)]
+enum NodeType {
+    Root,
+    Node { payload: String },
+}
+
+#[derive(Debug)]
 struct DependencyNode {
-    payload: String,
+    node_type: NodeType,
     dependents: Vec<DependencyNode>,
 }
 
 impl DependencyNode {
     fn new_node(payload: &String) -> Self {
         DependencyNode {
-            payload: payload.to_owned(),
+            node_type: NodeType::Node { payload: payload.to_owned() },
             dependents: Vec::new(),
         }
     }
 
     fn new() -> Self {
         DependencyNode {
-            payload: String::from("root"),
+            node_type: NodeType::Root,
             dependents: Vec::new(),
         }
     }
 
+    fn get_payload(&self) -> Option<&String> {
+        let NodeType::Node { payload } = &self.node_type else { return None };
+        Some(payload)
+    }
+
     fn has_child(&self, payload: &String) -> bool {
-        if &self.payload == payload {
+        if self.get_payload().is_some_and(|p| p == payload) {
             return true;
         }
         if self.dependents.iter().any(|d| d.has_child(payload)) {
@@ -40,7 +51,7 @@ impl DependencyNode {
     }
 
     fn pop_child(&mut self, payload: &String) -> Option<DependencyNode> {
-        if let Some(index) = self.dependents.iter().position(|value| &value.payload == payload) {
+        if let Some(index) = self.dependents.iter().position(|value| value.get_payload().is_some_and(|p| p == payload)) {
             Some(self.dependents.swap_remove(index))
         } else {
             for dep in self.dependents.iter_mut() {
@@ -54,7 +65,7 @@ impl DependencyNode {
     }
 
     fn get_node_mut<'a>(&'a mut self, payload: &String) -> Option<&'a mut DependencyNode> {
-        if &self.payload == payload {
+        if self.get_payload().is_some_and(|p| p == payload) {
             return Some(self);
         }
         for dep in self.dependents.iter_mut() {
@@ -93,7 +104,9 @@ impl DependencyNode {
                 dfs.push((dep, depth + 1));
             }
 
-            depths[depth].insert(node.payload.to_owned());
+            if let NodeType::Node { payload } = &node.node_type {
+                depths[depth].insert(payload.to_owned());
+            }
             popped = dfs.pop();
         }
 
