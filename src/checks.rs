@@ -3,9 +3,15 @@ use chrono::NaiveDateTime;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::dependencies::get_dependency_order;
+use crate::dependencies::{get_dependency_order, NodeKey};
 
 pub type PlainCheckType = Box<dyn PlainColumnCheck>;
+
+impl NodeKey for PlainCheckType {
+    fn get_key(&self) -> String {
+        self.get_table_name().to_string() + "." + self.get_column_name()
+    }
+}
 
 enum Value {
     Int(i64),
@@ -345,6 +351,12 @@ pub fn get_passes(definitions: &[(String, String)]) -> Result<Vec<HashMap<String
     dbg!(&passes);
     panic!("stop");
     Ok(passes)
+}
+
+impl Into<String> for PlainCheckType {
+    fn into(self) -> String {
+        self.get_table_name().to_string() + self.get_column_name()
+    }
 }
 
 pub fn test_checks(
