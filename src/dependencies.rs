@@ -4,47 +4,47 @@ use crate::checks::parse_test_definition;
 
 #[derive(Debug)]
 struct DependencyNode {
-    key: String,
+    payload: String,
     dependents: Vec<DependencyNode>,
 }
 
 impl DependencyNode {
-    fn new_node(key: &str) -> Self {
+    fn new_node(payload: &String) -> Self {
         DependencyNode {
-            key: key.to_owned(),
+            payload: payload.to_owned(),
             dependents: Vec::new(),
         }
     }
 
     fn new() -> Self {
         DependencyNode {
-            key: String::from("root"),
+            payload: String::from("root"),
             dependents: Vec::new(),
         }
     }
 
-    fn has_child(&self, key: &str) -> bool {
-        if self.key == key {
+    fn has_child(&self, payload: &String) -> bool {
+        if &self.payload == payload {
             return true;
         }
-        if self.dependents.iter().any(|d| d.has_child(key)) {
+        if self.dependents.iter().any(|d| d.has_child(payload)) {
             return true;
         }
         false
     }
 
-    fn add_child(&mut self, key: &str) {
-        if !self.has_child(key) {
-            self.dependents.push(DependencyNode::new_node(key));
+    fn add_child(&mut self, payload: &String) {
+        if !self.has_child(payload) {
+            self.dependents.push(DependencyNode::new_node(payload));
         }
     }
 
-    fn pop_child(&mut self, key: &str) -> Option<DependencyNode> {
-        if let Some(index) = self.dependents.iter().position(|value| value.key == key) {
+    fn pop_child(&mut self, payload: &String) -> Option<DependencyNode> {
+        if let Some(index) = self.dependents.iter().position(|value| &value.payload == payload) {
             Some(self.dependents.swap_remove(index))
         } else {
             for dep in self.dependents.iter_mut() {
-                let child = dep.pop_child(key);
+                let child = dep.pop_child(payload);
                 if child.is_some() {
                     return child;
                 }
@@ -53,12 +53,12 @@ impl DependencyNode {
         }
     }
 
-    fn get_node_mut<'a>(&'a mut self, key: &str) -> Option<&'a mut DependencyNode> {
-        if self.key == key {
+    fn get_node_mut<'a>(&'a mut self, payload: &String) -> Option<&'a mut DependencyNode> {
+        if &self.payload == payload {
             return Some(self);
         }
         for dep in self.dependents.iter_mut() {
-            let child = dep.get_node_mut(key);
+            let child = dep.get_node_mut(payload);
             if child.is_some() {
                 return child;
             }
@@ -66,13 +66,13 @@ impl DependencyNode {
         None
     }
 
-    fn move_under(&mut self, parent_key: &str, child_key: &str) -> Result<(), anyhow::Error> {
-        println!("Moving {child_key} under {parent_key}");
-        let child = self.pop_child(child_key).unwrap_or(DependencyNode::new_node(child_key));
-        if !self.has_child(parent_key) {
-            self.add_child(parent_key);
+    fn move_under(&mut self, parent_payload: &String, child_payload: &String) -> Result<(), anyhow::Error> {
+        println!("Moving {} under {}", child_payload, parent_payload);
+        let child = self.pop_child(child_payload).unwrap_or(DependencyNode::new_node(child_payload));
+        if !self.has_child(parent_payload) {
+            self.add_child(parent_payload);
         }
-        self.get_node_mut(parent_key).ok_or(anyhow::anyhow!("cannot find parent node {parent_key}"))?.dependents.push(child);
+        self.get_node_mut(parent_payload).ok_or(anyhow::anyhow!("cannot find parent node {parent_payload}"))?.dependents.push(child);
         Ok(())
     }
 
@@ -93,7 +93,7 @@ impl DependencyNode {
                 dfs.push((dep, depth + 1));
             }
 
-            depths[depth].insert(node.key.to_owned());
+            depths[depth].insert(node.payload.to_owned());
             popped = dfs.pop();
         }
 
@@ -111,7 +111,7 @@ pub fn get_dependency_order(definitions: &[(String, String)]) -> Result<Vec<Hash
             let (Some(target_table), Some(_), None) = (split.next(), split.next(), split.next()) else {
                 return Err(anyhow::anyhow!("malformed key {}", target_key));
             };
-            root.move_under(target_table, source_table)?;
+            root.move_under(&target_table.to_owned(), source_table)?;
         }
     }
     Ok(root.group_by_depth())
