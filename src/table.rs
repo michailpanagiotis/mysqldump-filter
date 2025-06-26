@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
+use std::hash::Hash;
 use std::path::Path;
 
 
@@ -56,13 +57,26 @@ impl CheckCollection {
     ) -> Result<(), anyhow::Error> {
         let mut current_pass = 1;
         let mut lookup_table = HashMap::new();
-        for pending in &self.dependency_order {
+
+        let mut passes = Vec::new();
+        for tables in self.dependency_order.iter() {
+            let mut checks: HashMap<String, &TableChecks> = HashMap::new();
+            for table in tables {
+                let table_checks = self.table_checks.get(table).ok_or(anyhow::anyhow!("cannot find checks"))?;
+                checks.insert(table.to_owned(), table_checks);
+            }
+            passes.push(checks);
+        }
+
+        dbg!(&passes);
+
+        for pending in &passes {
             println!("Running pass {current_pass}");
             dbg!(&pending);
             dbg!(&lookup_table);
-            for table_checks in self.table_checks.values().filter(|t| pending.iter().any(|p| p == &t.table)) {
+            for (table, table_checks) in pending.iter() {
                 let captured_option = process_data_file(
-                    &table_checks.table,
+                    &table,
                     &table_checks,
                     &lookup_table,
                     working_file_path,
