@@ -2,11 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::path::Path;
 
-
-use crate::checks::{get_checks_per_table, test_checks, PlainCheckType, TableChecks};
+use crate::checks::{get_checks_per_table, get_passes, test_checks, PlainCheckType, TableChecks};
 use crate::scanner::process_table_inserts;
 use crate::dependencies::get_dependency_order;
-
 
 fn process_data_file(
     table: &str,
@@ -58,15 +56,7 @@ impl CheckCollection {
         let mut current_pass = 1;
         let mut lookup_table = HashMap::new();
 
-        let mut passes = Vec::new();
-        for tables in self.dependency_order.iter() {
-            let mut checks: HashMap<String, &TableChecks> = HashMap::new();
-            for table in tables {
-                let table_checks = self.table_checks.get(table).ok_or(anyhow::anyhow!("cannot find checks"))?;
-                checks.insert(table.to_owned(), table_checks);
-            }
-            passes.push(checks);
-        }
+        let passes = get_passes(&self.definitions)?;
 
         dbg!(&passes);
 

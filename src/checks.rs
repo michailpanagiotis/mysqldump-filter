@@ -3,6 +3,8 @@ use chrono::NaiveDateTime;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use crate::dependencies::get_dependency_order;
+
 pub type PlainCheckType = Box<dyn PlainColumnCheck>;
 
 enum Value {
@@ -313,7 +315,6 @@ pub struct TableChecks {
 
 impl TableChecks {
     pub fn new(table: &str, check_definitions: &[String], references: &[String]) -> Result<Self, anyhow::Error> {
-
         let mut checks = Vec::new();
         for check in check_definitions {
             checks.push(new_plain_test(table, check)?);
@@ -336,6 +337,26 @@ pub fn get_checks_per_table(definitions: &[(String, String)]) -> Result<HashMap<
     Ok(grouped)
 }
 
+pub fn get_passes(definitions: &[(String, String)]) -> Result<Vec<HashMap<String, TableChecks>>, anyhow::Error> {
+    let dependency_order = get_dependency_order(&definitions)?;
+    let mut passes = Vec::new();
+
+    let checks_per_table = determine_checks_per_table(definitions)?;
+    let references_per_table = determine_references_per_table(definitions)?;
+
+    for tables in dependency_order.iter() {
+        let mut checks: HashMap<String, TableChecks> = HashMap::new();
+        for table in tables {
+            let table_checks = TableChecks::new(table,&checks_per_table[table], &references_per_table[table])?;
+            checks.insert(table.to_owned(), table_checks);
+        }
+        passes.push(checks);
+    }
+
+    dbg!(&passes);
+    Ok(passes)
+}
+
 pub fn test_checks(
     checks: &[PlainCheckType],
     value_per_field: &HashMap<String, (String, sqlparser::ast::DataType)>,
@@ -350,4 +371,3 @@ pub fn test_checks(
     }
     Ok(true)
 }
-
