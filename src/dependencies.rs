@@ -2,30 +2,50 @@ use std::collections::HashSet;
 use std::fmt::Debug;
 use crate::checks::{determine_target_tables, parse_test_definition};
 
+#[derive(Debug)]
+#[derive(Clone)]
+#[derive(PartialEq)]
+struct NodePayload(String);
+
+impl NodePayload {
+    fn has_key(&self, key: &str) -> bool {
+        self.0 == key
+    }
+
+    fn get_key(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for NodePayload {
+    fn from(item: &str) -> Self {
+        NodePayload(item.to_string())
+    }
+}
 
 #[derive(Debug)]
 struct DependencyNode {
-    key: String,
+    payload: NodePayload,
     dependents: Vec<DependencyNode>,
 }
 
 impl DependencyNode {
     fn new_node(key: &str) -> Self {
         DependencyNode {
-            key: key.to_string(),
+            payload: NodePayload::from(key),
             dependents: Vec::new(),
         }
     }
 
     fn new() -> Self {
         DependencyNode {
-            key: String::from("root"),
+            payload: NodePayload::from("root"),
             dependents: Vec::new(),
         }
     }
 
     fn has_child(&self, key: &str) -> bool {
-        if self.key == key {
+        if self.payload.has_key(key) {
             return true;
         }
         if self.dependents.iter().any(|d| d.has_child(key)) {
@@ -41,7 +61,7 @@ impl DependencyNode {
     }
 
     fn pop_child(&mut self, key: &str) -> Option<DependencyNode> {
-        if let Some(index) = self.dependents.iter().position(|value| value.key == key) {
+        if let Some(index) = self.dependents.iter().position(|value| value.payload.has_key(key)) {
             Some(self.dependents.swap_remove(index))
         } else {
             for dep in self.dependents.iter_mut() {
@@ -55,7 +75,7 @@ impl DependencyNode {
     }
 
     fn get_node_mut<'a>(&'a mut self, key: &str) -> Option<&'a mut DependencyNode> {
-        if self.key == key {
+        if self.payload.has_key(key) {
             return Some(self);
         }
         for dep in self.dependents.iter_mut() {
@@ -94,7 +114,7 @@ impl DependencyNode {
                 dfs.push((dep, depth + 1));
             }
 
-            depths[depth].insert(node.key.to_owned());
+            depths[depth].insert(node.payload.get_key().to_owned());
             popped = dfs.pop();
         }
 
