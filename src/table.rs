@@ -2,9 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::path::Path;
 
-use crate::checks::{get_checks_per_table, get_passes, test_checks, PlainCheckType, TableChecks};
+use crate::checks::{get_passes, test_checks, PlainCheckType};
 use crate::scanner::process_table_inserts;
-use crate::dependencies::get_dependency_order;
 
 fn process_data_file(
     table: &str,
@@ -26,8 +25,6 @@ fn process_data_file(
 
 #[derive(Debug)]
 pub struct CheckCollection {
-    table_checks: HashMap<String, TableChecks>,
-    dependency_order: Vec<HashSet<String>>,
     definitions: Vec<(String, String)>,
 }
 
@@ -39,12 +36,7 @@ impl CheckCollection {
             conds.iter().map(|c| (table.to_owned(), c.to_owned()))
         }).collect();
 
-
-        let checks_per_table = get_checks_per_table(&definitions)?;
-
         Ok(CheckCollection {
-            dependency_order: get_dependency_order(&definitions)?,
-            table_checks: checks_per_table,
             definitions: definitions.clone(),
         })
     }

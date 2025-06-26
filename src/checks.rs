@@ -314,46 +314,36 @@ pub struct TableChecks {
 }
 
 impl TableChecks {
-    pub fn new(table: &str, check_definitions: &[String], references: &[String]) -> Result<Self, anyhow::Error> {
-        let mut checks = Vec::new();
-        for check in check_definitions {
-            checks.push(new_plain_test(table, check)?);
-        }
+    pub fn new(check_definitions: Vec<PlainCheckType>, references: &[String]) -> Result<Self, anyhow::Error> {
         Ok(TableChecks {
             references: Vec::from(references),
-            checks,
+            checks: check_definitions,
         })
     }
 }
 
-pub fn get_checks_per_table(definitions: &[(String, String)]) -> Result<HashMap<String, TableChecks>, anyhow::Error> {
-    let checks = determine_checks_per_table(definitions)?;
-    let references = determine_references_per_table(definitions)?;
-    let all_tables = determine_all_checked_tables(definitions)?;
-    let mut grouped: HashMap<String, TableChecks> = HashMap::new();
-    for table in all_tables.iter() {
-        grouped.insert(table.to_owned(), TableChecks::new(table, &checks[table], &references[table])?);
-    }
-    Ok(grouped)
-}
-
 pub fn get_passes(definitions: &[(String, String)]) -> Result<Vec<HashMap<String, TableChecks>>, anyhow::Error> {
-    let dependency_order = get_dependency_order(&definitions)?;
+    let dependency_order = get_dependency_order(definitions)?;
     let mut passes = Vec::new();
 
-    let checks_per_table = determine_checks_per_table(definitions)?;
+    let definitions_per_table = determine_checks_per_table(definitions)?;
     let references_per_table = determine_references_per_table(definitions)?;
 
     for tables in dependency_order.iter() {
         let mut checks: HashMap<String, TableChecks> = HashMap::new();
         for table in tables {
-            let table_checks = TableChecks::new(table,&checks_per_table[table], &references_per_table[table])?;
+            let mut compiled_checks = Vec::new();
+            for check in &definitions_per_table[table] {
+                compiled_checks.push(new_plain_test(table, check)?);
+            }
+            let table_checks = TableChecks::new(compiled_checks, &references_per_table[table])?;
             checks.insert(table.to_owned(), table_checks);
         }
         passes.push(checks);
     }
 
     dbg!(&passes);
+    panic!("stop");
     Ok(passes)
 }
 
