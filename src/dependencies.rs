@@ -122,40 +122,18 @@ impl DependencyNode {
     }
 }
 
-pub fn get_column_order(definitions: &[(String, String)]) -> Result<Vec<HashSet<String>>, anyhow::Error> {
+pub fn get_dependency_order(definitions: &[(String, String)]) -> Result<Vec<HashSet<String>>, anyhow::Error> {
     let mut root = DependencyNode::new();
     for (source_table, definition) in definitions.iter() {
-        let (source_column, foreign_keys) = parse_test_definition(definition)?;
-        let source_key = source_table.to_string() + "." + source_column.as_str();
-        root.add_child(&source_key);
-        root.add_child(&source_table);
+        let (_, foreign_keys) = parse_test_definition(definition)?;
+        root.add_child(source_table);
         for target_key in foreign_keys {
             let mut split = target_key.split('.');
             let (Some(target_table), Some(_), None) = (split.next(), split.next(), split.next()) else {
                 return Err(anyhow::anyhow!("malformed key {}", target_key));
             };
-            root.move_under(&target_table, &source_table)?;
-            root.move_under(&source_table, &source_key)?;
+            root.move_under(target_table, source_table)?;
         }
     }
-    dbg!(&root);
-    dbg!(&root.group_by_depth());
-    panic!("stop");
-    Ok(root.group_by_depth())
-}
-
-pub fn get_dependency_order(definitions: &[(String, String)]) -> Result<Vec<HashSet<String>>, anyhow::Error> {
-    get_column_order(definitions)?;
-    let mut root = DependencyNode::new();
-    for (table, definition) in definitions.iter() {
-        root.add_child(table);
-        let target_tables = determine_target_tables(definition)?;
-        for target_table in target_tables {
-            root.move_under(&target_table, table)?;
-        }
-    }
-    dbg!(&root);
-    dbg!(&root.group_by_depth());
-    panic!("stop");
     Ok(root.group_by_depth())
 }
