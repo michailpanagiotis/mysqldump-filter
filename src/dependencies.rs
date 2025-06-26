@@ -3,27 +3,6 @@ use std::fmt::Debug;
 use crate::checks::parse_test_definition;
 
 #[derive(Debug)]
-#[derive(Clone)]
-#[derive(PartialEq)]
-struct NodePayload(String);
-
-impl NodePayload {
-    fn has_key(&self, key: &str) -> bool {
-        self.0 == key
-    }
-
-    fn get_key(&self) -> &str {
-        &self.0
-    }
-}
-
-impl From<&str> for NodePayload {
-    fn from(item: &str) -> Self {
-        NodePayload(item.to_string())
-    }
-}
-
-#[derive(Debug)]
 struct DependencyNode {
     key: String,
     dependents: Vec<DependencyNode>,
