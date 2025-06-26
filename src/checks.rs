@@ -7,12 +7,6 @@ use crate::dependencies::{get_dependency_order, NodeKey};
 
 pub type PlainCheckType = Box<dyn PlainColumnCheck>;
 
-impl NodeKey for PlainCheckType {
-    fn get_key(&self) -> String {
-        self.get_table_name().to_string() + "." + self.get_column_name()
-    }
-}
-
 enum Value {
     Int(i64),
     Date(i64),
@@ -73,6 +67,8 @@ pub trait PlainColumnCheck {
     fn get_column_name(&self) -> &str;
 
     fn get_definition(&self) -> &str;
+
+    fn get_key(&self) -> &str;
 }
 
 impl core::fmt::Debug for dyn PlainColumnCheck {
@@ -83,6 +79,7 @@ impl core::fmt::Debug for dyn PlainColumnCheck {
 
 #[derive(Debug)]
 pub struct PlainCelTest {
+    key: String,
     table_name: String,
     column_name: String,
     definition: String,
@@ -131,6 +128,7 @@ impl PlainColumnCheck for PlainCelTest {
         let column = &variables[0];
 
         Ok(PlainCelTest {
+            key: table.to_owned() + ": " + definition,
             table_name: table.to_owned(),
             column_name: column.to_owned(),
             definition: definition.to_owned(),
@@ -155,6 +153,10 @@ impl PlainColumnCheck for PlainCelTest {
         }
     }
 
+    fn get_key(&self) -> &str {
+        &self.key
+    }
+
     fn get_definition(&self) -> &str {
         &self.definition
     }
@@ -170,6 +172,7 @@ impl PlainColumnCheck for PlainCelTest {
 
 #[derive(Debug)]
 pub struct PlainLookupTest {
+    key: String,
     table_name: String,
     column_name: String,
     definition: String,
@@ -194,6 +197,7 @@ impl PlainColumnCheck for PlainLookupTest {
         };
 
         Ok(PlainLookupTest {
+            key: table.to_owned() + ": " + definition,
             table_name: table.to_owned(),
             column_name: source_column.to_owned(),
             definition: definition.to_owned(),
@@ -210,6 +214,10 @@ impl PlainColumnCheck for PlainLookupTest {
     ) -> Result<bool, anyhow::Error> {
         let Some(set) = lookup_table.get(&self.target_column_key) else { return Ok(true) };
         Ok(set.contains(value))
+    }
+
+    fn get_key(&self) -> &str {
+        &self.key
     }
 
     fn get_definition(&self) -> &str {
@@ -354,9 +362,9 @@ pub fn get_passes(definitions: &[(String, String)]) -> Result<Vec<HashMap<String
     Ok(passes)
 }
 
-impl Into<String> for PlainCheckType {
-    fn into(self) -> String {
-        self.get_table_name().to_string() + self.get_column_name()
+impl<'a> Into<&'a str> for &'a PlainCheckType {
+    fn into(self) -> &'a str {
+        self.get_key()
     }
 }
 
