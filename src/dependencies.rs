@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::fmt::Debug;
-use crate::checks::{determine_target_tables, parse_test_definition};
+use crate::checks::parse_test_definition;
 
 #[derive(Debug)]
 #[derive(Clone)]
@@ -25,27 +25,27 @@ impl From<&str> for NodePayload {
 
 #[derive(Debug)]
 struct DependencyNode {
-    payload: NodePayload,
+    key: String,
     dependents: Vec<DependencyNode>,
 }
 
 impl DependencyNode {
     fn new_node(key: &str) -> Self {
         DependencyNode {
-            payload: NodePayload::from(key),
+            key: key.to_owned(),
             dependents: Vec::new(),
         }
     }
 
     fn new() -> Self {
         DependencyNode {
-            payload: NodePayload::from("root"),
+            key: String::from("root"),
             dependents: Vec::new(),
         }
     }
 
     fn has_child(&self, key: &str) -> bool {
-        if self.payload.has_key(key) {
+        if self.key == key {
             return true;
         }
         if self.dependents.iter().any(|d| d.has_child(key)) {
@@ -61,7 +61,7 @@ impl DependencyNode {
     }
 
     fn pop_child(&mut self, key: &str) -> Option<DependencyNode> {
-        if let Some(index) = self.dependents.iter().position(|value| value.payload.has_key(key)) {
+        if let Some(index) = self.dependents.iter().position(|value| value.key == key) {
             Some(self.dependents.swap_remove(index))
         } else {
             for dep in self.dependents.iter_mut() {
@@ -75,7 +75,7 @@ impl DependencyNode {
     }
 
     fn get_node_mut<'a>(&'a mut self, key: &str) -> Option<&'a mut DependencyNode> {
-        if self.payload.has_key(key) {
+        if self.key == key {
             return Some(self);
         }
         for dep in self.dependents.iter_mut() {
@@ -114,7 +114,7 @@ impl DependencyNode {
                 dfs.push((dep, depth + 1));
             }
 
-            depths[depth].insert(node.payload.get_key().to_owned());
+            depths[depth].insert(node.key.to_owned());
             popped = dfs.pop();
         }
 
