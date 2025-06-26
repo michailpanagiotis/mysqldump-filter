@@ -30,7 +30,7 @@ fn process_data_file(
 #[derive(Debug)]
 pub struct CheckCollection {
     table_checks: HashMap<String, TableChecks>,
-    definitions: Vec<(String, String)>,
+    dependency_order: Vec<HashSet<String>>,
 }
 
 impl CheckCollection {
@@ -45,7 +45,7 @@ impl CheckCollection {
         let checks_per_table = get_checks_per_table(&definitions)?;
 
         Ok(CheckCollection {
-            definitions: definitions.clone(),
+            dependency_order: get_dependency_order(&definitions)?,
             table_checks: checks_per_table,
         })
     }
@@ -56,7 +56,7 @@ impl CheckCollection {
     ) -> Result<(), anyhow::Error> {
         let mut current_pass = 1;
         let mut lookup_table = HashMap::new();
-        for pending in get_dependency_order(&self.definitions)? {
+        for pending in &self.dependency_order {
             println!("Running pass {current_pass}");
             dbg!(&pending);
             dbg!(&lookup_table);
