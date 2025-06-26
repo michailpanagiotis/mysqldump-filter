@@ -1,26 +1,24 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
-use std::hash::Hash;
 use std::path::Path;
 
 
-use crate::checks::{get_checks_per_table, test_checks, TableChecks};
+use crate::checks::{get_checks_per_table, test_checks, PlainCheckType, TableChecks};
 use crate::scanner::process_table_inserts;
 use crate::dependencies::get_dependency_order;
 
 
 fn process_data_file(
     table: &str,
-    table_checks: &TableChecks,
+    checks: &[PlainCheckType],
+    tracked_columns: &[String],
     lookup_table: &HashMap<String, HashSet<String>>,
     working_file_path: &Path,
 ) -> Result<Option<HashMap<String, HashSet<String>>>, anyhow::Error> {
-    let checks = table_checks.get_checks()?;
-    let tracked_columns: Vec<&str> = table_checks.references.iter().map(|x| x.as_str()).collect();
-    let captured = process_table_inserts(working_file_path, table, &tracked_columns, |statement| {
+    let captured = process_table_inserts(working_file_path, table, tracked_columns, |statement| {
         let value_per_field = statement.get_values()?;
 
-        match test_checks(&checks, value_per_field, lookup_table)? {
+        match test_checks(checks, value_per_field, lookup_table)? {
             false => Ok(None),
             true => Ok(Some(()))
         }
@@ -32,6 +30,7 @@ fn process_data_file(
 pub struct CheckCollection {
     table_checks: HashMap<String, TableChecks>,
     dependency_order: Vec<HashSet<String>>,
+    definitions: Vec<(String, String)>,
 }
 
 impl CheckCollection {
@@ -48,6 +47,7 @@ impl CheckCollection {
         Ok(CheckCollection {
             dependency_order: get_dependency_order(&definitions)?,
             table_checks: checks_per_table,
+            definitions: definitions.clone(),
         })
     }
 
@@ -75,9 +75,12 @@ impl CheckCollection {
             dbg!(&pending);
             dbg!(&lookup_table);
             for (table, table_checks) in pending.iter() {
+                let checks: &Vec<PlainCheckType> = &table_checks.checks;
+                let tracked_columns: &Vec<String> = &table_checks.references;
                 let captured_option = process_data_file(
-                    &table,
-                    &table_checks,
+                    table,
+                    checks,
+                    tracked_columns,
                     &lookup_table,
                     working_file_path,
                 )?;

@@ -3,7 +3,7 @@ use chrono::NaiveDateTime;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-type PlainCheckType = Box<dyn PlainColumnCheck>;
+pub type PlainCheckType = Box<dyn PlainColumnCheck>;
 
 enum Value {
     Int(i64),
@@ -307,26 +307,21 @@ fn determine_all_checked_tables(definitions: &[(String, String)]) -> Result<Hash
 
 #[derive(Debug)]
 pub struct TableChecks {
-    pub table: String,
-    pub check_definitions: Vec<String>,
     pub references: Vec<String>,
+    pub checks: Vec<PlainCheckType>,
 }
 
 impl TableChecks {
     pub fn new(table: &str, check_definitions: &[String], references: &[String]) -> Result<Self, anyhow::Error> {
-        Ok(TableChecks {
-            table: table.to_owned(),
-            check_definitions: Vec::from(check_definitions),
-            references: Vec::from(references),
-        })
-    }
 
-    pub fn get_checks(&self) -> Result<Vec<PlainCheckType>, anyhow::Error>{
         let mut checks = Vec::new();
-        for check in &self.check_definitions {
-            checks.push(new_plain_test(&self.table, check)?);
+        for check in check_definitions {
+            checks.push(new_plain_test(table, check)?);
         }
-        Ok(checks)
+        Ok(TableChecks {
+            references: Vec::from(references),
+            checks,
+        })
     }
 }
 
