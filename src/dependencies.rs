@@ -135,7 +135,6 @@ impl<T> DependencyNode<T>
         visit(depth, self);
         for dependent in self.dependents.iter() {
             dependent.walk_recursive(depth + 1, visit);
-            println!("Walk: {}", self.get_key());
             visit(depth, self);
         }
     }
