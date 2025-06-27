@@ -342,35 +342,24 @@ pub fn get_passes(definitions: &[(String, String)]) -> Result<Vec<HashMap<String
         let (_, foreign_keys) = parse_test_definition(definition)?;
         let test = new_plain_test(source_table, definition)?;
         println!("Adding table {source_table}");
+        let source_key = test.get_key().to_owned();
+        root.add_group(source_table);
         root.add_child(test);
-        // for target_key in foreign_keys {
-        //     let mut split = target_key.split('.');
-        //     let (Some(target_table), Some(_), None) = (split.next(), split.next(), split.next()) else {
-        //         return Err(anyhow::anyhow!("malformed key {}", target_key));
-        //     };
-        //     root.add_child(test);
-        // }
-    }
-
-
-    for (source_table, definition) in definitions.iter() {
-        let (_, foreign_keys) = parse_test_definition(definition)?;
-        let test = new_plain_test(source_table, definition)?;
         for target_key in foreign_keys {
             let mut split = target_key.split('.');
             let (Some(target_table), Some(_), None) = (split.next(), split.next(), split.next()) else {
                 return Err(anyhow::anyhow!("malformed key {}", target_key));
             };
             println!("Adding group {target_table}");
-            root.add_group(&target_table);
-            dbg!(&root);
-            root.move_under(&target_table.to_owned(), test.get_key())?;
+            root.add_group(target_table);
+            root.move_under(target_table, &source_key)?;
         }
     }
 
     dbg!(&root);
-    panic!("stop");
 
+    dbg!(&root.lca("invoices", "transactions"));
+    panic!("stop");
 
     let dependency_order = get_dependency_order(definitions)?;
     let mut passes = Vec::new();
