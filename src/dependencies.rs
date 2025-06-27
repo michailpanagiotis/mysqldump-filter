@@ -1,17 +1,14 @@
 use crate::checks::parse_test_definition;
 
-pub trait NodeKey {
-    fn get_key(&self) -> String;
-}
-
 #[derive(Debug)]
 enum NodeType<T> {
     Root,
     Node { payload: T },
+    Group(String),
 }
 
 #[derive(Debug)]
-struct DependencyNode<T> {
+pub struct DependencyNode<T> {
     node_type: NodeType<T>,
     dependents: Vec<DependencyNode<T>>,
 }
@@ -26,22 +23,33 @@ impl<T> DependencyNode<T>
         }
     }
 
-    fn new() -> Self {
+    fn new_group(key: &str) -> Self {
+        DependencyNode {
+            node_type: NodeType::Group(key.to_string()),
+            dependents: Vec::new(),
+        }
+    }
+
+    pub fn new() -> Self {
         DependencyNode {
             node_type: NodeType::Root,
             dependents: Vec::new(),
         }
     }
 
-    fn get_payload(&self) -> Option<&T> {
-        let NodeType::Node { payload } = &self.node_type else { return None };
-        Some(payload)
+    fn get_key(&self) -> Option<&str> {
+        match &self.node_type {
+            NodeType::Root => None,
+            NodeType::Node{ payload } => Some(payload.into()),
+            NodeType::Group(key) => Some(key),
+        }
     }
 
     fn unwrap(self) -> (Vec<DependencyNode<T>>, Option<T>) {
         match self.node_type {
             NodeType::Root => (self.dependents, None),
-            NodeType::Node { payload } => (self.dependents, Some(payload))
+            NodeType::Node { payload } => (self.dependents, Some(payload)),
+            NodeType::Group(_) => (self.dependents, None)
         }
     }
 
@@ -51,7 +59,7 @@ impl<T> DependencyNode<T>
     }
 
     fn has_child(&self, key: &str) -> bool {
-        if self.get_payload().is_some_and(|p| p.into() == key) {
+        if self.get_key().is_some_and(|k| k == key) {
             return true;
         }
         if self.dependents.iter().any(|d| d.has_child(key)) {
@@ -60,14 +68,20 @@ impl<T> DependencyNode<T>
         false
     }
 
-    fn add_child(&mut self, payload: T) {
+    pub fn add_child(&mut self, payload: T) {
         if !self.has_child((&payload).into()) {
             self.dependents.push(DependencyNode::new_node(payload));
         }
     }
 
+    pub fn add_group(&mut self, key: &str) {
+        if !self.has_child(key) {
+            self.dependents.push(DependencyNode::new_group(key));
+        }
+    }
+
     fn pop_child(&mut self, key: &str) -> Option<DependencyNode<T>> {
-        if let Some(index) = self.dependents.iter().position(|value| value.get_payload().is_some_and(|p| p.into() == key)) {
+        if let Some(index) = self.dependents.iter().position(|value| value.get_key().is_some_and(|k| k == key)) {
             Some(self.dependents.swap_remove(index))
         } else {
             for dep in self.dependents.iter_mut() {
@@ -81,7 +95,7 @@ impl<T> DependencyNode<T>
     }
 
     fn get_node_mut<'a>(&'a mut self, key: &str) -> Option<&'a mut DependencyNode<T>> {
-        if self.get_payload().is_some_and(|p| p.into() == key) {
+        if self.get_key().is_some_and(|k| k == key) {
             return Some(self);
         }
         for dep in self.dependents.iter_mut() {
@@ -93,7 +107,7 @@ impl<T> DependencyNode<T>
         None
     }
 
-    fn move_under(&mut self, parent_key: &str, child_key: &str) -> Result<(), anyhow::Error> {
+    pub fn move_under(&mut self, parent_key: &str, child_key: &str) -> Result<(), anyhow::Error> {
         println!("Moving {} under {}", child_key, parent_key);
         let child = self.pop_child(child_key).ok_or(anyhow::anyhow!("child {child_key} does not exist"))?;
         self.get_node_mut(parent_key).ok_or(anyhow::anyhow!("parent {parent_key} does not exist"))?.dependents.push(child);
