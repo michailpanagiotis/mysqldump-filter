@@ -439,7 +439,5 @@ pub fn get_passes<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(condition
 
     dbg!(&root);
 
-    let res: Vec<PassChecks> = chunk_by_depth(root).into_iter().map(|checks| PassChecks::from(checks)).collect();
-
-    Ok(res)
+    Ok(chunk_by_depth(root).into_iter().map(PassChecks::from).collect())
 }
