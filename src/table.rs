@@ -6,12 +6,16 @@ use crate::checks::{get_passes, test_checks, PlainCheckType};
 use crate::scanner::process_table_inserts;
 
 fn process_data_file(
-    table: &str,
     checks: &[PlainCheckType],
     lookup_table: &HashMap<String, HashSet<String>>,
     working_file_path: &Path,
 ) -> Result<Option<HashMap<String, HashSet<String>>>, anyhow::Error> {
     let tracked_columns: Vec<String> = checks.iter().flat_map(|c| c.get_tracked_columns()).collect();
+    let tables: HashSet<&str> = checks.iter().map(|c| c.get_table_name()).collect();
+    if tables.len() != 1 {
+        Err(anyhow::anyhow!("cannot perform checks on multiple tables at once"))?;
+    }
+    let Some(table) = tables.iter().next() else { Err(anyhow::anyhow!("cannot find table"))? };
     let captured = process_table_inserts(working_file_path, table, &tracked_columns, |statement| {
         let value_per_field = statement.get_values()?;
 
@@ -58,7 +62,6 @@ impl CheckCollection {
             dbg!(&lookup_table);
             for (table, table_checks) in pending.iter() {
                 let captured_option = process_data_file(
-                    table,
                     table_checks,
                     &lookup_table,
                     working_file_path,
