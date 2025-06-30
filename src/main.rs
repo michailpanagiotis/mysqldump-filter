@@ -9,7 +9,8 @@ mod dependencies;
 mod table;
 mod scanner;
 
-use table::CheckCollection;
+use table::{process_checks};
+use checks::{get_passes};
 use scanner::{explode_to_files, gather};
 
 #[derive(Debug)]
@@ -71,8 +72,8 @@ fn main() -> Result<(), anyhow::Error> {
     //     panic!("Problem exploding to files: {e:?}");
     // });
 
-    let mut collection = CheckCollection::new(config.filters.iter().chain(&config.cascades))?;
-    collection.process(working_file_path.as_path())?;
+    let passes = get_passes(config.filters.iter().chain(&config.cascades))?;
+    process_checks(&passes, working_file_path.as_path())?;
     // gather(&working_file_path, &output_file)?;
     //
     // dbg!(collection);

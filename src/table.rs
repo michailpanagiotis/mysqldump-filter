@@ -1,9 +1,9 @@
 use std::collections::{HashMap, HashSet};
-use std::fmt::Debug;
 use std::path::Path;
 
-use crate::checks::{get_passes, test_checks, PlainCheckType};
+use crate::checks::PlainCheckType;
 use crate::scanner::process_table_inserts;
+
 
 pub fn process_checks(passes: &[Vec<Vec<PlainCheckType>>], working_file_path: &Path) -> Result<(), anyhow::Error> {
     let mut current_pass = 1;
@@ -23,10 +23,13 @@ pub fn process_checks(passes: &[Vec<Vec<PlainCheckType>>], working_file_path: &P
             let captured = process_table_inserts(working_file_path, table, &tracked_columns, |statement| {
                 let value_per_field = statement.get_values()?;
 
-                match test_checks(checks, value_per_field, &lookup_table)? {
-                    false => Ok(None),
-                    true => Ok(Some(()))
+                for check in checks.iter() {
+                    if !check.test(value_per_field, &lookup_table)? {
+                        return Ok(None);
+                    }
                 }
+
+                Ok(Some(()))
             })?;
 
             lookup_table.extend(captured);
@@ -35,34 +38,4 @@ pub fn process_checks(passes: &[Vec<Vec<PlainCheckType>>], working_file_path: &P
     }
     dbg!(&lookup_table);
     Ok(())
-}
-
-#[derive(Debug)]
-pub struct CheckCollection {
-    definitions: Vec<(String, String)>,
-    passes: Vec<Vec<Vec<PlainCheckType>>>,
-}
-
-impl CheckCollection {
-    pub fn new<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
-        conditions: I,
-    ) -> Result<Self, anyhow::Error> {
-        let definitions: Vec<(String, String)> = conditions.flat_map(|(table, conds)| {
-            conds.iter().map(|c| (table.to_owned(), c.to_owned()))
-        }).collect();
-
-        let passes = get_passes(&definitions)?;
-
-        Ok(CheckCollection {
-            definitions: definitions.clone(),
-            passes,
-        })
-    }
-
-    pub fn process(
-        &mut self,
-        working_file_path: &Path,
-    ) -> Result<(), anyhow::Error> {
-        process_checks(&self.passes, working_file_path)
-    }
 }

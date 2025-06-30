@@ -55,12 +55,25 @@ impl Value {
 pub trait PlainColumnCheck {
     fn new(definition: &str, table: &str) -> Result<impl PlainColumnCheck + 'static, anyhow::Error> where Self: Sized;
 
-    fn test(
+    fn test_value(
         &self,
         value: &str,
         data_type: &sqlparser::ast::DataType,
         lookup_table: &HashMap<String, HashSet<String>>,
     ) -> Result<bool, anyhow::Error>;
+
+    fn test(
+        &self,
+        value_per_field: &HashMap<String, (String, sqlparser::ast::DataType)>,
+        lookup_table: &HashMap<String, HashSet<String>>,
+    ) -> Result<bool, anyhow::Error> {
+        if self.as_any().downcast_ref::<PlainTrackingTest>().is_some() {
+            return Ok(true);
+        }
+        let col_name = self.get_column_name();
+        let (str_value, data_type): &(String, sqlparser::ast::DataType) = &value_per_field[col_name];
+        self.test_value(str_value, data_type, lookup_table)
+    }
 
     fn get_table_name(&self) -> &str;
 
@@ -150,7 +163,7 @@ impl PlainColumnCheck for PlainCelTest {
         })
     }
 
-    fn test(
+    fn test_value(
         &self,
         value: &str,
         data_type: &sqlparser::ast::DataType,
@@ -226,7 +239,7 @@ impl PlainColumnCheck for PlainLookupTest {
         })
     }
 
-    fn test(
+    fn test_value(
         &self,
         value: &str,
         _data_type: &sqlparser::ast::DataType,
@@ -288,7 +301,7 @@ impl PlainColumnCheck for PlainTrackingTest {
         })
     }
 
-    fn test(
+    fn test_value(
         &self,
         _value: &str,
         _data_type: &sqlparser::ast::DataType,
@@ -344,7 +357,11 @@ pub fn parse_test_definition(definition: &str) -> Result<(String, Vec<String>), 
     Ok((column_name, foreign_keys))
 }
 
-pub fn get_passes(definitions: &[(String, String)]) -> Result<Vec<Vec<Vec<PlainCheckType>>>, anyhow::Error> {
+pub fn get_passes<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(conditions: I) -> Result<Vec<Vec<Vec<PlainCheckType>>>, anyhow::Error> {
+    let definitions: Vec<(String, String)> = conditions.flat_map(|(table, conds)| {
+        conds.iter().map(|c| (table.to_owned(), c.to_owned()))
+    }).collect();
+
     let mut root = DependencyNode::<PlainCheckType>::new();
     for (source_table, definition) in definitions.iter() {
         let (_, foreign_keys) = parse_test_definition(definition)?;
@@ -368,22 +385,4 @@ pub fn get_passes(definitions: &[(String, String)]) -> Result<Vec<Vec<Vec<PlainC
     dbg!(&root);
 
     Ok(root.chunk_by_depth())
-}
-
-pub fn test_checks(
-    checks: &[PlainCheckType],
-    value_per_field: &HashMap<String, (String, sqlparser::ast::DataType)>,
-    lookup_table: &HashMap<String, HashSet<String>>,
-) -> Result<bool, anyhow::Error> {
-    for check in checks.iter() {
-        if check.as_any().downcast_ref::<PlainTrackingTest>().is_some() {
-            continue;
-        }
-        let col_name = check.get_column_name();
-        let (str_value, data_type): &(String, sqlparser::ast::DataType) = &value_per_field[col_name];
-        if !check.test(str_value, data_type, lookup_table)? {
-            return Ok(false);
-        }
-    }
-    Ok(true)
 }
