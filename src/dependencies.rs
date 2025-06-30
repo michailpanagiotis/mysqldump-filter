@@ -1,5 +1,4 @@
 use crate::checks::parse_test_definition;
-use itertools::Group;
 use lazy_static::lazy_static;
 
 lazy_static! {
@@ -11,7 +10,7 @@ pub trait DfsFn<T>: FnMut(usize, &DependencyNode<T>) {}
 impl<T, A: FnMut(usize, &DependencyNode<T>)> DfsFn<T> for A {}
 
 #[derive(Debug)]
-enum NodeType<T> {
+pub enum NodeType<T> {
     Root,
     Node { payload: T },
     Group{ name: String, payloads: Vec<T> },
@@ -185,8 +184,8 @@ impl<T> DependencyNode<T>
         });
     }
 
-    pub fn chunk_by_depth(self) -> Vec<Vec<T>> {
-        let mut depths: Vec<Vec<T>> = Vec::new();
+    pub fn chunk_by_depth(self) -> Vec<Vec<NodeType<T>>> {
+        let mut depths: Vec<Vec<NodeType<T>>> = Vec::new();
         let mut dfs: Vec<(DependencyNode<T>, usize)> = Vec::new();
         for dep in self.dependents.into_iter() { dfs.push((dep, 0)) };
 
@@ -198,15 +197,8 @@ impl<T> DependencyNode<T>
                 depths.push(Vec::new());
             }
 
-            let (dependents, payload_option) = node.unwrap();
-
-            if let Some(payloads) = payload_option {
-                for payload in payloads {
-                    depths[depth].push(payload);
-                }
-            }
-
-            for dep in dependents.into_iter() {
+            depths[depth].push(node.node_type);
+            for dep in node.dependents.into_iter() {
                 dfs.push((dep, depth + 1));
             }
 
@@ -226,7 +218,7 @@ impl<'a> Into<&'a str> for &'a Test {
     }
 }
 
-pub fn get_dependency_order(definitions: &[(String, String)]) -> Result<Vec<Vec<Test>>, anyhow::Error> {
+pub fn get_dependency_order(definitions: &[(String, String)]) -> Result<Vec<Vec<NodeType<Test>>>, anyhow::Error> {
     let mut root = DependencyNode::<Test>::new();
     for (source_table, definition) in definitions.iter() {
         let (_, foreign_keys) = parse_test_definition(definition)?;
@@ -239,5 +231,5 @@ pub fn get_dependency_order(definitions: &[(String, String)]) -> Result<Vec<Vec<
             root.move_under(&target_table.to_owned(), source_table)?;
         }
     }
-    Ok(root.group_by_depth())
+    Ok(root.chunk_by_depth())
 }
