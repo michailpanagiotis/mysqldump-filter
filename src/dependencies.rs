@@ -61,19 +61,6 @@ impl<T> DependencyNode<T>
         }
     }
 
-    fn unwrap(self) -> (Vec<DependencyNode<T>>, Option<Vec<T>>) {
-        match self.node_type {
-            NodeType::Root => (self.dependents, None),
-            NodeType::Node { payload } => (self.dependents, Some(Vec::from([payload]))),
-            NodeType::Group { payloads, .. } => (self.dependents, Some(payloads))
-        }
-    }
-
-    fn pop_payload(self) -> Option<T> {
-        let NodeType::Node { payload } = self.node_type else { return None };
-        Some(payload)
-    }
-
     fn has_child(&self, key: &str) -> bool {
         if self.get_key() == key {
             return true;
@@ -88,6 +75,20 @@ impl<T> DependencyNode<T>
         if !self.has_child((&payload).into()) {
             self.dependents.push(DependencyNode::new_node(payload));
         }
+    }
+
+    pub fn add_child_to_group(&mut self, payload: T, group_key: &str) -> Result<(), anyhow::Error> {
+        let key = (&payload).into().to_string();
+
+        if !self.has_child(group_key) {
+            self.dependents.push(DependencyNode::new_group(group_key));
+        }
+
+        if !self.has_child((&payload).into()) {
+            self.dependents.push(DependencyNode::new_node(payload));
+        }
+        self.move_into(group_key, &key)?;
+        Ok(())
     }
 
     pub fn add_group(&mut self, key: &str) {
@@ -124,7 +125,6 @@ impl<T> DependencyNode<T>
     }
 
     pub fn move_under(&mut self, parent_key: &str, child_key: &str) -> Result<(), anyhow::Error> {
-        println!("Moving {} under {}", child_key, parent_key);
         let child = self.pop_child(child_key).ok_or(anyhow::anyhow!("child {child_key} does not exist"))?;
         self.get_node_mut(parent_key).ok_or(anyhow::anyhow!("parent {parent_key} does not exist"))?.dependents.push(child);
         Ok(())
@@ -138,7 +138,14 @@ impl<T> DependencyNode<T>
             NodeType::Group { payloads, .. } => {
                 match child.node_type {
                     NodeType::Node { payload } => {
-                        payloads.push(payload);
+                        let needle: &str = (&payload).into();
+                        let found = payloads.iter().find(|x| {
+                            let haystack: &str = (*x).into();
+                            needle == haystack
+                        });
+                        if found.is_none() {
+                            payloads.push(payload);
+                        }
                     },
                     _ => Err(anyhow::anyhow!("can only move node type"))?
                 };
@@ -176,12 +183,6 @@ impl<T> DependencyNode<T>
             std::cmp::max(first_index, second_index),
         ) else { return Err(anyhow::anyhow!("cannot find lca index")) };
         Ok(keys[lca_index].to_owned())
-    }
-
-    pub fn print(&self) {
-        self.dfs(&mut |depth, node: &DependencyNode<T>| {
-            println!("Walk: {} {}", depth, node.get_key())
-        });
     }
 
     pub fn chunk_by_depth(self) -> Vec<Vec<NodeType<T>>> {
