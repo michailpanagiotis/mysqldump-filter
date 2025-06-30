@@ -413,9 +413,11 @@ pub fn get_passes(definitions: &[(String, String)]) -> Result<Vec<HashMap<String
         let new_check = new_plain_test(source_table, definition)?;
         println!("Adding table {source_table}");
         let source_key = new_check.get_key().to_owned();
+
         root.add_group(source_table);
         root.add_child(new_check);
-        root.move_into(source_table, &source_key)?;
+        root.move_under(source_table, &source_key)?;
+
         for target_key in foreign_keys {
             let mut split = target_key.split('.');
             let (Some(target_table), Some(_), None) = (split.next(), split.next(), split.next()) else {
@@ -429,9 +431,9 @@ pub fn get_passes(definitions: &[(String, String)]) -> Result<Vec<HashMap<String
             let key = target_check.get_key().to_owned();
             println!("Adding target {key}");
             root.add_child(target_check);
-            root.move_into(target_table, &key)?;
+            root.move_under(target_table, &key)?;
 
-            root.move_under(target_table, &source_table)?;
+            root.move_under(&key, &source_table)?;
         }
     }
 
