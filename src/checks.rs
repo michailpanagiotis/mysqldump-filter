@@ -79,9 +79,9 @@ pub trait PlainColumnCheck {
     fn as_any(&self) -> &dyn Any;
 }
 
-impl<'a> Into<&'a str> for &'a PlainCheckType {
-    fn into(self) -> &'a str {
-        self.get_key()
+impl<'a> From<&'a PlainCheckType> for &'a str {
+    fn from(item: &'a PlainCheckType) -> Self {
+        item.get_key()
     }
 }
 
