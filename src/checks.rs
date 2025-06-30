@@ -65,9 +65,15 @@ pub trait PlainColumnCheck {
 
     fn get_column_name(&self) -> &str;
 
+    fn get_column_key(&self) -> String {
+        String::from(self.get_table_name()) + "." + self.get_column_name()
+    }
+
     fn get_definition(&self) -> &str;
 
     fn get_key(&self) -> &str;
+
+    fn get_captured(&self) -> Option<&HashSet<String>>;
 }
 
 impl<'a> Into<&'a str> for &'a PlainCheckType {
@@ -172,6 +178,10 @@ impl PlainColumnCheck for PlainCelTest {
     fn get_column_name(&self) -> &str {
         &self.column_name
     }
+
+    fn get_captured(&self) -> Option<&HashSet<String>> {
+        None
+    }
 }
 
 #[derive(Debug)]
@@ -234,6 +244,10 @@ impl PlainColumnCheck for PlainLookupTest {
     fn get_column_name(&self) -> &str {
         &self.column_name
     }
+
+    fn get_captured(&self) -> Option<&HashSet<String>> {
+        None
+    }
 }
 
 #[derive(Debug)]
@@ -295,6 +309,10 @@ impl PlainColumnCheck for PlainTrackingTest {
 
     fn get_column_name(&self) -> &str {
         &self.column_name
+    }
+
+    fn get_captured(&self) -> Option<&HashSet<String>> {
+        Some(&self.values)
     }
 }
 
