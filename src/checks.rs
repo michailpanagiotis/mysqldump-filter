@@ -11,6 +11,17 @@ pub type PlainCheckType = Box<dyn PlainColumnCheck>;
 #[derive(Debug)]
 pub struct TableChecks(pub Vec<PlainCheckType>);
 
+impl TableChecks {
+    pub fn get_table(&self) -> Result<&str, anyhow::Error> {
+        let tables: HashSet<&str> = self.0.iter().map(|c| c.get_table_name()).collect();
+        if tables.len() != 1 {
+            Err(anyhow::anyhow!("cannot perform checks on multiple tables at once"))?;
+        }
+        let Some(table) = tables.iter().next() else { Err(anyhow::anyhow!("cannot find table"))? };
+        Ok(table)
+    }
+}
+
 impl From<Vec<PlainCheckType>> for TableChecks {
     fn from(items: Vec<PlainCheckType>) -> Self {
         Self(items)
@@ -22,7 +33,16 @@ pub struct PassChecks(pub Vec<TableChecks>);
 
 impl From<Vec<Vec<PlainCheckType>>> for PassChecks {
     fn from(items: Vec<Vec<PlainCheckType>>) -> Self {
-        Self(items.into_iter().map(|it| TableChecks::from(it)).collect())
+        Self(items.into_iter().map(TableChecks::from).collect())
+    }
+}
+
+impl IntoIterator for PassChecks {
+    type Item = TableChecks;
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
     }
 }
 
