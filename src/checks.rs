@@ -1,5 +1,6 @@
 use cel_interpreter::{Context, Program};
 use chrono::NaiveDateTime;
+use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -74,6 +75,8 @@ pub trait PlainColumnCheck {
     fn get_key(&self) -> &str;
 
     fn get_tracked_columns(&self) -> Vec<String>;
+
+    fn as_any(&self) -> &dyn Any;
 }
 
 impl<'a> Into<&'a str> for &'a PlainCheckType {
@@ -182,6 +185,10 @@ impl PlainColumnCheck for PlainCelTest {
     fn get_tracked_columns(&self) -> Vec<String> {
         Vec::new()
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 #[derive(Debug)]
@@ -248,6 +255,10 @@ impl PlainColumnCheck for PlainLookupTest {
     fn get_tracked_columns(&self) -> Vec<String> {
         Vec::new()
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 #[derive(Debug)]
@@ -256,16 +267,6 @@ pub struct PlainTrackingTest {
     table_name: String,
     column_name: String,
     definition: String,
-}
-
-impl PlainTrackingTest {
-    pub fn get_column_info(definition: &str) -> Result<(String, Vec<String>), anyhow::Error> {
-        let mut split = definition.split("->");
-        let (Some(column_name), Some(foreign_key), None) = (split.next(), split.next(), split.next()) else {
-            panic!("cannot parse cascade");
-        };
-        Ok((column_name.to_owned(), Vec::from([foreign_key.to_owned()])))
-    }
 }
 
 impl PlainColumnCheck for PlainTrackingTest {
@@ -311,6 +312,10 @@ impl PlainColumnCheck for PlainTrackingTest {
     fn get_tracked_columns(&self) -> Vec<String> {
         Vec::from([self.get_column_key()])
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 pub fn new_plain_test(table: &str, definition: &str) -> Result<PlainCheckType, anyhow::Error> {
@@ -335,92 +340,7 @@ pub fn parse_test_definition(definition: &str) -> Result<(String, Vec<String>), 
     Ok((column_name, foreign_keys))
 }
 
-pub fn determine_target_tables(definition: &str) -> Result<Vec<String>, anyhow::Error> {
-    let mut target_tables = Vec::new();
-    let (_, deps) = parse_test_definition(definition)?;
-    for key in deps.iter() {
-        let mut split = key.split('.');
-        let (Some(target_table), Some(_), None) = (split.next(), split.next(), split.next()) else {
-            return Err(anyhow::anyhow!("malformed key {}", key));
-        };
-        target_tables.push(target_table.to_owned());
-        target_tables.dedup();
-    }
-    Ok(target_tables)
-}
-
-fn determine_checks_per_table(definitions: &[(String, String)]) -> Result<HashMap<String, Vec<String>>, anyhow::Error> {
-    let mut checks: HashMap<String, Vec<String>> = HashMap::new();
-    for (table, definition) in definitions.iter() {
-        if !checks.contains_key(table) {
-            checks.insert(table.to_owned(), Vec::new());
-        }
-
-        let Some(t_checks) = checks.get_mut(table) else {
-            return Err(anyhow::anyhow!("cannot get references of table"));
-        };
-        t_checks.push(definition.to_owned());
-        t_checks.dedup();
-    }
-    Ok(checks)
-}
-
-fn determine_references_per_table(definitions: &[(String, String)]) -> Result<HashMap<String, Vec<String>>, anyhow::Error> {
-    let mut references: HashMap<String, Vec<String>> = HashMap::new();
-    for (table, definition) in definitions.iter() {
-        let (_, deps) = parse_test_definition(definition)?;
-        if !references.contains_key(table) {
-            references.insert(table.to_owned(), Vec::new());
-        }
-
-        for key in deps.iter() {
-            let mut split = key.split('.');
-            dbg!(&key);
-            let (Some(target_table), Some(_), None) = (split.next(), split.next(), split.next()) else {
-                return Err(anyhow::anyhow!("malformed key {}", key));
-            };
-            if !references.contains_key(target_table) {
-                references.insert(target_table.to_owned(), Vec::new());
-            }
-
-            let Some(refs) = references.get_mut(target_table) else {
-                return Err(anyhow::anyhow!("cannot get references of table"));
-            };
-            refs.push(key.to_owned());
-            refs.dedup();
-        }
-    }
-    Ok(references)
-}
-
-fn determine_all_checked_tables(definitions: &[(String, String)]) -> Result<HashSet<String>, anyhow::Error> {
-    let mut all_tables: HashSet<String> = HashSet::new();
-    for (table, definition) in definitions.iter() {
-        all_tables.insert(table.to_owned());
-        let target_tables = determine_target_tables(definition)?;
-        for target_table in target_tables {
-            all_tables.insert(target_table.to_owned());
-        }
-    }
-    Ok(all_tables)
-}
-
-#[derive(Debug)]
-pub struct TableChecks {
-    pub references: Vec<String>,
-    pub checks: Vec<PlainCheckType>,
-}
-
-impl TableChecks {
-    pub fn new(check_definitions: Vec<PlainCheckType>, references: &[String]) -> Result<Self, anyhow::Error> {
-        Ok(TableChecks {
-            references: Vec::from(references),
-            checks: check_definitions,
-        })
-    }
-}
-
-pub fn get_passes(definitions: &[(String, String)]) -> Result<Vec<HashMap<String, Vec<PlainCheckType>>>, anyhow::Error> {
+pub fn get_passes(definitions: &[(String, String)]) -> Result<Vec<Vec<Vec<PlainCheckType>>>, anyhow::Error> {
     let mut root = DependencyNode::<PlainCheckType>::new();
     for (source_table, definition) in definitions.iter() {
         let (_, foreign_keys) = parse_test_definition(definition)?;
@@ -452,6 +372,9 @@ pub fn test_checks(
     lookup_table: &HashMap<String, HashSet<String>>,
 ) -> Result<bool, anyhow::Error> {
     for check in checks.iter() {
+        if check.as_any().downcast_ref::<PlainTrackingTest>().is_some() {
+            continue;
+        }
         let col_name = check.get_column_name();
         let (str_value, data_type): &(String, sqlparser::ast::DataType) = &value_per_field[col_name];
         if !check.test(str_value, data_type, lookup_table)? {

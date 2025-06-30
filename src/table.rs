@@ -60,13 +60,12 @@ impl CheckCollection {
             println!("Running pass {current_pass}");
             dbg!(&pending);
             dbg!(&lookup_table);
-            for (table, table_checks) in pending.iter() {
-                let captured_option = process_data_file(
+            for table_checks in pending.iter() {
+                if let Some(captured) = process_data_file(
                     table_checks,
                     &lookup_table,
                     working_file_path,
-                )?;
-                if let Some(captured) = captured_option {
+                )? {
                     lookup_table.extend(captured);
                 }
             }
