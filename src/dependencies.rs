@@ -62,11 +62,11 @@ impl<T> DependencyNode<T>
         }
     }
 
-    fn unwrap(self) -> (Vec<DependencyNode<T>>, Option<T>) {
+    fn unwrap(self) -> (Vec<DependencyNode<T>>, Option<Vec<T>>) {
         match self.node_type {
             NodeType::Root => (self.dependents, None),
-            NodeType::Node { payload } => (self.dependents, Some(payload)),
-            NodeType::Group { .. } => (self.dependents, None)
+            NodeType::Node { payload } => (self.dependents, Some(Vec::from([payload]))),
+            NodeType::Group { payloads, .. } => (self.dependents, Some(payloads))
         }
     }
 
@@ -185,7 +185,7 @@ impl<T> DependencyNode<T>
         });
     }
 
-    fn group_by_depth(self) -> Vec<Vec<T>> {
+    pub fn group_by_depth(self) -> Vec<Vec<T>> {
         let mut depths: Vec<Vec<T>> = Vec::new();
         let mut dfs: Vec<(DependencyNode<T>, usize)> = Vec::new();
         for dep in self.dependents.into_iter() { dfs.push((dep, 0)) };
@@ -200,8 +200,10 @@ impl<T> DependencyNode<T>
 
             let (dependents, payload_option) = node.unwrap();
 
-            if let Some(payload) = payload_option {
-                depths[depth].push(payload);
+            if let Some(payloads) = payload_option {
+                for payload in payloads {
+                    depths[depth].push(payload);
+                }
             }
 
             for dep in dependents.into_iter() {

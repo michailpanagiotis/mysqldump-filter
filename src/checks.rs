@@ -73,7 +73,7 @@ pub trait PlainColumnCheck {
 
 impl core::fmt::Debug for dyn PlainColumnCheck {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        (self.get_table_name().to_string() + ": " + self.get_definition()).fmt(f)
+        (self.get_key()).fmt(f)
     }
 }
 
@@ -128,7 +128,7 @@ impl PlainColumnCheck for PlainCelTest {
         let column = &variables[0];
 
         Ok(PlainCelTest {
-            key: table.to_owned() + ": " + definition,
+            key: String::from("cel: ") + table + ": " + definition,
             table_name: table.to_owned(),
             column_name: column.to_owned(),
             definition: definition.to_owned(),
@@ -197,7 +197,7 @@ impl PlainColumnCheck for PlainLookupTest {
         };
 
         Ok(PlainLookupTest {
-            key: table.to_owned() + ": " + definition,
+            key: String::from("lookup: ") + table + ": " + definition,
             table_name: table.to_owned(),
             column_name: source_column.to_owned(),
             definition: definition.to_owned(),
@@ -233,6 +233,66 @@ impl PlainColumnCheck for PlainLookupTest {
     }
 }
 
+#[derive(Debug)]
+pub struct PlainTrackingTest {
+    key: String,
+    table_name: String,
+    column_name: String,
+    definition: String,
+}
+
+impl PlainTrackingTest {
+    pub fn get_column_info(definition: &str) -> Result<(String, Vec<String>), anyhow::Error> {
+        let mut split = definition.split("->");
+        let (Some(column_name), Some(foreign_key), None) = (split.next(), split.next(), split.next()) else {
+            panic!("cannot parse cascade");
+        };
+        Ok((column_name.to_owned(), Vec::from([foreign_key.to_owned()])))
+    }
+}
+
+impl PlainColumnCheck for PlainTrackingTest {
+    fn new(definition: &str, table: &str) -> Result<impl PlainColumnCheck + 'static, anyhow::Error> where Self: Sized {
+        let mut split = definition.split(".");
+        let (Some(table), Some(column), None) = (split.next(), split.next(), split.next()) else {
+            panic!("cannot parse test");
+        };
+
+        Ok(PlainTrackingTest {
+            key: String::from("track: ") + table + ": " + definition,
+            table_name: table.to_owned(),
+            column_name: column.to_owned(),
+            definition: definition.to_owned(),
+        })
+    }
+
+    fn test(
+        &self,
+        _column_name: &str,
+        _value: &str,
+        _data_type: &sqlparser::ast::DataType,
+        _lookup_table: &HashMap<String, HashSet<String>>,
+    ) -> Result<bool, anyhow::Error> {
+        Ok(true)
+    }
+
+    fn get_key(&self) -> &str {
+        &self.key
+    }
+
+    fn get_definition(&self) -> &str {
+        &self.definition
+    }
+
+    fn get_table_name(&self) -> &str {
+        &self.table_name
+    }
+
+    fn get_column_name(&self) -> &str {
+        &self.column_name
+    }
+}
+
 pub fn new_plain_test(table: &str, definition: &str) -> Result<PlainCheckType, anyhow::Error> {
     let item: PlainCheckType = if definition.contains("->") {
         Box::new(PlainLookupTest::new(definition, table)?)
@@ -240,6 +300,10 @@ pub fn new_plain_test(table: &str, definition: &str) -> Result<PlainCheckType, a
         Box::new(PlainCelTest::new(definition, table)?)
     };
     Ok(item)
+}
+
+pub fn new_tracking_test(table: &str, definition: &str) -> Result<PlainCheckType, anyhow::Error> {
+    Ok(Box::new(PlainTrackingTest::new(definition, table)?))
 }
 
 pub fn parse_test_definition(definition: &str) -> Result<(String, Vec<String>), anyhow::Error> {
@@ -353,6 +417,14 @@ pub fn get_passes(definitions: &[(String, String)]) -> Result<Vec<HashMap<String
             };
             println!("Adding group {target_table}");
             root.add_group(target_table);
+
+            let target_check = new_tracking_test(target_table, &target_key)?;
+
+            let key = target_check.get_key().to_owned();
+            println!("Adding target {key}");
+            root.add_child(target_check);
+            root.move_into(target_table, &key)?;
+
             root.move_under(target_table, &source_table)?;
         }
     }
@@ -360,6 +432,7 @@ pub fn get_passes(definitions: &[(String, String)]) -> Result<Vec<HashMap<String
     dbg!(&root);
 
     dbg!(&root.lca("invoices", "transactions"));
+    dbg!(&root.group_by_depth());
     panic!("stop");
 
     let dependency_order = get_dependency_order(definitions)?;
