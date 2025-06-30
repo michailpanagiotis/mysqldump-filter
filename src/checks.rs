@@ -3,7 +3,7 @@ use chrono::NaiveDateTime;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::dependencies::{DependencyNode, get_dependency_order};
+use crate::dependencies::DependencyNode;
 
 pub type PlainCheckType = Box<dyn PlainColumnCheck>;
 
@@ -55,8 +55,7 @@ pub trait PlainColumnCheck {
     fn new(definition: &str, table: &str) -> Result<impl PlainColumnCheck + 'static, anyhow::Error> where Self: Sized;
 
     fn test(
-        &self,
-        column_name: &str,
+        &mut self,
         value: &str,
         data_type: &sqlparser::ast::DataType,
         lookup_table: &HashMap<String, HashSet<String>>,
@@ -143,13 +142,12 @@ impl PlainColumnCheck for PlainCelTest {
     }
 
     fn test(
-        &self,
-        column_name: &str,
+        &mut self,
         value: &str,
         data_type: &sqlparser::ast::DataType,
         _lookup_table: &HashMap<String, HashSet<String>>,
     ) -> Result<bool, anyhow::Error> {
-        let context = self.build_context(column_name, value, data_type)?;
+        let context = self.build_context(self.get_column_name(), value, data_type)?;
         match self.program.execute(&context)? {
             cel_interpreter::objects::Value::Bool(v) => {
                 // println!("testing {}.{} {} -> {}", self.table, self.column, &other_value, &v);
@@ -212,8 +210,7 @@ impl PlainColumnCheck for PlainLookupTest {
     }
 
     fn test(
-        &self,
-        _column_name: &str,
+        &mut self,
         value: &str,
         _data_type: &sqlparser::ast::DataType,
         lookup_table: &HashMap<String, HashSet<String>>,
@@ -245,6 +242,7 @@ pub struct PlainTrackingTest {
     table_name: String,
     column_name: String,
     definition: String,
+    values: HashSet<String>,
 }
 
 impl PlainTrackingTest {
@@ -269,16 +267,17 @@ impl PlainColumnCheck for PlainTrackingTest {
             table_name: table.to_owned(),
             column_name: column.to_owned(),
             definition: definition.to_owned(),
+            values: HashSet::new(),
         })
     }
 
     fn test(
-        &self,
-        _column_name: &str,
-        _value: &str,
+        &mut self,
+        value: &str,
         _data_type: &sqlparser::ast::DataType,
         _lookup_table: &HashMap<String, HashSet<String>>,
     ) -> Result<bool, anyhow::Error> {
+        self.values.insert(value.to_string());
         Ok(true)
     }
 
@@ -406,7 +405,7 @@ impl TableChecks {
     }
 }
 
-pub fn get_passes(definitions: &[(String, String)]) -> Result<Vec<HashMap<String, TableChecks>>, anyhow::Error> {
+pub fn get_passes(definitions: &[(String, String)]) -> Result<Vec<HashMap<String, Vec<PlainCheckType>>>, anyhow::Error> {
     let mut root = DependencyNode::<PlainCheckType>::new();
     for (source_table, definition) in definitions.iter() {
         let (_, foreign_keys) = parse_test_definition(definition)?;
@@ -429,44 +428,18 @@ pub fn get_passes(definitions: &[(String, String)]) -> Result<Vec<HashMap<String
 
     dbg!(&root);
 
-    dbg!(&root.lca("invoices", "transactions"));
-    dbg!(&root.chunk_by_depth());
-    panic!("stop");
-
-    let dependency_order = get_dependency_order(definitions)?;
-    let mut passes = Vec::new();
-
-    let definitions_per_table = determine_checks_per_table(definitions)?;
-    let references_per_table = determine_references_per_table(definitions)?;
-
-    // for tables in dependency_order.iter() {
-    //     let mut checks: HashMap<String, TableChecks> = HashMap::new();
-    //     for table in tables {
-    //         let mut compiled_checks = Vec::new();
-    //         for check in &definitions_per_table[table] {
-    //             compiled_checks.push(new_plain_test(table, check)?);
-    //         }
-    //         let table_checks = TableChecks::new(compiled_checks, &references_per_table[table])?;
-    //         checks.insert(table.to_owned(), table_checks);
-    //     }
-    //     passes.push(checks);
-    // }
-
-    dbg!(&dependency_order);
-    dbg!(&passes);
-    panic!("stop");
-    Ok(passes)
+    Ok(root.chunk_by_depth())
 }
 
 pub fn test_checks(
-    checks: &[PlainCheckType],
+    checks: &mut [PlainCheckType],
     value_per_field: &HashMap<String, (String, sqlparser::ast::DataType)>,
     lookup_table: &HashMap<String, HashSet<String>>,
 ) -> Result<bool, anyhow::Error> {
-    for check in checks.iter() {
-        let col_name = check.get_column_name();
-        let (str_value, data_type): &(String, sqlparser::ast::DataType) = &value_per_field[col_name];
-        if !check.test(col_name, str_value, data_type, lookup_table)? {
+    for check in checks.iter_mut() {
+        let col_name = check.get_column_name().to_owned();
+        let (str_value, data_type): &(String, sqlparser::ast::DataType) = &value_per_field[&col_name];
+        if !check.test(str_value, data_type, lookup_table)? {
             return Ok(false);
         }
     }

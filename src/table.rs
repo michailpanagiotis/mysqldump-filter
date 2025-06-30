@@ -7,7 +7,7 @@ use crate::scanner::process_table_inserts;
 
 fn process_data_file(
     table: &str,
-    checks: &[PlainCheckType],
+    checks: &mut [PlainCheckType],
     tracked_columns: &[String],
     lookup_table: &HashMap<String, HashSet<String>>,
     working_file_path: &Path,
@@ -48,21 +48,19 @@ impl CheckCollection {
         let mut current_pass = 1;
         let mut lookup_table = HashMap::new();
 
-        let passes = get_passes(&self.definitions)?;
+        let mut passes = get_passes(&self.definitions)?;
 
         dbg!(&passes);
 
-        for pending in &passes {
+        for pending in &mut passes {
             println!("Running pass {current_pass}");
             dbg!(&pending);
             dbg!(&lookup_table);
-            for (table, table_checks) in pending.iter() {
-                let checks: &Vec<PlainCheckType> = &table_checks.checks;
-                let tracked_columns: &Vec<String> = &table_checks.references;
+            for (table, table_checks) in pending.iter_mut() {
                 let captured_option = process_data_file(
                     table,
-                    checks,
-                    tracked_columns,
+                    table_checks,
+                    &[],
                     &lookup_table,
                     working_file_path,
                 )?;

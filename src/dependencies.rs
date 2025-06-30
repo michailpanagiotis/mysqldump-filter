@@ -1,5 +1,6 @@
 use crate::checks::parse_test_definition;
 use lazy_static::lazy_static;
+use std::collections::HashMap;
 
 lazy_static! {
     static ref ROOT: String = String::from("root");
@@ -185,8 +186,8 @@ impl<T> DependencyNode<T>
         Ok(keys[lca_index].to_owned())
     }
 
-    pub fn chunk_by_depth(self) -> Vec<Vec<NodeType<T>>> {
-        let mut depths: Vec<Vec<NodeType<T>>> = Vec::new();
+    pub fn chunk_by_depth(self) -> Vec<HashMap<String, Vec<T>>> {
+        let mut depths: Vec<HashMap<String, Vec<T>>> = Vec::new();
         let mut dfs: Vec<(DependencyNode<T>, usize)> = Vec::new();
         for dep in self.dependents.into_iter() { dfs.push((dep, 0)) };
 
@@ -195,10 +196,16 @@ impl<T> DependencyNode<T>
         while popped.is_some() {
             let (node, depth) = popped.unwrap();
             if depths.len() == depth {
-                depths.push(Vec::new());
+                depths.push(HashMap::new());
             }
 
-            depths[depth].push(node.node_type);
+            match node.node_type {
+                NodeType::Group { payloads, name } => {
+                    depths[depth].insert(name, payloads);
+                },
+                _ => {}
+            };
+
             for dep in node.dependents.into_iter() {
                 dfs.push((dep, depth + 1));
             }
@@ -208,29 +215,4 @@ impl<T> DependencyNode<T>
 
         depths
     }
-}
-
-#[derive(Debug)]
-pub struct Test(String);
-
-impl<'a> Into<&'a str> for &'a Test {
-    fn into(self) -> &'a str {
-        self.0.as_str()
-    }
-}
-
-pub fn get_dependency_order(definitions: &[(String, String)]) -> Result<Vec<Vec<NodeType<Test>>>, anyhow::Error> {
-    let mut root = DependencyNode::<Test>::new();
-    for (source_table, definition) in definitions.iter() {
-        let (_, foreign_keys) = parse_test_definition(definition)?;
-        root.add_child(Test(source_table.to_string()));
-        for target_key in foreign_keys {
-            let mut split = target_key.split('.');
-            let (Some(target_table), Some(_), None) = (split.next(), split.next(), split.next()) else {
-                return Err(anyhow::anyhow!("malformed key {}", target_key));
-            };
-            root.move_under(&target_table.to_owned(), source_table)?;
-        }
-    }
-    Ok(root.chunk_by_depth())
 }
