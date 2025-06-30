@@ -270,11 +270,15 @@ pub struct PlainTrackingTest {
 }
 
 impl PlainColumnCheck for PlainTrackingTest {
-    fn new(definition: &str, table: &str) -> Result<impl PlainColumnCheck + 'static, anyhow::Error> where Self: Sized {
+    fn new(definition: &str, table_name: &str) -> Result<impl PlainColumnCheck + 'static, anyhow::Error> where Self: Sized {
         let mut split = definition.split(".");
         let (Some(table), Some(column), None) = (split.next(), split.next(), split.next()) else {
-            panic!("cannot parse test");
+            return Err(anyhow::anyhow!("cannot parse test"));
         };
+
+        if table != table_name {
+            return Err(anyhow::anyhow!("table name mismatch"));
+        }
 
         Ok(PlainTrackingTest {
             key: String::from("track: ") + table + ": " + definition,
