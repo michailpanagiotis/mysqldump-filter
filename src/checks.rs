@@ -345,7 +345,7 @@ pub fn get_passes(definitions: &[(String, String)]) -> Result<Vec<HashMap<String
         let source_key = new_check.get_key().to_owned();
         root.add_group(source_table);
         root.add_child(new_check);
-        root.move_under(source_table, &source_key)?;
+        root.move_into(source_table, &source_key)?;
         for target_key in foreign_keys {
             let mut split = target_key.split('.');
             let (Some(target_table), Some(_), None) = (split.next(), split.next(), split.next()) else {

@@ -1,4 +1,5 @@
 use crate::checks::parse_test_definition;
+use itertools::Group;
 use lazy_static::lazy_static;
 
 lazy_static! {
@@ -13,7 +14,7 @@ impl<T, A: FnMut(usize, &DependencyNode<T>)> DfsFn<T> for A {}
 enum NodeType<T> {
     Root,
     Node { payload: T },
-    Group(String),
+    Group{ name: String, payloads: Vec<T> },
 }
 
 fn rmq(x: &[usize], i: usize, j: usize) -> Option<usize> {
@@ -41,7 +42,7 @@ impl<T> DependencyNode<T>
 
     fn new_group(key: &str) -> Self {
         DependencyNode {
-            node_type: NodeType::Group(key.to_string()),
+            node_type: NodeType::Group { name: key.to_string(), payloads: Vec::new() },
             dependents: Vec::new(),
         }
     }
@@ -56,8 +57,8 @@ impl<T> DependencyNode<T>
     fn get_key(&self) -> &str {
         match &self.node_type {
             NodeType::Root => ROOT.as_str(),
-            NodeType::Node{ payload } => payload.into(),
-            NodeType::Group(key) => key,
+            NodeType::Node { payload } => payload.into(),
+            NodeType::Group { name, .. } => name,
         }
     }
 
@@ -65,7 +66,7 @@ impl<T> DependencyNode<T>
         match self.node_type {
             NodeType::Root => (self.dependents, None),
             NodeType::Node { payload } => (self.dependents, Some(payload)),
-            NodeType::Group(_) => (self.dependents, None)
+            NodeType::Group { .. } => (self.dependents, None)
         }
     }
 
@@ -127,6 +128,24 @@ impl<T> DependencyNode<T>
         println!("Moving {} under {}", child_key, parent_key);
         let child = self.pop_child(child_key).ok_or(anyhow::anyhow!("child {child_key} does not exist"))?;
         self.get_node_mut(parent_key).ok_or(anyhow::anyhow!("parent {parent_key} does not exist"))?.dependents.push(child);
+        Ok(())
+    }
+
+    pub fn move_into(&mut self, group_key: &str, child_key: &str) -> Result<(), anyhow::Error> {
+        println!("Moving {child_key} into {group_key}");
+        let child = self.pop_child(child_key).ok_or(anyhow::anyhow!("child {child_key} does not exist"))?;
+        let parent = self.get_node_mut(group_key).ok_or(anyhow::anyhow!("parent {group_key} does not exist"))?;
+        match &mut parent.node_type {
+            NodeType::Group { payloads, .. } => {
+                match child.node_type {
+                    NodeType::Node { payload } => {
+                        payloads.push(payload);
+                    },
+                    _ => Err(anyhow::anyhow!("can only move node type"))?
+                };
+            },
+            _ => Err(anyhow::anyhow!("can only move into group node"))?
+        };
         Ok(())
     }
 
