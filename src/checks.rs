@@ -340,11 +340,12 @@ pub fn get_passes(definitions: &[(String, String)]) -> Result<Vec<HashMap<String
     let mut root = DependencyNode::<PlainCheckType>::new();
     for (source_table, definition) in definitions.iter() {
         let (_, foreign_keys) = parse_test_definition(definition)?;
-        let test = new_plain_test(source_table, definition)?;
+        let new_check = new_plain_test(source_table, definition)?;
         println!("Adding table {source_table}");
-        let source_key = test.get_key().to_owned();
+        let source_key = new_check.get_key().to_owned();
         root.add_group(source_table);
-        root.add_child(test);
+        root.add_child(new_check);
+        root.move_under(source_table, &source_key)?;
         for target_key in foreign_keys {
             let mut split = target_key.split('.');
             let (Some(target_table), Some(_), None) = (split.next(), split.next(), split.next()) else {
@@ -352,7 +353,7 @@ pub fn get_passes(definitions: &[(String, String)]) -> Result<Vec<HashMap<String
             };
             println!("Adding group {target_table}");
             root.add_group(target_table);
-            root.move_under(target_table, &source_key)?;
+            root.move_under(target_table, &source_table)?;
         }
     }
 

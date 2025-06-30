@@ -131,7 +131,6 @@ impl<T> DependencyNode<T>
     }
 
     fn walk_recursive<F: DfsFn<T>>(&self, depth: usize, visit: &mut F)  {
-        println!("Walk: {}", self.get_key());
         visit(depth, self);
         for dependent in self.dependents.iter() {
             dependent.walk_recursive(depth + 1, visit);
@@ -153,16 +152,11 @@ impl<T> DependencyNode<T>
 
         let Some(first_index) = keys.iter().position(|k| k == first_node_key) else { return Err(anyhow::anyhow!("cannot find first index")) };
         let Some(second_index) = keys.iter().position(|k| k == second_node_key) else { return Err(anyhow::anyhow!("cannot find second_index index")) };
-        dbg!(&keys);
-        dbg!(&depths);
-        dbg!(std::cmp::min(first_index, second_index));
-        dbg!(std::cmp::max(first_index, second_index));
         let Some(lca_index) = rmq(
             &depths,
             std::cmp::min(first_index, second_index),
             std::cmp::max(first_index, second_index),
         ) else { return Err(anyhow::anyhow!("cannot find lca index")) };
-        dbg!(&lca_index);
         Ok(keys[lca_index].to_owned())
     }
 
