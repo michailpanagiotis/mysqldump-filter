@@ -55,7 +55,7 @@ pub trait PlainColumnCheck {
     fn new(definition: &str, table: &str) -> Result<impl PlainColumnCheck + 'static, anyhow::Error> where Self: Sized;
 
     fn test(
-        &mut self,
+        &self,
         value: &str,
         data_type: &sqlparser::ast::DataType,
         lookup_table: &HashMap<String, HashSet<String>>,
@@ -73,7 +73,7 @@ pub trait PlainColumnCheck {
 
     fn get_key(&self) -> &str;
 
-    fn get_captured(&self) -> Option<&HashSet<String>>;
+    fn get_tracked_columns(&self) -> Vec<String>;
 }
 
 impl<'a> Into<&'a str> for &'a PlainCheckType {
@@ -148,7 +148,7 @@ impl PlainColumnCheck for PlainCelTest {
     }
 
     fn test(
-        &mut self,
+        &self,
         value: &str,
         data_type: &sqlparser::ast::DataType,
         _lookup_table: &HashMap<String, HashSet<String>>,
@@ -179,8 +179,8 @@ impl PlainColumnCheck for PlainCelTest {
         &self.column_name
     }
 
-    fn get_captured(&self) -> Option<&HashSet<String>> {
-        None
+    fn get_tracked_columns(&self) -> Vec<String> {
+        Vec::new()
     }
 }
 
@@ -220,7 +220,7 @@ impl PlainColumnCheck for PlainLookupTest {
     }
 
     fn test(
-        &mut self,
+        &self,
         value: &str,
         _data_type: &sqlparser::ast::DataType,
         lookup_table: &HashMap<String, HashSet<String>>,
@@ -245,8 +245,8 @@ impl PlainColumnCheck for PlainLookupTest {
         &self.column_name
     }
 
-    fn get_captured(&self) -> Option<&HashSet<String>> {
-        None
+    fn get_tracked_columns(&self) -> Vec<String> {
+        Vec::new()
     }
 }
 
@@ -256,7 +256,6 @@ pub struct PlainTrackingTest {
     table_name: String,
     column_name: String,
     definition: String,
-    values: HashSet<String>,
 }
 
 impl PlainTrackingTest {
@@ -281,17 +280,15 @@ impl PlainColumnCheck for PlainTrackingTest {
             table_name: table.to_owned(),
             column_name: column.to_owned(),
             definition: definition.to_owned(),
-            values: HashSet::new(),
         })
     }
 
     fn test(
-        &mut self,
-        value: &str,
+        &self,
+        _value: &str,
         _data_type: &sqlparser::ast::DataType,
         _lookup_table: &HashMap<String, HashSet<String>>,
     ) -> Result<bool, anyhow::Error> {
-        self.values.insert(value.to_string());
         Ok(true)
     }
 
@@ -311,8 +308,8 @@ impl PlainColumnCheck for PlainTrackingTest {
         &self.column_name
     }
 
-    fn get_captured(&self) -> Option<&HashSet<String>> {
-        Some(&self.values)
+    fn get_tracked_columns(&self) -> Vec<String> {
+        Vec::from([self.get_column_key()])
     }
 }
 
@@ -450,13 +447,13 @@ pub fn get_passes(definitions: &[(String, String)]) -> Result<Vec<HashMap<String
 }
 
 pub fn test_checks(
-    checks: &mut [PlainCheckType],
+    checks: &[PlainCheckType],
     value_per_field: &HashMap<String, (String, sqlparser::ast::DataType)>,
     lookup_table: &HashMap<String, HashSet<String>>,
 ) -> Result<bool, anyhow::Error> {
-    for check in checks.iter_mut() {
-        let col_name = check.get_column_name().to_owned();
-        let (str_value, data_type): &(String, sqlparser::ast::DataType) = &value_per_field[&col_name];
+    for check in checks.iter() {
+        let col_name = check.get_column_name();
+        let (str_value, data_type): &(String, sqlparser::ast::DataType) = &value_per_field[col_name];
         if !check.test(str_value, data_type, lookup_table)? {
             return Ok(false);
         }
