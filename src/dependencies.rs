@@ -4,13 +4,11 @@ lazy_static! {
     static ref ROOT: String = String::from("root");
 }
 
-type Payloads<T> = Vec<T>;
-
 #[derive(Debug)]
 pub enum NodeType<T> {
     Root,
     Node { payload: T },
-    Group{ name: String, payloads: Payloads<T> },
+    Group{ name: String, payloads: Vec<T> },
 }
 
 #[derive(Debug)]
@@ -132,31 +130,31 @@ impl<T> DependencyNode<T>
         };
         Ok(())
     }
+}
 
-    pub fn chunk_by_depth(self) -> Vec<Vec<Payloads<T>>> {
-        let mut depths: Vec<Vec<Payloads<T>>> = Vec::new();
-        let mut dfs: Vec<(DependencyNode<T>, usize)> = Vec::new();
-        for dep in self.dependents.into_iter() { dfs.push((dep, 0)) };
+pub fn chunk_by_depth<T>(node: DependencyNode<T>) -> Vec<Vec<Vec<T>>> {
+    let mut depths: Vec<Vec<Vec<T>>> = Vec::new();
+    let mut dfs: Vec<(DependencyNode<T>, usize)> = Vec::new();
+    for dep in node.dependents.into_iter() { dfs.push((dep, 0)) };
 
-        let mut popped = dfs.pop();
+    let mut popped = dfs.pop();
 
-        while popped.is_some() {
-            let (node, depth) = popped.unwrap();
-            if depths.len() == depth {
-                depths.push(Vec::new());
-            }
-
-            if let NodeType::Group { payloads, .. } = node.node_type {
-                depths[depth].push(payloads);
-            }
-
-            for dep in node.dependents.into_iter() {
-                dfs.push((dep, depth + 1));
-            }
-
-            popped = dfs.pop();
+    while popped.is_some() {
+        let (node, depth) = popped.unwrap();
+        if depths.len() == depth {
+            depths.push(Vec::new());
         }
 
-        depths
+        if let NodeType::Group { payloads, .. } = node.node_type {
+            depths[depth].push(payloads);
+        }
+
+        for dep in node.dependents.into_iter() {
+            dfs.push((dep, depth + 1));
+        }
+
+        popped = dfs.pop();
     }
+
+    depths
 }

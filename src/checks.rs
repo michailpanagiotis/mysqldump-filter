@@ -4,9 +4,27 @@ use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::dependencies::DependencyNode;
+use crate::dependencies::{DependencyNode, chunk_by_depth};
 
 pub type PlainCheckType = Box<dyn PlainColumnCheck>;
+
+#[derive(Debug)]
+pub struct TableChecks(pub Vec<PlainCheckType>);
+
+impl From<Vec<PlainCheckType>> for TableChecks {
+    fn from(items: Vec<PlainCheckType>) -> Self {
+        Self(items)
+    }
+}
+
+#[derive(Debug)]
+pub struct PassChecks(pub Vec<TableChecks>);
+
+impl From<Vec<Vec<PlainCheckType>>> for PassChecks {
+    fn from(items: Vec<Vec<PlainCheckType>>) -> Self {
+        Self(items.into_iter().map(|it| TableChecks::from(it)).collect())
+    }
+}
 
 enum Value {
     Int(i64),
@@ -357,7 +375,7 @@ pub fn parse_test_definition(definition: &str) -> Result<(String, Vec<String>), 
     Ok((column_name, foreign_keys))
 }
 
-pub fn get_passes<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(conditions: I) -> Result<Vec<Vec<Vec<PlainCheckType>>>, anyhow::Error> {
+pub fn get_passes<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(conditions: I) -> Result<Vec<PassChecks>, anyhow::Error> {
     let definitions: Vec<(String, String)> = conditions.flat_map(|(table, conds)| {
         conds.iter().map(|c| (table.to_owned(), c.to_owned()))
     }).collect();
@@ -384,5 +402,7 @@ pub fn get_passes<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(condition
 
     dbg!(&root);
 
-    Ok(root.chunk_by_depth())
+    let res: Vec<PassChecks> = chunk_by_depth(root).into_iter().map(|checks| PassChecks::from(checks)).collect();
+
+    Ok(res)
 }

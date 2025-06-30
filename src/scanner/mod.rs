@@ -434,7 +434,7 @@ pub fn process_table_inserts<F>(
 ) -> Result<CapturedValues, anyhow::Error>
   where F: TransformFn
 {
-    println!("Processing table {table}");
+    println!("Processing records of table {table}");
 
     let mut writers = Writers::new(working_file_path, true)?;
     let input_filepath = &writers.get_table_file(table)?;
