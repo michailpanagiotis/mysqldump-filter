@@ -185,7 +185,7 @@ impl<T> DependencyNode<T>
         });
     }
 
-    pub fn group_by_depth(self) -> Vec<Vec<T>> {
+    pub fn chunk_by_depth(self) -> Vec<Vec<T>> {
         let mut depths: Vec<Vec<T>> = Vec::new();
         let mut dfs: Vec<(DependencyNode<T>, usize)> = Vec::new();
         for dep in self.dependents.into_iter() { dfs.push((dep, 0)) };

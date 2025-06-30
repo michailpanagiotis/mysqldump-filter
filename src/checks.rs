@@ -71,6 +71,12 @@ pub trait PlainColumnCheck {
     fn get_key(&self) -> &str;
 }
 
+impl<'a> Into<&'a str> for &'a PlainCheckType {
+    fn into(self) -> &'a str {
+        self.get_key()
+    }
+}
+
 impl core::fmt::Debug for dyn PlainColumnCheck {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         (self.get_key()).fmt(f)
@@ -432,7 +438,7 @@ pub fn get_passes(definitions: &[(String, String)]) -> Result<Vec<HashMap<String
     dbg!(&root);
 
     dbg!(&root.lca("invoices", "transactions"));
-    dbg!(&root.group_by_depth());
+    dbg!(&root.chunk_by_depth());
     panic!("stop");
 
     let dependency_order = get_dependency_order(definitions)?;
@@ -458,12 +464,6 @@ pub fn get_passes(definitions: &[(String, String)]) -> Result<Vec<HashMap<String
     dbg!(&passes);
     panic!("stop");
     Ok(passes)
-}
-
-impl<'a> Into<&'a str> for &'a PlainCheckType {
-    fn into(self) -> &'a str {
-        self.get_key()
-    }
 }
 
 pub fn test_checks(
