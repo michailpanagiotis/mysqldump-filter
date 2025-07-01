@@ -427,9 +427,9 @@ pub fn explode_to_files<F>(
 }
 
 pub fn process_table_inserts<F>(
-    working_file_path: &Path,
     table: &str,
     tracked_columns: &[String],
+    working_file_path: &Path,
     transform: F,
 ) -> Result<CapturedValues, anyhow::Error>
   where F: TransformFn
