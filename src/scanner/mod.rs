@@ -27,8 +27,8 @@ type ValueTuple = (String, sqlparser::ast::DataType);
 type ValueTuples = HashMap<String, ValueTuple>;
 
 // trait alias for transform functions
-pub trait TransformFn: for<'a> FnMut(&'a mut InsertStatement) -> OptionalStatementResult {}
-impl<T: for<'a> FnMut(&'a mut InsertStatement) -> OptionalStatementResult> TransformFn for T {}
+pub trait TransformFn: for<'a> FnMut(&'a InsertStatement) -> OptionalStatementResult {}
+impl<T: for<'a> FnMut(&'a InsertStatement) -> OptionalStatementResult> TransformFn for T {}
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -73,6 +73,37 @@ impl InsertStatement {
             Ok((_, values)) => Ok(values)
         }
     }
+
+    fn resolve_values(&mut self) -> Result<(), anyhow::Error> {
+        if self.value_per_field.is_none() {
+            let Some(ref positions) = self.positions else {
+                return Err(anyhow::anyhow!("statement with no positions"));
+            };
+            let Some(ref data_types) = self.data_types else {
+                return Err(anyhow::anyhow!("statement with no data types"));
+            };
+            let value_array = self.get_value_array()?;
+            let values: ValueTuples = positions
+                .iter()
+                .map(|(column_name, position)| {
+                    (column_name.to_owned(), (value_array[*position].to_string(), data_types[column_name].to_owned()))
+                })
+                .collect();
+            self.value_per_field = Some(values);
+        }
+        Ok(())
+    }
+}
+
+impl<'a> TryInto<&'a ValueTuples> for &'a InsertStatement {
+    type Error = anyhow::Error;
+
+    fn try_into(self) -> Result<&'a ValueTuples, Self::Error> {
+        let Some(ref values) = self.value_per_field else {
+            return Err(anyhow::anyhow!("values have not been resolved"));
+        };
+        Ok(values)
+    }
 }
 
 impl<'a> TryInto<&'a ValueTuples> for &'a mut InsertStatement {
@@ -95,7 +126,7 @@ impl<'a> TryInto<&'a ValueTuples> for &'a mut InsertStatement {
                 .collect();
             self.value_per_field = Some(values);
         }
-        let Some(ref mut values) = self.value_per_field else {
+        let Some(ref values) = self.value_per_field else {
             return Err(anyhow::anyhow!("cannot get empty values"));
         };
         Ok(values)
@@ -358,6 +389,7 @@ impl<F: TransformFn> TransformedStatements<F> {
         if self.try_share_meta(insert_statement).is_err() {
             return Err(anyhow::anyhow!("cannot share meta"));
         }
+        insert_statement.resolve_values()?;
         let transformed = (self.transform)(insert_statement)?;
         if transformed.is_some() {
             self.try_capture_values(insert_statement)?;
