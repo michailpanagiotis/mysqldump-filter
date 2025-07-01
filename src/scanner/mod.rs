@@ -25,14 +25,14 @@ type EmptyResult = Result<(), anyhow::Error>;
 type ValuesMap = HashMap<String, (String, sqlparser::ast::DataType)>;
 type ValuesRef<'a> = &'a ValuesMap;
 
-pub struct ScanArguments<'a>(&'a mut InsertStatement);
-type ScanResult = Result<Option<HashMap<String, String>>, anyhow::Error>;
+pub struct TransformArguments<'a>(&'a mut InsertStatement);
+type TransformResult = Result<Option<HashMap<String, String>>, anyhow::Error>;
 
-pub trait AbstractTransformFn<'a, Iv: TryInto<ValuesRef<'a>>>: Fn(Iv) -> ScanResult {}
-impl<'a, Iv: TryInto<ValuesRef<'a>>, T: Fn(Iv) -> ScanResult> AbstractTransformFn<'a, Iv> for T {}
+pub trait AbstractTransformFn<'a, Iv: TryInto<ValuesRef<'a>>>: Fn(Iv) -> TransformResult {}
+impl<'a, Iv: TryInto<ValuesRef<'a>>, T: Fn(Iv) -> TransformResult> AbstractTransformFn<'a, Iv> for T {}
 
-pub trait TransformFn: for<'a> AbstractTransformFn<'a, ScanArguments<'a>> {}
-impl<T: for<'a> AbstractTransformFn<'a, ScanArguments<'a>>> TransformFn for T {}
+pub trait TransformFn: for<'a> AbstractTransformFn<'a, TransformArguments<'a>> {}
+impl<T: for<'a> AbstractTransformFn<'a, TransformArguments<'a>>> TransformFn for T {}
 
 
 lazy_static! {
@@ -100,7 +100,7 @@ impl InsertStatement {
     }
 }
 
-impl<'a> TryInto<ValuesRef<'a>> for ScanArguments<'a> {
+impl<'a> TryInto<ValuesRef<'a>> for TransformArguments<'a> {
     type Error = anyhow::Error;
 
     fn try_into(self) -> Result<ValuesRef<'a>, Self::Error> {
@@ -398,7 +398,7 @@ impl<F: TransformFn> TransformedStatements<F> {
         if self.try_share_meta(insert_statement).is_err() {
             return Err(anyhow::anyhow!("cannot share meta"));
         }
-        let transformed = (self.transform)(ScanArguments(insert_statement))?;
+        let transformed = (self.transform)(TransformArguments(insert_statement))?;
         if transformed.is_some() {
             self.try_capture_values(insert_statement)?;
         }
