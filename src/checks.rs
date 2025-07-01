@@ -29,13 +29,13 @@ impl TableChecks {
         &self,
         value_per_field: &HashMap<String, (String, sqlparser::ast::DataType)>,
         lookup_table: &HashMap<String, HashSet<String>>,
-    ) -> Result<bool, anyhow::Error> {
+    ) -> Result<Option<()>, anyhow::Error> {
         for check in self.0.iter() {
             if !check.test(value_per_field, lookup_table)? {
-                return Ok(false);
+                return Ok(None);
             }
         }
-        Ok(true)
+        Ok(Some(()))
     }
 }
 
@@ -62,6 +62,23 @@ impl IntoIterator for PassChecks {
         self.0.into_iter()
     }
 }
+
+
+#[derive(Debug)]
+pub struct DBChecks(pub Vec<PassChecks>);
+
+impl DBChecks {
+    fn get_predicate() {
+
+    }
+}
+
+impl From<Vec<Vec<Vec<PlainCheckType>>>> for DBChecks {
+    fn from(items: Vec<Vec<Vec<PlainCheckType>>>) -> Self {
+        Self(items.into_iter().map(PassChecks::from).collect())
+    }
+}
+
 
 enum Value {
     Int(i64),
@@ -421,7 +438,7 @@ fn split_column_key(key: &str) -> Result<(&str, &str), anyhow::Error> {
     Ok((table, column))
 }
 
-pub fn get_passes<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(conditions: I) -> Result<Vec<PassChecks>, anyhow::Error> {
+pub fn get_passes<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(conditions: I) -> Result<DBChecks, anyhow::Error> {
     let definitions: Vec<(String, String)> = conditions.flat_map(|(table, conds)| {
         conds.iter().map(|c| (table.to_owned(), c.to_owned()))
     }).collect();
@@ -442,5 +459,5 @@ pub fn get_passes<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(condition
 
     dbg!(&root);
 
-    Ok(chunk_by_depth(root).into_iter().map(PassChecks::from).collect())
+    Ok(DBChecks::from(chunk_by_depth(root)))
 }
