@@ -1,7 +1,6 @@
 mod sql_parser;
 mod writers;
 
-use cel_interpreter::objects::TryIntoValue;
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::cell::RefCell;
@@ -23,38 +22,18 @@ type SqlStatement = (String, Option<String>);
 type SqlStatementResult = Result<SqlStatement, anyhow::Error>;
 type EmptyResult = Result<(), anyhow::Error>;
 
-type ValueTuple = (String, sqlparser::ast::DataType);
-type ValueTuples = HashMap<String, ValueTuple>;
+type ValuesMap = HashMap<String, (String, sqlparser::ast::DataType)>;
+type ValuesRef<'a> = &'a ValuesMap;
 
-pub trait FnHRTB<'a, Iv: TryIntoValues<'a>>: Fn(Iv) -> ScanResult {}
-impl<'a, Iv: TryIntoValues<'a>, T: Fn(Iv) -> ScanResult> FnHRTB<'a, Iv> for T {}
+pub trait AbstractTransformFn<'a, Iv: TryInto<ValuesRef<'a>>>: Fn(Iv) -> ScanResult {}
+impl<'a, Iv: TryInto<ValuesRef<'a>>, T: Fn(Iv) -> ScanResult> AbstractTransformFn<'a, Iv> for T {}
 
-pub trait TransformFn: for<'a> FnHRTB<'a, ScanArguments<'a>> {}
-impl<T: for<'a> FnHRTB<'a, ScanArguments<'a>>> TransformFn for T {}
-
-type ValuesRef<'a> = &'a HashMap<String, (String, sqlparser::ast::DataType)>;
-
-pub trait TryIntoValues<'a>: TryInto<ValuesRef<'a>> {}
-impl<'a, T: TryInto<ValuesRef<'a>>> TryIntoValues<'a> for T {}
-
-pub trait GenericTransformFn<'a, C: TryIntoValues<'a>>: FnMut(C) -> ScanResult {}
-impl<'a, T: FnMut(ScanArguments<'a>) -> ScanResult> GenericTransformFn<'a, ScanArguments<'a>> for T {}
-
-// pub trait TransformFn: for<'a> GenericTransformFn<'a, ScanArguments<'a>> {}
-// impl<T: for<'a> GenericTransformFn<'a, ScanArguments<'a>>> TransformFn for T {}
+pub trait TransformFn: for<'a> AbstractTransformFn<'a, ScanArguments<'a>> {}
+impl<T: for<'a> AbstractTransformFn<'a, ScanArguments<'a>>> TransformFn for T {}
 
 pub struct ScanArguments<'a>(&'a InsertStatement);
 type ScanResult = Result<Option<HashMap<String, String>>, anyhow::Error>;
 
-
-// impl<'a, C: TryIntoValues<'a>, T: FnMut(C) -> ScanResult> GenericTransformFn<'a, C> for T {}
-//
-// // trait alias for transform functions
-// pub trait TransformFn: for<'a> GenericTransformFn<&'a InsertStatement> {}
-// impl<T: for<'a> GenericTransformFn<&'a InsertStatement>> TransformFn for T {}
-// trait alias for transform functions
-// pub trait TransformFn: for<'a> FnMut(&'a InsertStatement) -> ScanResult {}
-// impl<T: for<'a> FnMut(&'a InsertStatement) -> ScanResult> TransformFn for T {}
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -68,7 +47,7 @@ pub struct InsertStatement {
     values_part: String,
     data_types: Option<Rc<TableDataTypes>>,
     positions: Option<Rc<TableColumnPositions>>,
-    value_per_field: Option<ValueTuples>,
+    value_per_field: Option<ValuesMap>,
 }
 
 impl InsertStatement {
@@ -109,7 +88,7 @@ impl InsertStatement {
                 return Err(anyhow::anyhow!("statement with no data types"));
             };
             let value_array = self.get_value_array()?;
-            let values: ValueTuples = positions
+            let values: ValuesMap = positions
                 .iter()
                 .map(|(column_name, position)| {
                     (column_name.to_owned(), (value_array[*position].to_string(), data_types[column_name].to_owned()))
@@ -124,7 +103,7 @@ impl InsertStatement {
 impl<'a> TryInto<ValuesRef<'a>> for ScanArguments<'a> {
     type Error = anyhow::Error;
 
-    fn try_into(self) -> Result<&'a ValueTuples, Self::Error> {
+    fn try_into(self) -> Result<ValuesRef<'a>, Self::Error> {
         self.0.try_into()
     }
 }
@@ -133,7 +112,7 @@ impl<'a> TryInto<ValuesRef<'a>> for ScanArguments<'a> {
 impl<'a> TryInto<ValuesRef<'a>> for &'a InsertStatement {
     type Error = anyhow::Error;
 
-    fn try_into(self) -> Result<&'a ValueTuples, Self::Error> {
+    fn try_into(self) -> Result<ValuesRef<'a>, Self::Error> {
         let Some(ref values) = self.value_per_field else {
             return Err(anyhow::anyhow!("values have not been resolved"));
         };
@@ -141,10 +120,10 @@ impl<'a> TryInto<ValuesRef<'a>> for &'a InsertStatement {
     }
 }
 
-impl<'a> TryInto<&'a ValueTuples> for &'a mut InsertStatement {
+impl<'a> TryInto<ValuesRef<'a>> for &'a mut InsertStatement {
     type Error = anyhow::Error;
 
-    fn try_into(self) -> Result<&'a ValueTuples, Self::Error> {
+    fn try_into(self) -> Result<ValuesRef<'a>, Self::Error> {
         if self.value_per_field.is_none() {
             let Some(ref positions) = self.positions else {
                 return Err(anyhow::anyhow!("statement with no positions"));
@@ -153,7 +132,7 @@ impl<'a> TryInto<&'a ValueTuples> for &'a mut InsertStatement {
                 return Err(anyhow::anyhow!("statement with no data types"));
             };
             let value_array = self.get_value_array()?;
-            let values: ValueTuples = positions
+            let values: ValuesMap = positions
                 .iter()
                 .map(|(column_name, position)| {
                     (column_name.to_owned(), (value_array[*position].to_string(), data_types[column_name].to_owned()))
@@ -248,7 +227,7 @@ impl Tracker {
         &self.column_positions[table]
     }
 
-    fn capture_values(&mut self, value_per_field: &HashMap<String, ValueTuple>) {
+    fn capture_values(&mut self, value_per_field: ValuesRef<'_>) {
         if self.is_capturing_columns() {
             for (key, column) in &self.tracked_column_per_key {
                 let value = &value_per_field[column];
