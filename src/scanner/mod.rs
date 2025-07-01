@@ -37,7 +37,6 @@ impl<'a, T: FnMut(ScanArguments<'a>) -> ScanResult> GenericTransformFn<'a, ScanA
 pub trait TransformFn: for<'a> GenericTransformFn<'a, ScanArguments<'a>> {}
 impl<T: for<'a> GenericTransformFn<'a, ScanArguments<'a>>> TransformFn for T {}
 
-
 pub struct ScanArguments<'a>(&'a InsertStatement);
 type ScanResult = Result<Option<()>, anyhow::Error>;
 
