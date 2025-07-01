@@ -33,14 +33,17 @@ pub trait GenericTransformFn<'a, C: Convertible<'a>>: FnMut(C) -> OptionalStatem
 
 impl<'a, T: FnMut(&'a InsertStatement) -> OptionalStatementResult> GenericTransformFn<'a, &'a InsertStatement> for T {}
 
+pub trait TransformFn: for<'a> GenericTransformFn<'a, &'a InsertStatement> {}
+impl<T: for<'a> FnMut(&'a InsertStatement) -> OptionalStatementResult> TransformFn for T {}
+
 // impl<'a, C: Convertible<'a>, T: FnMut(C) -> OptionalStatementResult> GenericTransformFn<'a, C> for T {}
 //
 // // trait alias for transform functions
 // pub trait TransformFn: for<'a> GenericTransformFn<&'a InsertStatement> {}
 // impl<T: for<'a> GenericTransformFn<&'a InsertStatement>> TransformFn for T {}
 // trait alias for transform functions
-pub trait TransformFn: for<'a> FnMut(&'a InsertStatement) -> OptionalStatementResult {}
-impl<T: for<'a> FnMut(&'a InsertStatement) -> OptionalStatementResult> TransformFn for T {}
+// pub trait TransformFn: for<'a> FnMut(&'a InsertStatement) -> OptionalStatementResult {}
+// impl<T: for<'a> FnMut(&'a InsertStatement) -> OptionalStatementResult> TransformFn for T {}
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
