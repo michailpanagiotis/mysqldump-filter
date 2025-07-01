@@ -38,7 +38,7 @@ pub trait TransformFn: for<'a> GenericTransformFn<'a, ScanArguments<'a>> {}
 impl<T: for<'a> GenericTransformFn<'a, ScanArguments<'a>>> TransformFn for T {}
 
 pub struct ScanArguments<'a>(&'a InsertStatement);
-type ScanResult = Result<Option<()>, anyhow::Error>;
+type ScanResult = Result<Option<HashMap<String, String>>, anyhow::Error>;
 
 
 // impl<'a, C: TryIntoValues<'a>, T: FnMut(C) -> ScanResult> GenericTransformFn<'a, C> for T {}

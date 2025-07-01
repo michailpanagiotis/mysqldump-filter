@@ -30,14 +30,14 @@ impl TableChecks {
         &self,
         values: V,
         lookup_table: &HashMap<String, HashSet<String>>,
-    ) -> Result<Option<()>, anyhow::Error> {
+    ) -> Result<Option<HashMap<String, String>>, anyhow::Error> {
         let Ok(value_per_field) = values.try_into() else { Err(anyhow::anyhow!("cannot parse values"))? };
         for check in self.0.iter() {
             if !check.test(value_per_field, lookup_table)? {
                 return Ok(None);
             }
         }
-        Ok(Some(()))
+        Ok(Some(HashMap::new()))
     }
 
     pub fn test_all<T: TransformFn, F: FnMut(&str, &[String], T) -> Result<HashMap<String, HashSet<String>>, anyhow::Error>>(
