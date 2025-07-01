@@ -4,29 +4,18 @@ use std::path::Path;
 use crate::checks::{DBChecks, TableChecks};
 use crate::scanner::{TransformFn, process_table_inserts};
 
-pub fn process_inserts<F>(
-    checks: &TableChecks,
-    working_file_path: &Path,
-    transform: F,
-) -> Result<HashMap<String, HashSet<String>>, anyhow::Error>
-  where F: TransformFn
-{
-    let tracked_columns = checks.get_tracked_columns();
-    let table = checks.get_table()?;
-    let captured = process_table_inserts(table, &tracked_columns, working_file_path, transform)?;
-    Ok(captured)
-}
-
 pub fn process_checks(passes: DBChecks, working_file_path: &Path) -> Result<(), anyhow::Error> {
     let mut lookup_table = HashMap::new();
-    for pending in passes.0 {
+    for pending in passes {
         dbg!(&lookup_table);
         for checks in pending {
-            lookup_table.extend(
-                process_inserts(&checks, working_file_path, |statement| {
-                    checks.test(statement, &lookup_table)
-                })?
-            );
+            let tracked_columns = checks.get_tracked_columns();
+            let table = checks.get_table()?;
+            let captured = process_table_inserts(table, &tracked_columns, working_file_path, |statement| {
+                checks.test(statement, &lookup_table)
+            })?;
+
+            lookup_table.extend(captured);
         }
     }
     Ok(())

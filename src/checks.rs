@@ -74,6 +74,15 @@ impl From<Vec<Vec<Vec<PlainCheckType>>>> for DBChecks {
     }
 }
 
+impl IntoIterator for DBChecks {
+    type Item = PassChecks;
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
 enum Value {
     Int(i64),
     Date(i64),
