@@ -390,7 +390,7 @@ impl PlainColumnCheck for PlainTrackingTest {
     }
 }
 
-pub fn new_plain_test(table: &str, definition: &str) -> Result<PlainCheckType, anyhow::Error> {
+fn new_plain_test(table: &str, definition: &str) -> Result<PlainCheckType, anyhow::Error> {
     let item: PlainCheckType = if definition.contains("->") {
         Box::new(PlainLookupTest::new(definition, table)?)
     } else {
@@ -399,17 +399,26 @@ pub fn new_plain_test(table: &str, definition: &str) -> Result<PlainCheckType, a
     Ok(item)
 }
 
-pub fn new_tracking_test(table: &str, definition: &str) -> Result<PlainCheckType, anyhow::Error> {
+fn new_tracking_test(table: &str, definition: &str) -> Result<PlainCheckType, anyhow::Error> {
     Ok(Box::new(PlainTrackingTest::new(definition, table)?))
 }
 
-pub fn parse_test_definition(definition: &str) -> Result<(String, Vec<String>), anyhow::Error> {
-    let (column_name, foreign_keys) = if definition.contains("->") {
+
+fn determine_foreign_keys(definition: &str) -> Result<Vec<String>, anyhow::Error> {
+    let (_, foreign_keys) = if definition.contains("->") {
         PlainLookupTest::get_column_info(definition)?
     } else {
         PlainCelTest::get_column_info(definition)?
     };
-    Ok((column_name, foreign_keys))
+    Ok(foreign_keys)
+}
+
+fn split_column_key(key: &str) -> Result<(&str, &str), anyhow::Error> {
+    let mut split = key.split('.');
+    let (Some(table), Some(column), None) = (split.next(), split.next(), split.next()) else {
+        return Err(anyhow::anyhow!("malformed key {}", key));
+    };
+    Ok((table, column))
 }
 
 pub fn get_passes<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(conditions: I) -> Result<Vec<PassChecks>, anyhow::Error> {
@@ -419,16 +428,10 @@ pub fn get_passes<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(condition
 
     let mut root = DependencyNode::<PlainCheckType>::new();
     for (source_table, definition) in definitions.iter() {
-        let (_, foreign_keys) = parse_test_definition(definition)?;
-        let new_check = new_plain_test(source_table, definition)?;
+        root.add_child_to_group(new_plain_test(source_table, definition)?, source_table)?;
 
-        root.add_child_to_group(new_check, source_table)?;
-
-        for target_key in foreign_keys {
-            let mut split = target_key.split('.');
-            let (Some(target_table), Some(_), None) = (split.next(), split.next(), split.next()) else {
-                return Err(anyhow::anyhow!("malformed key {}", target_key));
-            };
+        for target_key in determine_foreign_keys(definition)? {
+            let (target_table, _) = split_column_key(&target_key)?;
 
             let target_check = new_tracking_test(target_table, &target_key)?;
             root.add_child_to_group(target_check, target_table)?;
