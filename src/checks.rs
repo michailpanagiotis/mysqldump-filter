@@ -25,11 +25,12 @@ impl TableChecks {
         self.0.iter().flat_map(|c| c.get_tracked_columns()).collect()
     }
 
-    pub fn test(
+    pub fn test<'a, V: TryInto<&'a HashMap<String, (String, sqlparser::ast::DataType)>>>(
         &self,
-        value_per_field: &HashMap<String, (String, sqlparser::ast::DataType)>,
+        values: V,
         lookup_table: &HashMap<String, HashSet<String>>,
     ) -> Result<Option<()>, anyhow::Error> {
+        let Ok(value_per_field) = values.try_into() else { Err(anyhow::anyhow!("cannot parse values"))? };
         for check in self.0.iter() {
             if !check.test(value_per_field, lookup_table)? {
                 return Ok(None);
@@ -67,18 +68,11 @@ impl IntoIterator for PassChecks {
 #[derive(Debug)]
 pub struct DBChecks(pub Vec<PassChecks>);
 
-impl DBChecks {
-    fn get_predicate() {
-
-    }
-}
-
 impl From<Vec<Vec<Vec<PlainCheckType>>>> for DBChecks {
     fn from(items: Vec<Vec<Vec<PlainCheckType>>>) -> Self {
         Self(items.into_iter().map(PassChecks::from).collect())
     }
 }
-
 
 enum Value {
     Int(i64),

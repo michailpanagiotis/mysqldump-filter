@@ -23,8 +23,7 @@ pub fn process_checks(passes: DBChecks, working_file_path: &Path) -> Result<(), 
         dbg!(&lookup_table);
         for checks in pending {
             let captured = process_inserts(&checks, working_file_path, |statement| {
-                let value_per_field = statement.get_values()?;
-                checks.test(value_per_field, &lookup_table)
+                checks.test(statement, &lookup_table)
             })?;
 
             lookup_table.extend(captured);

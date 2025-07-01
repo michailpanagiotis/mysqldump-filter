@@ -98,6 +98,33 @@ impl InsertStatement {
     }
 }
 
+impl<'a> TryInto<&'a ValueTuples> for &'a mut InsertStatement {
+    type Error = anyhow::Error;
+
+    fn try_into(self) -> Result<&'a ValueTuples, Self::Error> {
+        if self.value_per_field.is_none() {
+            let Some(ref positions) = self.positions else {
+                return Err(anyhow::anyhow!("statement with no positions"));
+            };
+            let Some(ref data_types) = self.data_types else {
+                return Err(anyhow::anyhow!("statement with no data types"));
+            };
+            let value_array = self.get_value_array()?;
+            let values: ValueTuples = positions
+                .iter()
+                .map(|(column_name, position)| {
+                    (column_name.to_owned(), (value_array[*position].to_string(), data_types[column_name].to_owned()))
+                })
+                .collect();
+            self.value_per_field = Some(values);
+        }
+        let Some(ref values) = self.value_per_field else {
+            return Err(anyhow::anyhow!("cannot get empty values"));
+        };
+        Ok(values)
+    }
+}
+
 impl<'a> TryFrom<&'a SqlStatement> for InsertStatement {
     type Error = anyhow::Error;
     fn try_from(other: &'a SqlStatement) -> Result<InsertStatement, Self::Error> {
