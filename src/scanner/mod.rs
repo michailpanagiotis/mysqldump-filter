@@ -1,6 +1,7 @@
 mod sql_parser;
 mod writers;
 
+use cel_interpreter::objects::TryIntoValue;
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::cell::RefCell;
@@ -25,6 +26,11 @@ type EmptyResult = Result<(), anyhow::Error>;
 type ValueTuple = (String, sqlparser::ast::DataType);
 type ValueTuples = HashMap<String, ValueTuple>;
 
+pub trait FnHRTB<'a, Iv: TryIntoValues<'a>>: Fn(Iv) -> ScanResult {}
+impl<'a, Iv: TryIntoValues<'a>, T: Fn(Iv) -> ScanResult> FnHRTB<'a, Iv> for T {}
+
+pub trait TransformFn: for<'a> FnHRTB<'a, ScanArguments<'a>> {}
+impl<T: for<'a> FnHRTB<'a, ScanArguments<'a>>> TransformFn for T {}
 
 type ValuesRef<'a> = &'a HashMap<String, (String, sqlparser::ast::DataType)>;
 
@@ -34,8 +40,8 @@ impl<'a, T: TryInto<ValuesRef<'a>>> TryIntoValues<'a> for T {}
 pub trait GenericTransformFn<'a, C: TryIntoValues<'a>>: FnMut(C) -> ScanResult {}
 impl<'a, T: FnMut(ScanArguments<'a>) -> ScanResult> GenericTransformFn<'a, ScanArguments<'a>> for T {}
 
-pub trait TransformFn: for<'a> GenericTransformFn<'a, ScanArguments<'a>> {}
-impl<T: for<'a> GenericTransformFn<'a, ScanArguments<'a>>> TransformFn for T {}
+// pub trait TransformFn: for<'a> GenericTransformFn<'a, ScanArguments<'a>> {}
+// impl<T: for<'a> GenericTransformFn<'a, ScanArguments<'a>>> TransformFn for T {}
 
 pub struct ScanArguments<'a>(&'a InsertStatement);
 type ScanResult = Result<Option<HashMap<String, String>>, anyhow::Error>;
