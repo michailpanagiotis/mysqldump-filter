@@ -25,7 +25,7 @@ type EmptyResult = Result<(), anyhow::Error>;
 type ValuesMap = HashMap<String, (String, sqlparser::ast::DataType)>;
 type ValuesRef<'a> = &'a ValuesMap;
 
-pub struct ScanArguments<'a>(&'a InsertStatement);
+pub struct ScanArguments<'a>(&'a mut InsertStatement);
 type ScanResult = Result<Option<HashMap<String, String>>, anyhow::Error>;
 
 pub trait AbstractTransformFn<'a, Iv: TryInto<ValuesRef<'a>>>: Fn(Iv) -> ScanResult {}
@@ -104,6 +104,7 @@ impl<'a> TryInto<ValuesRef<'a>> for ScanArguments<'a> {
     type Error = anyhow::Error;
 
     fn try_into(self) -> Result<ValuesRef<'a>, Self::Error> {
+        self.0.resolve_values()?;
         self.0.try_into()
     }
 }
@@ -403,7 +404,6 @@ impl<F: TransformFn> TransformedStatements<F> {
         if self.try_share_meta(insert_statement).is_err() {
             return Err(anyhow::anyhow!("cannot share meta"));
         }
-        insert_statement.resolve_values()?;
         let transformed = (self.transform)(ScanArguments(insert_statement))?;
         if transformed.is_some() {
             self.try_capture_values(insert_statement)?;
