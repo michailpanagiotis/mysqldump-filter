@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::dependencies::{DependencyNode, chunk_by_depth};
+use crate::scanner::TransformFn;
 
 pub type PlainCheckType = Box<dyn PlainColumnCheck>;
 
@@ -37,6 +38,16 @@ impl TableChecks {
             }
         }
         Ok(Some(()))
+    }
+
+    pub fn test_all<T: TransformFn, F: FnMut(&str, &[String], T) -> Result<HashMap<String, HashSet<String>>, anyhow::Error>>(
+        &self,
+        mut scan_fn: F,
+        transform_fn: T,
+    ) -> Result<HashMap<String, HashSet<String>>, anyhow::Error> {
+        let tracked_columns = self.get_tracked_columns();
+        let table = self.get_table()?;
+        scan_fn(table, &tracked_columns, transform_fn)
     }
 }
 

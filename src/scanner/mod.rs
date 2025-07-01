@@ -67,29 +67,6 @@ impl InsertStatement {
         self.data_types = Some(Rc::clone(data_types));
     }
 
-    pub fn get_values(&mut self) -> Result<&ValueTuples, anyhow::Error> {
-        if self.value_per_field.is_none() {
-            let Some(ref positions) = self.positions else {
-                return Err(anyhow::anyhow!("statement with no positions"));
-            };
-            let Some(ref data_types) = self.data_types else {
-                return Err(anyhow::anyhow!("statement with no data types"));
-            };
-            let value_array = self.get_value_array()?;
-            let values: ValueTuples = positions
-                .iter()
-                .map(|(column_name, position)| {
-                    (column_name.to_owned(), (value_array[*position].to_string(), data_types[column_name].to_owned()))
-                })
-                .collect();
-            self.value_per_field = Some(values);
-        }
-        let Some(ref values) = self.value_per_field else {
-            return Err(anyhow::anyhow!("cannot get empty values"));
-        };
-        Ok(values)
-    }
-
     fn get_value_array(&self) -> Result<Vec<&str>, anyhow::Error> {
         match values(&self.values_part) {
             Err(_) => Err(anyhow::anyhow!("cannot parse values")),
@@ -370,8 +347,7 @@ impl<F: TransformFn> TransformedStatements<F> {
     fn try_capture_values(&mut self, insert_statement: &mut InsertStatement) -> EmptyResult {
         let mut borrowed = self.iter.tracker.borrow_mut();
         if borrowed.is_capturing_columns() {
-            let value_per_field = insert_statement.get_values()?;
-            borrowed.capture_values(value_per_field);
+            borrowed.capture_values(insert_statement.try_into()?);
         }
         Ok(())
     }
