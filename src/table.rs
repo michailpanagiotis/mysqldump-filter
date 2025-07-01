@@ -6,13 +6,13 @@ use crate::scanner::{TransformFn, process_table_inserts};
 
 pub fn process_checks(passes: DBChecks, working_file_path: &Path) -> Result<(), anyhow::Error> {
     let mut lookup_table = HashMap::new();
-    for pending in passes {
+    for pending_tables in passes {
         dbg!(&lookup_table);
-        for checks in pending {
-            let tracked_columns = checks.get_tracked_columns();
-            let table = checks.get_table()?;
+        for table_checks in pending_tables {
+            let tracked_columns = table_checks.get_tracked_columns();
+            let table = table_checks.get_table()?;
             let transform: Box<dyn TransformFn> = Box::new(|statement| {
-                checks.test(statement, &lookup_table)
+                table_checks.test(statement, &lookup_table)
             });
             let captured = process_table_inserts(table, &tracked_columns, working_file_path, transform)?;
 
