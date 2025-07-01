@@ -27,6 +27,9 @@ type ValueTuple = (String, sqlparser::ast::DataType);
 type ValueTuples = HashMap<String, ValueTuple>;
 
 pub trait Convertible<'a>: TryInto<&'a HashMap<String, (String, sqlparser::ast::DataType)>> {}
+impl<'a, T: TryInto<&'a HashMap<String, (String, sqlparser::ast::DataType)>>> Convertible<'a> for T {}
+// impl<'a> Convertible<'a> for &'a InsertStatement {}
+
 pub trait GenericTransformFn<'a, C: Convertible<'a>>: FnMut(C) -> OptionalStatementResult {}
 
 impl<'a, T: FnMut(&'a InsertStatement) -> OptionalStatementResult> GenericTransformFn<'a, &'a InsertStatement> for T {}
@@ -108,7 +111,6 @@ impl InsertStatement {
     }
 }
 
-impl<'a> Convertible<'a> for &'a InsertStatement {}
 
 impl<'a> TryInto<&'a ValueTuples> for &'a InsertStatement {
     type Error = anyhow::Error;
