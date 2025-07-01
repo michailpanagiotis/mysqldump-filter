@@ -27,15 +27,24 @@ type ValueTuple = (String, sqlparser::ast::DataType);
 type ValueTuples = HashMap<String, ValueTuple>;
 
 pub trait Convertible<'a>: TryInto<&'a HashMap<String, (String, sqlparser::ast::DataType)>> {}
-impl<'a, T: TryInto<&'a HashMap<String, (String, sqlparser::ast::DataType)>>> Convertible<'a> for T {}
+impl<'a, T> Convertible<'a> for T
+     where T: TryInto<&'a HashMap<String, (String, sqlparser::ast::DataType)>>
+{}
+
+trait Conv: for<'a> Convertible<'a> {}
+impl<T: for<'a> Convertible<'a>> Conv for T {}
+
+// impl<'a, T: TryInto<&'a HashMap<String, (String, sqlparser::ast::DataType)>>> Convertible<'a> for T {}
 // impl<'a> Convertible<'a> for &'a InsertStatement {}
 
 pub trait GenericTransformFn<'a, C: Convertible<'a>>: FnMut(C) -> OptionalStatementResult {}
+impl<'a, T: FnMut(ScanArguments<'a>) -> OptionalStatementResult> GenericTransformFn<'a, ScanArguments<'a>> for T {}
 
-impl<'a, T: FnMut(&'a InsertStatement) -> OptionalStatementResult> GenericTransformFn<'a, &'a InsertStatement> for T {}
+pub trait TransformFn: for<'a> GenericTransformFn<'a, ScanArguments<'a>> {}
+impl<T: for<'a> GenericTransformFn<'a, ScanArguments<'a>>> TransformFn for T {}
 
-pub trait TransformFn: for<'a> GenericTransformFn<'a, &'a InsertStatement> {}
-impl<T: for<'a> FnMut(&'a InsertStatement) -> OptionalStatementResult> TransformFn for T {}
+pub struct ScanArguments<'a>(&'a InsertStatement);
+
 
 // impl<'a, C: Convertible<'a>, T: FnMut(C) -> OptionalStatementResult> GenericTransformFn<'a, C> for T {}
 //
@@ -108,6 +117,14 @@ impl InsertStatement {
             self.value_per_field = Some(values);
         }
         Ok(())
+    }
+}
+
+impl<'a> TryInto<&'a ValueTuples> for ScanArguments<'a> {
+    type Error = anyhow::Error;
+
+    fn try_into(self) -> Result<&'a ValueTuples, Self::Error> {
+        self.0.try_into()
     }
 }
 
@@ -407,7 +424,7 @@ impl<F: TransformFn> TransformedStatements<F> {
             return Err(anyhow::anyhow!("cannot share meta"));
         }
         insert_statement.resolve_values()?;
-        let transformed = (self.transform)(insert_statement)?;
+        let transformed = (self.transform)(ScanArguments(insert_statement))?;
         if transformed.is_some() {
             self.try_capture_values(insert_statement)?;
         }
