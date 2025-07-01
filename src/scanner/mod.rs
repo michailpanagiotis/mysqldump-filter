@@ -26,6 +26,18 @@ type EmptyResult = Result<(), anyhow::Error>;
 type ValueTuple = (String, sqlparser::ast::DataType);
 type ValueTuples = HashMap<String, ValueTuple>;
 
+pub trait Convertible<'a>: TryInto<&'a HashMap<String, (String, sqlparser::ast::DataType)>> {}
+// impl<'a, T: TryInto<&'a HashMap<String, (String, sqlparser::ast::DataType)>>> Convertible<'a> for &'a T {}
+
+pub trait GenericTransformFn<'a, C: Convertible<'a>>: FnMut(C) -> OptionalStatementResult {}
+
+impl<'a, T: FnMut(&'a InsertStatement) -> OptionalStatementResult> GenericTransformFn<'a, &'a InsertStatement> for T {}
+
+// impl<'a, C: Convertible<'a>, T: FnMut(C) -> OptionalStatementResult> GenericTransformFn<'a, C> for T {}
+//
+// // trait alias for transform functions
+// pub trait TransformFn: for<'a> GenericTransformFn<&'a InsertStatement> {}
+// impl<T: for<'a> GenericTransformFn<&'a InsertStatement>> TransformFn for T {}
 // trait alias for transform functions
 pub trait TransformFn: for<'a> FnMut(&'a InsertStatement) -> OptionalStatementResult {}
 impl<T: for<'a> FnMut(&'a InsertStatement) -> OptionalStatementResult> TransformFn for T {}
@@ -94,6 +106,8 @@ impl InsertStatement {
         Ok(())
     }
 }
+
+impl<'a> Convertible<'a> for &'a InsertStatement {}
 
 impl<'a> TryInto<&'a ValueTuples> for &'a InsertStatement {
     type Error = anyhow::Error;
