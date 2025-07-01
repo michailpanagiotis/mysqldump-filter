@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::checks::{DBChecks, PassChecks};
+use crate::checks::DBChecks;
 use crate::scanner::process_table_inserts;
 
 
