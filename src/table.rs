@@ -11,9 +11,10 @@ pub fn process_checks(passes: DBChecks, working_file_path: &Path) -> Result<(), 
         for checks in pending {
             let tracked_columns = checks.get_tracked_columns();
             let table = checks.get_table()?;
-            let captured = process_table_inserts(table, &tracked_columns, working_file_path, |statement| {
+            let transform: Box<dyn TransformFn> = Box::new(|statement| {
                 checks.test(statement, &lookup_table)
-            })?;
+            });
+            let captured = process_table_inserts(table, &tracked_columns, working_file_path, transform)?;
 
             lookup_table.extend(captured);
         }
