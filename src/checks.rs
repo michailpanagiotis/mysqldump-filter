@@ -5,7 +5,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::dependencies::{DependencyNode, chunk_by_depth};
-use crate::scanner::TransformFn;
 
 pub type PlainCheckType = Box<dyn PlainColumnCheck>;
 
@@ -24,30 +23,6 @@ impl TableChecks {
 
     pub fn get_tracked_columns(&self) -> Vec<String> {
         self.0.iter().flat_map(|c| c.get_tracked_columns()).collect()
-    }
-
-    pub fn test<'a, V: TryInto<&'a HashMap<String, (String, sqlparser::ast::DataType)>>>(
-        &self,
-        values: V,
-        lookup_table: &HashMap<String, HashSet<String>>,
-    ) -> Result<Option<HashMap<String, String>>, anyhow::Error> {
-        let Ok(value_per_field) = values.try_into() else { Err(anyhow::anyhow!("cannot parse values"))? };
-        for check in self.0.iter() {
-            if !check.test(value_per_field, lookup_table)? {
-                return Ok(None);
-            }
-        }
-        Ok(Some(HashMap::new()))
-    }
-
-    pub fn test_all<T: TransformFn, F: FnMut(&str, &[String], T) -> Result<HashMap<String, HashSet<String>>, anyhow::Error>>(
-        &self,
-        mut scan_fn: F,
-        transform_fn: T,
-    ) -> Result<HashMap<String, HashSet<String>>, anyhow::Error> {
-        let tracked_columns = self.get_tracked_columns();
-        let table = self.get_table()?;
-        scan_fn(table, &tracked_columns, transform_fn)
     }
 }
 
