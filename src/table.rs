@@ -22,11 +22,11 @@ pub fn process_checks(passes: DBChecks, working_file_path: &Path) -> Result<(), 
     for pending in passes.0 {
         dbg!(&lookup_table);
         for checks in pending {
-            let captured = process_inserts(&checks, working_file_path, |statement| {
-                checks.test(statement, &lookup_table)
-            })?;
-
-            lookup_table.extend(captured);
+            lookup_table.extend(
+                process_inserts(&checks, working_file_path, |statement| {
+                    checks.test(statement, &lookup_table)
+                })?
+            );
         }
     }
     Ok(())
