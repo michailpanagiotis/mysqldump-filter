@@ -27,8 +27,8 @@ type ValueTuple = (String, sqlparser::ast::DataType);
 type ValueTuples = HashMap<String, ValueTuple>;
 
 // trait alias for transform functions
-pub trait TransformFn: FnMut(&mut InsertStatement) -> OptionalStatementResult  {}
-impl<T: FnMut(&mut InsertStatement) -> OptionalStatementResult> TransformFn for T {}
+pub trait TransformFn: for<'a> FnMut(&'a mut InsertStatement) -> OptionalStatementResult {}
+impl<T: for<'a> FnMut(&'a mut InsertStatement) -> OptionalStatementResult> TransformFn for T {}
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
