@@ -104,17 +104,11 @@ impl<'a> TryInto<ValuesRef<'a>> for ScanArguments<'a> {
     type Error = anyhow::Error;
 
     fn try_into(self) -> Result<ValuesRef<'a>, Self::Error> {
-        self.0.resolve_values()?;
-        self.0.try_into()
-    }
-}
+        if self.0.value_per_field.is_none() {
+            self.0.resolve_values()?;
+        }
 
-
-impl<'a> TryInto<ValuesRef<'a>> for &'a InsertStatement {
-    type Error = anyhow::Error;
-
-    fn try_into(self) -> Result<ValuesRef<'a>, Self::Error> {
-        let Some(ref values) = self.value_per_field else {
+        let Some(ref values) = self.0.value_per_field else {
             return Err(anyhow::anyhow!("values have not been resolved"));
         };
         Ok(values)
