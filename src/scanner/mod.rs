@@ -25,14 +25,14 @@ type EmptyResult = Result<(), anyhow::Error>;
 type ValuesMap = HashMap<String, (String, sqlparser::ast::DataType)>;
 type ValuesRef<'a> = &'a ValuesMap;
 
+pub struct ScanArguments<'a>(&'a InsertStatement);
+type ScanResult = Result<Option<HashMap<String, String>>, anyhow::Error>;
+
 pub trait AbstractTransformFn<'a, Iv: TryInto<ValuesRef<'a>>>: Fn(Iv) -> ScanResult {}
 impl<'a, Iv: TryInto<ValuesRef<'a>>, T: Fn(Iv) -> ScanResult> AbstractTransformFn<'a, Iv> for T {}
 
 pub trait TransformFn: for<'a> AbstractTransformFn<'a, ScanArguments<'a>> {}
 impl<T: for<'a> AbstractTransformFn<'a, ScanArguments<'a>>> TransformFn for T {}
-
-pub struct ScanArguments<'a>(&'a InsertStatement);
-type ScanResult = Result<Option<HashMap<String, String>>, anyhow::Error>;
 
 
 lazy_static! {
