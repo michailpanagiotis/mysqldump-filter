@@ -1,7 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::Path;
 
-use crate::checks::{DBChecks, TableChecks};
+use crate::checks::DBChecks;
 use crate::scanner::{TransformFn, process_table_inserts};
 
 pub fn process_checks(passes: DBChecks, working_file_path: &Path) -> Result<(), anyhow::Error> {
