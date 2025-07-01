@@ -20,40 +20,38 @@ type TrackerCell = Rc<RefCell<Tracker>>;
 
 type SqlStatement = (String, Option<String>);
 type SqlStatementResult = Result<SqlStatement, anyhow::Error>;
-type OptionalStatementResult = Result<Option<()>, anyhow::Error>;
 type EmptyResult = Result<(), anyhow::Error>;
 
 type ValueTuple = (String, sqlparser::ast::DataType);
 type ValueTuples = HashMap<String, ValueTuple>;
 
-pub trait Convertible<'a>: TryInto<&'a HashMap<String, (String, sqlparser::ast::DataType)>> {}
-impl<'a, T> Convertible<'a> for T
-     where T: TryInto<&'a HashMap<String, (String, sqlparser::ast::DataType)>>
-{}
 
-trait Conv: for<'a> Convertible<'a> {}
-impl<T: for<'a> Convertible<'a>> Conv for T {}
+type ValuesRef<'a> = &'a HashMap<String, (String, sqlparser::ast::DataType)>;
 
-// impl<'a, T: TryInto<&'a HashMap<String, (String, sqlparser::ast::DataType)>>> Convertible<'a> for T {}
-// impl<'a> Convertible<'a> for &'a InsertStatement {}
+pub trait TryIntoValues<'a>: TryInto<ValuesRef<'a>> {}
+impl<'a, T: TryInto<ValuesRef<'a>>> TryIntoValues<'a> for T {}
 
-pub trait GenericTransformFn<'a, C: Convertible<'a>>: FnMut(C) -> OptionalStatementResult {}
-impl<'a, T: FnMut(ScanArguments<'a>) -> OptionalStatementResult> GenericTransformFn<'a, ScanArguments<'a>> for T {}
+pub trait TryFromValues<'a>: TryFrom<ValuesRef<'a>> {}
+
+pub trait GenericTransformFn<'a, C: TryIntoValues<'a>>: FnMut(C) -> ScanResult {}
+impl<'a, T: FnMut(ScanArguments<'a>) -> ScanResult> GenericTransformFn<'a, ScanArguments<'a>> for T {}
 
 pub trait TransformFn: for<'a> GenericTransformFn<'a, ScanArguments<'a>> {}
 impl<T: for<'a> GenericTransformFn<'a, ScanArguments<'a>>> TransformFn for T {}
 
+
 pub struct ScanArguments<'a>(&'a InsertStatement);
+type ScanResult = Result<Option<()>, anyhow::Error>;
 
 
-// impl<'a, C: Convertible<'a>, T: FnMut(C) -> OptionalStatementResult> GenericTransformFn<'a, C> for T {}
+// impl<'a, C: TryIntoValues<'a>, T: FnMut(C) -> ScanResult> GenericTransformFn<'a, C> for T {}
 //
 // // trait alias for transform functions
 // pub trait TransformFn: for<'a> GenericTransformFn<&'a InsertStatement> {}
 // impl<T: for<'a> GenericTransformFn<&'a InsertStatement>> TransformFn for T {}
 // trait alias for transform functions
-// pub trait TransformFn: for<'a> FnMut(&'a InsertStatement) -> OptionalStatementResult {}
-// impl<T: for<'a> FnMut(&'a InsertStatement) -> OptionalStatementResult> TransformFn for T {}
+// pub trait TransformFn: for<'a> FnMut(&'a InsertStatement) -> ScanResult {}
+// impl<T: for<'a> FnMut(&'a InsertStatement) -> ScanResult> TransformFn for T {}
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -120,7 +118,7 @@ impl InsertStatement {
     }
 }
 
-impl<'a> TryInto<&'a ValueTuples> for ScanArguments<'a> {
+impl<'a> TryInto<ValuesRef<'a>> for ScanArguments<'a> {
     type Error = anyhow::Error;
 
     fn try_into(self) -> Result<&'a ValueTuples, Self::Error> {
@@ -129,7 +127,7 @@ impl<'a> TryInto<&'a ValueTuples> for ScanArguments<'a> {
 }
 
 
-impl<'a> TryInto<&'a ValueTuples> for &'a InsertStatement {
+impl<'a> TryInto<ValuesRef<'a>> for &'a InsertStatement {
     type Error = anyhow::Error;
 
     fn try_into(self) -> Result<&'a ValueTuples, Self::Error> {
