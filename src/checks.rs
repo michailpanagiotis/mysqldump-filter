@@ -26,7 +26,7 @@ impl TableChecks {
         self.0.iter().flat_map(|c| c.get_tracked_columns()).collect()
     }
 
-    pub fn test<'a, V: TryInto<&'a mut HashMap<String, (String, sqlparser::ast::DataType)>>>(
+    pub fn test<'a, V: TryInto<&'a HashMap<String, (String, sqlparser::ast::DataType)>>>(
         &self,
         values: V,
         lookup_table: &HashMap<String, HashSet<String>>,

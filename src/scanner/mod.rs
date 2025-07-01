@@ -75,10 +75,10 @@ impl InsertStatement {
     }
 }
 
-impl<'a> TryInto<&'a mut ValueTuples> for &'a mut InsertStatement {
+impl<'a> TryInto<&'a ValueTuples> for &'a mut InsertStatement {
     type Error = anyhow::Error;
 
-    fn try_into(self) -> Result<&'a mut ValueTuples, Self::Error> {
+    fn try_into(self) -> Result<&'a ValueTuples, Self::Error> {
         if self.value_per_field.is_none() {
             let Some(ref positions) = self.positions else {
                 return Err(anyhow::anyhow!("statement with no positions"));
@@ -182,7 +182,7 @@ impl Tracker {
         &self.column_positions[table]
     }
 
-    fn capture_values(&mut self, value_per_field: &mut HashMap<String, ValueTuple>) {
+    fn capture_values(&mut self, value_per_field: &HashMap<String, ValueTuple>) {
         if self.is_capturing_columns() {
             for (key, column) in &self.tracked_column_per_key {
                 let value = &value_per_field[column];
