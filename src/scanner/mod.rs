@@ -31,8 +31,6 @@ type ValuesRef<'a> = &'a HashMap<String, (String, sqlparser::ast::DataType)>;
 pub trait TryIntoValues<'a>: TryInto<ValuesRef<'a>> {}
 impl<'a, T: TryInto<ValuesRef<'a>>> TryIntoValues<'a> for T {}
 
-pub trait TryFromValues<'a>: TryFrom<ValuesRef<'a>> {}
-
 pub trait GenericTransformFn<'a, C: TryIntoValues<'a>>: FnMut(C) -> ScanResult {}
 impl<'a, T: FnMut(ScanArguments<'a>) -> ScanResult> GenericTransformFn<'a, ScanArguments<'a>> for T {}
 
