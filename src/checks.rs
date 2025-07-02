@@ -39,7 +39,8 @@ impl TableChecks {
     pub fn get_update_fn<'a, T: TryInto<&'a HashMap<String, (String, sqlparser::ast::DataType)>>>(
         &self,
         lookup_table: &HashMap<String, HashSet<String>>,
-    ) -> impl FnMut(T) -> Result<Option<HashMap<String, String>>, anyhow::Error> {
+    // ) -> impl FnMut(T) -> Result<Option<HashMap<String, String>>, anyhow::Error> {
+    ) -> impl TransformFn {
         |item| {
             let Ok(value_per_field) = item.try_into() else { Err(anyhow::anyhow!("cannot parse values"))? };
             for check in self.0.iter() {
