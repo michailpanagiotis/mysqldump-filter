@@ -4,7 +4,7 @@ use std::path::Path;
 use crate::checks::{DBChecks, TableChecks};
 use crate::scanner::{TransformFn, process_table_inserts};
 
-fn get_table_transform(table_checks: &TableChecks, lookup_table: &HashMap<String, HashSet<String>>) -> impl TransformFn {
+fn get_table_transform_fn(table_checks: &TableChecks, lookup_table: &HashMap<String, HashSet<String>>) -> impl TransformFn {
     |statement| {
         let Ok(value_per_field) = statement.try_into() else { Err(anyhow::anyhow!("cannot parse values"))? };
         for check in table_checks.0.iter() {
@@ -21,13 +21,14 @@ pub fn process_checks(passes: DBChecks, working_file_path: &Path) -> Result<(), 
     for pending_tables in passes {
         dbg!(&lookup_table);
         for table_checks in pending_tables {
+            let transform_fn = get_table_transform_fn(&table_checks, &lookup_table);
             let tracked_columns = table_checks.get_tracked_columns();
             let table = table_checks.get_table()?;
             let captured = process_table_inserts(
+                working_file_path,
                 table,
                 &tracked_columns,
-                working_file_path,
-                get_table_transform(&table_checks, &lookup_table),
+                transform_fn,
             )?;
 
             lookup_table.extend(captured);
