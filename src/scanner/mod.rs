@@ -165,7 +165,7 @@ pub struct Tracker {
 }
 
 impl Tracker {
-    fn new(tracked_columns: &[String]) -> Result<Rc<RefCell<Self>>, anyhow::Error> {
+    fn new(tracked_columns: &[&str]) -> Result<Rc<RefCell<Self>>, anyhow::Error> {
         let (captured_values, tracked_column_per_key) = Tracker::prepare_tracked_columns(tracked_columns)?;
         Ok(Rc::new(RefCell::new(Tracker {
             data_types: HashMap::new(),
@@ -175,7 +175,7 @@ impl Tracker {
         })))
     }
 
-    fn prepare_tracked_columns(tracked_columns: &[String]) -> Result<(CapturedValues, HashMap<String, String>), anyhow::Error> {
+    fn prepare_tracked_columns(tracked_columns: &[&str]) -> Result<(CapturedValues, HashMap<String, String>), anyhow::Error> {
         let mut captured_values: CapturedValues = HashMap::new();
         let mut tracked_column_per_key: HashMap<String, String> = HashMap::new();
         for key in tracked_columns {
@@ -368,7 +368,7 @@ struct TransformedStatements<F: TransformFn> {
 }
 
 impl<F: TransformFn> TransformedStatements<F> {
-    fn from_file(sqldump_filepath: &Path, tracked_columns: &[String], transform: F, preprocess_file: &Option<&Path>) -> Result<Self, anyhow::Error> {
+    fn from_file(sqldump_filepath: &Path, tracked_columns: &[&str], transform: F, preprocess_file: &Option<&Path>) -> Result<Self, anyhow::Error> {
         let tracker = Tracker::new(tracked_columns)?;
         Ok(TransformedStatements {
             iter: TrackedStatements::from_file(sqldump_filepath, &tracker, preprocess_file)?,
@@ -472,7 +472,7 @@ pub fn explode_to_files<F>(
 pub fn process_table_inserts<F>(
     working_file_path: &Path,
     table: &str,
-    tracked_columns: &[String],
+    tracked_columns: &[&str],
     transform: F,
 ) -> Result<CapturedValues, anyhow::Error>
   where F: TransformFn

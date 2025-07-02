@@ -12,17 +12,27 @@ pub type PlainCheckType = Box<dyn PlainColumnCheck>;
 pub struct TableChecks(pub Vec<PlainCheckType>);
 
 impl TableChecks {
-    pub fn get_table(&self) -> Result<&str, anyhow::Error> {
-        let tables: HashSet<&str> = self.0.iter().map(|c| c.get_table_name()).collect();
-        if tables.len() != 1 {
-            Err(anyhow::anyhow!("cannot perform checks on multiple tables at once"))?;
-        }
-        let Some(table) = tables.iter().next() else { Err(anyhow::anyhow!("cannot find table"))? };
-        Ok(table)
+    pub fn get_table(&self) -> &str {
+        let tables: Vec<&str> = self.0.iter().map(|c| c.get_table_name()).collect();
+        tables[0]
     }
 
-    pub fn get_tracked_columns(&self) -> Vec<String> {
+    pub fn get_tracked_columns(&self) -> Vec<&str> {
         self.0.iter().flat_map(|c| c.get_tracked_columns()).collect()
+    }
+
+    pub fn update_values<'a, T: TryInto<&'a HashMap<String, (String, sqlparser::ast::DataType)>>>(
+        &self,
+        item: T,
+        lookup_table: &HashMap<String, HashSet<String>>,
+    ) -> Result<Option<HashMap<String, String>>, anyhow::Error> {
+        let Ok(value_per_field) = item.try_into() else { Err(anyhow::anyhow!("cannot parse values"))? };
+        for check in self.0.iter() {
+            if !check.test(value_per_field, lookup_table)? {
+                return Ok(None);
+            }
+        }
+        Ok(Some(HashMap::new()))
     }
 }
 
@@ -140,15 +150,13 @@ pub trait PlainColumnCheck {
 
     fn get_column_name(&self) -> &str;
 
-    fn get_column_key(&self) -> String {
-        String::from(self.get_table_name()) + "." + self.get_column_name()
-    }
+    fn get_column_key(&self) -> &str;
 
     fn get_definition(&self) -> &str;
 
     fn get_key(&self) -> &str;
 
-    fn get_tracked_columns(&self) -> Vec<String>;
+    fn get_tracked_columns(&self) -> Vec<&str>;
 
     fn as_any(&self) -> &dyn Any;
 }
@@ -170,6 +178,7 @@ pub struct PlainCelTest {
     key: String,
     table_name: String,
     column_name: String,
+    column_key: String,
     definition: String,
     program: Program,
 }
@@ -219,6 +228,7 @@ impl PlainColumnCheck for PlainCelTest {
             key: String::from("cel: ") + table + ": " + definition,
             table_name: table.to_owned(),
             column_name: column.to_owned(),
+            column_key: String::from(table) + "." +column,
             definition: definition.to_owned(),
             program,
         })
@@ -256,7 +266,11 @@ impl PlainColumnCheck for PlainCelTest {
         &self.column_name
     }
 
-    fn get_tracked_columns(&self) -> Vec<String> {
+    fn get_column_key(&self) -> &str {
+        &self.column_key
+    }
+
+    fn get_tracked_columns(&self) -> Vec<&str> {
         Vec::new()
     }
 
@@ -270,6 +284,7 @@ pub struct PlainLookupTest {
     key: String,
     table_name: String,
     column_name: String,
+    column_key: String,
     definition: String,
     target_column_key: String,
 }
@@ -295,6 +310,7 @@ impl PlainColumnCheck for PlainLookupTest {
             key: String::from("lookup: ") + table + ": " + definition,
             table_name: table.to_owned(),
             column_name: source_column.to_owned(),
+            column_key: String::from(table) + "." + source_column,
             definition: definition.to_owned(),
             target_column_key: foreign_key.to_owned(),
         })
@@ -326,7 +342,11 @@ impl PlainColumnCheck for PlainLookupTest {
         &self.column_name
     }
 
-    fn get_tracked_columns(&self) -> Vec<String> {
+    fn get_column_key(&self) -> &str {
+        &self.column_key
+    }
+
+    fn get_tracked_columns(&self) -> Vec<&str> {
         Vec::new()
     }
 
@@ -340,6 +360,7 @@ pub struct PlainTrackingTest {
     key: String,
     table_name: String,
     column_name: String,
+    column_key: String,
     definition: String,
 }
 
@@ -358,6 +379,7 @@ impl PlainColumnCheck for PlainTrackingTest {
             key: String::from("track: ") + table + ": " + definition,
             table_name: table.to_owned(),
             column_name: column.to_owned(),
+            column_key: String::from(table) + "." + column,
             definition: definition.to_owned(),
         })
     }
@@ -387,7 +409,11 @@ impl PlainColumnCheck for PlainTrackingTest {
         &self.column_name
     }
 
-    fn get_tracked_columns(&self) -> Vec<String> {
+    fn get_column_key(&self) -> &str {
+        &self.column_key
+    }
+
+    fn get_tracked_columns(&self) -> Vec<&str> {
         Vec::from([self.get_column_key()])
     }
 
