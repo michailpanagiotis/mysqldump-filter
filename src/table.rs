@@ -2,10 +2,13 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::checks::{DBChecks, TableChecks};
-use crate::scanner::{process_table_inserts, TransformArguments, TransformFn};
+use crate::scanner::{TransformFn, process_table_inserts};
 
 fn get_table_transform_fn<'a>(table_checks: &'a TableChecks, lookup_table: &'a HashMap<String, HashSet<String>>) -> (&'a str, Vec<&'a str>, impl TransformFn) {
-    (table_checks.get_table(), table_checks.get_tracked_columns(), table_checks.get_update_fn::<TransformArguments>(lookup_table))
+    (table_checks.get_table(), table_checks.get_tracked_columns(), |statement| {
+        let mut update_fn = table_checks.get_update_fn(lookup_table);
+        update_fn(statement)
+    })
 }
 
 // fn get_table_transform_fn(table_checks: &TableChecks, lookup_table: &HashMap<String, HashSet<String>>) -> impl TransformFn {
