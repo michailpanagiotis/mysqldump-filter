@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::dependencies::{DependencyNode, chunk_by_depth};
+use crate::scanner::TransformFn;
 
 pub type PlainCheckType = Box<dyn PlainColumnCheck>;
 
@@ -33,6 +34,21 @@ impl TableChecks {
             }
         }
         Ok(Some(HashMap::new()))
+    }
+
+    pub fn get_update_fn<'a, T: TryInto<&'a HashMap<String, (String, sqlparser::ast::DataType)>>>(
+        &self,
+        lookup_table: &HashMap<String, HashSet<String>>,
+    ) -> impl FnMut(T) -> Result<Option<HashMap<String, String>>, anyhow::Error> {
+        |item| {
+            let Ok(value_per_field) = item.try_into() else { Err(anyhow::anyhow!("cannot parse values"))? };
+            for check in self.0.iter() {
+                if !check.test(value_per_field, lookup_table)? {
+                    return Ok(None);
+                }
+            }
+            Ok(Some(HashMap::new()))
+        }
     }
 }
 
