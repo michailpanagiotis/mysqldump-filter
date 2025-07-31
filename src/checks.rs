@@ -59,7 +59,7 @@ pub trait PlainColumnCheck {
         &self,
         value: &str,
         data_type: &sqlparser::ast::DataType,
-        lookup_table: &HashMap<String, HashSet<String>>,
+        lookup_table: &mut HashMap<String, HashSet<String>>,
     ) -> Result<bool, anyhow::Error>;
 
     fn get_table_name(&self) -> &str;
@@ -154,7 +154,7 @@ impl PlainColumnCheck for PlainCelTest {
         &self,
         value: &str,
         data_type: &sqlparser::ast::DataType,
-        _lookup_table: &HashMap<String, HashSet<String>>,
+        _lookup_table: &mut HashMap<String, HashSet<String>>,
     ) -> Result<bool, anyhow::Error> {
         let context = self.build_context(self.get_column_name(), value, data_type)?;
         match self.program.execute(&context)? {
@@ -236,7 +236,7 @@ impl PlainColumnCheck for PlainLookupTest {
         &self,
         value: &str,
         _data_type: &sqlparser::ast::DataType,
-        lookup_table: &HashMap<String, HashSet<String>>,
+        lookup_table: &mut HashMap<String, HashSet<String>>,
     ) -> Result<bool, anyhow::Error> {
         let Some(set) = lookup_table.get(&self.target_column_key) else { return Ok(true) };
         Ok(set.contains(value))
@@ -302,10 +302,15 @@ impl PlainColumnCheck for PlainTrackingTest {
 
     fn test_value(
         &self,
-        _value: &str,
+        value: &str,
         _data_type: &sqlparser::ast::DataType,
-        _lookup_table: &HashMap<String, HashSet<String>>,
+        lookup_table: &mut HashMap<String, HashSet<String>>,
     ) -> Result<bool, anyhow::Error> {
+        let key = self.get_column_key();
+        match lookup_table.get_mut(key) {
+            None => { lookup_table.insert(self.get_column_key().to_owned(), HashSet::new()); }
+            Some(values) => { values.insert(value.to_owned()); }
+        }
         Ok(true)
     }
 
@@ -349,12 +354,9 @@ impl TableChecks {
     pub fn test_insert(
         &self,
         value_per_field: &HashMap<String, (String, sqlparser::ast::DataType)>,
-        lookup_table: &HashMap<String, HashSet<String>>,
+        lookup_table: &mut HashMap<String, HashSet<String>>,
     ) -> Result<Option<HashMap<String, String>>, anyhow::Error> {
         for check in self.0.iter() {
-            if check.as_any().downcast_ref::<PlainTrackingTest>().is_some() {
-                continue;
-            }
             let col_name = check.get_column_name();
             let (str_value, data_type): &(String, sqlparser::ast::DataType) = &value_per_field[col_name];
             if !check.test_value(str_value, data_type, lookup_table)? {
@@ -366,7 +368,7 @@ impl TableChecks {
 
     pub fn transform_statement<'a, T: TryInto<&'a HashMap<String, (String, sqlparser::ast::DataType)>>>(
         &self,
-        lookup_table: &HashMap<String, HashSet<String>>,
+        lookup_table: &mut HashMap<String, HashSet<String>>,
         statement: T,
     ) -> Result<Option<HashMap<String, String>>, anyhow::Error> {
         let Ok(value_per_field) = statement.try_into() else { Err(anyhow::anyhow!("cannot parse values"))? };

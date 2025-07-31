@@ -28,8 +28,8 @@ type ValuesRef<'a> = &'a ValuesMap;
 pub struct TransformArguments<'a>(&'a mut InsertStatement);
 type TransformResult = Result<Option<HashMap<String, String>>, anyhow::Error>;
 
-pub trait AbstractTransformFn<'a, Iv: TryInto<ValuesRef<'a>>>: Fn(Iv) -> TransformResult {}
-impl<'a, Iv: TryInto<ValuesRef<'a>>, T: Fn(Iv) -> TransformResult> AbstractTransformFn<'a, Iv> for T {}
+pub trait AbstractTransformFn<'a, Iv: TryInto<ValuesRef<'a>>>: FnMut(Iv) -> TransformResult {}
+impl<'a, Iv: TryInto<ValuesRef<'a>>, T: FnMut(Iv) -> TransformResult> AbstractTransformFn<'a, Iv> for T {}
 
 pub trait TransformFn: for<'a> AbstractTransformFn<'a, TransformArguments<'a>> {}
 impl<T: for<'a> AbstractTransformFn<'a, TransformArguments<'a>>> TransformFn for T {}
