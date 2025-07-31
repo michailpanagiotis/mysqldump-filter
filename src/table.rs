@@ -6,22 +6,9 @@ use crate::scanner::{TransformFn, process_table_inserts};
 
 fn get_table_transform_fn<'a>(table_checks: &'a TableChecks, lookup_table: &'a HashMap<String, HashSet<String>>) -> (&'a str, Vec<&'a str>, impl TransformFn) {
     (table_checks.get_table(), table_checks.get_tracked_columns(), |statement| {
-        let mut update_fn = table_checks.get_update_fn(lookup_table);
-        update_fn(statement)
+        table_checks.transform_statement(lookup_table, statement)
     })
 }
-
-// fn get_table_transform_fn(table_checks: &TableChecks, lookup_table: &HashMap<String, HashSet<String>>) -> impl TransformFn {
-//     |statement| {
-//         let Ok(value_per_field) = statement.try_into() else { Err(anyhow::anyhow!("cannot parse values"))? };
-//         for check in table_checks.0.iter() {
-//             if !check.test(value_per_field, lookup_table)? {
-//                 return Ok(None);
-//             }
-//         }
-//         Ok(Some(HashMap::new()))
-//     }
-// }
 
 pub fn process_checks(passes: DBChecks, working_file_path: &Path) -> Result<(), anyhow::Error> {
     let mut lookup_table = HashMap::new();

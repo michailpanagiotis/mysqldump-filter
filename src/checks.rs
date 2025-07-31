@@ -8,92 +8,6 @@ use crate::dependencies::{DependencyNode, chunk_by_depth};
 
 pub type PlainCheckType = Box<dyn PlainColumnCheck>;
 
-#[derive(Debug)]
-pub struct TableChecks(Vec<PlainCheckType>);
-
-impl TableChecks {
-    pub fn get_table(&self) -> &str {
-        let tables: Vec<&str> = self.0.iter().map(|c| c.get_table_name()).collect();
-        tables[0]
-    }
-
-    pub fn get_tracked_columns(&self) -> Vec<&str> {
-        self.0.iter().flat_map(|c| c.get_tracked_columns()).collect()
-    }
-
-    pub fn test_insert(
-        &self,
-        value_per_field: &HashMap<String, (String, sqlparser::ast::DataType)>,
-        lookup_table: &HashMap<String, HashSet<String>>,
-    ) -> Result<Option<HashMap<String, String>>, anyhow::Error> {
-        for check in self.0.iter() {
-            if check.as_any().downcast_ref::<PlainTrackingTest>().is_some() {
-                continue;
-            }
-            let col_name = check.get_column_name();
-            let (str_value, data_type): &(String, sqlparser::ast::DataType) = &value_per_field[col_name];
-            if !check.test_value(str_value, data_type, lookup_table)? {
-                return Ok(None);
-            }
-        }
-        Ok(Some(HashMap::new()))
-    }
-
-    pub fn get_update_fn<'a, T: TryInto<&'a HashMap<String, (String, sqlparser::ast::DataType)>>>(
-        &self,
-        lookup_table: &HashMap<String, HashSet<String>>,
-    ) -> impl FnMut(T) -> Result<Option<HashMap<String, String>>, anyhow::Error> {
-        |item| {
-            let Ok(value_per_field) = item.try_into() else { Err(anyhow::anyhow!("cannot parse values"))? };
-            self.test_insert(value_per_field, lookup_table)
-        }
-    }
-}
-
-impl From<Vec<PlainCheckType>> for TableChecks {
-    fn from(items: Vec<PlainCheckType>) -> Self {
-        Self(items)
-    }
-}
-
-type PassChecks = HashMap<String, TableChecks>;
-
-// impl From<Vec<Vec<PlainCheckType>>> for PassChecks {
-//     fn from(items: Vec<Vec<PlainCheckType>>) -> Self {
-//         Self(items.into_iter().map(|it| (it[0].get_table_name().to_string(), TableChecks::from(it))).collect())
-//     }
-// }
-
-// impl IntoIterator for PassChecks {
-//     type Item = (String, TableChecks);
-//     type IntoIter = <HashMap<std::string::String, TableChecks> as IntoIterator>::IntoIter;
-//
-//     fn into_iter(self) -> Self::IntoIter {
-//         self.0.into_iter()
-//     }
-// }
-
-
-#[derive(Debug)]
-pub struct DBChecks(pub Vec<PassChecks>);
-
-impl From<Vec<Vec<Vec<PlainCheckType>>>> for DBChecks {
-    fn from(items: Vec<Vec<Vec<PlainCheckType>>>) -> Self {
-        Self(items.into_iter().map(|t_items| {
-            t_items.into_iter().map(|it| (it[0].get_table_name().to_string(), TableChecks::from(it))).collect()
-        }).collect())
-    }
-}
-
-impl IntoIterator for DBChecks {
-    type Item = PassChecks;
-    type IntoIter = std::vec::IntoIter<Self::Item>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
-    }
-}
-
 enum Value {
     Int(i64),
     Date(i64),
@@ -147,19 +61,6 @@ pub trait PlainColumnCheck {
         data_type: &sqlparser::ast::DataType,
         lookup_table: &HashMap<String, HashSet<String>>,
     ) -> Result<bool, anyhow::Error>;
-
-    // fn test(
-    //     &self,
-    //     value_per_field: &HashMap<String, (String, sqlparser::ast::DataType)>,
-    //     lookup_table: &HashMap<String, HashSet<String>>,
-    // ) -> Result<bool, anyhow::Error> {
-    //     if self.as_any().downcast_ref::<PlainTrackingTest>().is_some() {
-    //         return Ok(true);
-    //     }
-    //     let col_name = self.get_column_name();
-    //     let (str_value, data_type): &(String, sqlparser::ast::DataType) = &value_per_field[col_name];
-    //     self.test_value(str_value, data_type, lookup_table)
-    // }
 
     fn get_table_name(&self) -> &str;
 
@@ -434,6 +335,75 @@ impl PlainColumnCheck for PlainTrackingTest {
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+#[derive(Debug)]
+pub struct TableChecks(Vec<PlainCheckType>);
+
+impl TableChecks {
+    pub fn get_table(&self) -> &str {
+        let tables: Vec<&str> = self.0.iter().map(|c| c.get_table_name()).collect();
+        tables[0]
+    }
+
+    pub fn get_tracked_columns(&self) -> Vec<&str> {
+        self.0.iter().flat_map(|c| c.get_tracked_columns()).collect()
+    }
+
+    pub fn test_insert(
+        &self,
+        value_per_field: &HashMap<String, (String, sqlparser::ast::DataType)>,
+        lookup_table: &HashMap<String, HashSet<String>>,
+    ) -> Result<Option<HashMap<String, String>>, anyhow::Error> {
+        for check in self.0.iter() {
+            if check.as_any().downcast_ref::<PlainTrackingTest>().is_some() {
+                continue;
+            }
+            let col_name = check.get_column_name();
+            let (str_value, data_type): &(String, sqlparser::ast::DataType) = &value_per_field[col_name];
+            if !check.test_value(str_value, data_type, lookup_table)? {
+                return Ok(None);
+            }
+        }
+        Ok(Some(HashMap::new()))
+    }
+
+    pub fn transform_statement<'a, T: TryInto<&'a HashMap<String, (String, sqlparser::ast::DataType)>>>(
+        &self,
+        lookup_table: &HashMap<String, HashSet<String>>,
+        statement: T,
+    ) -> Result<Option<HashMap<String, String>>, anyhow::Error> {
+        let Ok(value_per_field) = statement.try_into() else { Err(anyhow::anyhow!("cannot parse values"))? };
+        self.test_insert(value_per_field, lookup_table)
+    }
+}
+
+impl From<Vec<PlainCheckType>> for TableChecks {
+    fn from(items: Vec<PlainCheckType>) -> Self {
+        Self(items)
+    }
+}
+
+type PassChecks = HashMap<String, TableChecks>;
+
+#[derive(Debug)]
+pub struct DBChecks(pub Vec<PassChecks>);
+
+impl From<Vec<Vec<Vec<PlainCheckType>>>> for DBChecks {
+    fn from(items: Vec<Vec<Vec<PlainCheckType>>>) -> Self {
+        Self(items.into_iter().map(|t_items| {
+            t_items.into_iter().map(|it| (it[0].get_table_name().to_string(), TableChecks::from(it))).collect()
+        }).collect())
+    }
+}
+
+impl IntoIterator for DBChecks {
+    type Item = PassChecks;
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
     }
 }
 
