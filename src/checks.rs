@@ -347,15 +347,12 @@ impl PlainColumnCheck for PlainTrackingTest {
 pub struct TableChecks(Vec<PlainCheckType>);
 
 impl TableChecks {
-    pub fn get_tracked_columns(&self) -> Vec<&str> {
-        self.0.iter().flat_map(|c| c.get_tracked_columns()).collect()
-    }
-
-    pub fn test_insert(
+    pub fn apply<'a, T: TryInto<&'a HashMap<String, (String, sqlparser::ast::DataType)>>>(
         &self,
-        value_per_field: &HashMap<String, (String, sqlparser::ast::DataType)>,
+        statement: T,
         lookup_table: &mut HashMap<String, HashSet<String>>,
     ) -> Result<Option<HashMap<String, String>>, anyhow::Error> {
+        let Ok(value_per_field) = statement.try_into() else { Err(anyhow::anyhow!("cannot parse values"))? };
         for check in self.0.iter() {
             let col_name = check.get_column_name();
             let (str_value, data_type): &(String, sqlparser::ast::DataType) = &value_per_field[col_name];
@@ -365,20 +362,19 @@ impl TableChecks {
         }
         Ok(Some(HashMap::new()))
     }
-
-    pub fn transform_statement<'a, T: TryInto<&'a HashMap<String, (String, sqlparser::ast::DataType)>>>(
-        &self,
-        lookup_table: &mut HashMap<String, HashSet<String>>,
-        statement: T,
-    ) -> Result<Option<HashMap<String, String>>, anyhow::Error> {
-        let Ok(value_per_field) = statement.try_into() else { Err(anyhow::anyhow!("cannot parse values"))? };
-        self.test_insert(value_per_field, lookup_table)
-    }
 }
 
 impl From<Vec<PlainCheckType>> for TableChecks {
     fn from(items: Vec<PlainCheckType>) -> Self {
-        Self(items)
+        let mut res = Self(items);
+        // tests have implicit order
+        res.0.sort_by_key(|a| {
+            if a.as_any().downcast_ref::<PlainTrackingTest>().is_some() {
+                return true;
+            }
+            false
+        });
+        res
     }
 }
 

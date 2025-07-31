@@ -72,7 +72,7 @@ fn main() -> Result<(), anyhow::Error> {
     //     panic!("Problem exploding to files: {e:?}");
     // });
 
-    let passes = get_passes(config.filters.iter().chain(&config.cascades))?;
+    let passes = get_passes(config.cascades.iter().chain(&config.filters))?;
     process_checks(passes, working_file_path.as_path())?;
     // gather(&working_file_path, &output_file)?;
     //

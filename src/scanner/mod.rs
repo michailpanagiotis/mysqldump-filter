@@ -160,33 +160,14 @@ impl<'a> TryFrom<&'a mut InsertStatement> for SqlStatement {
 pub struct Tracker {
     data_types: HashMap<String, Rc<TableDataTypes>>,
     column_positions: HashMap<String, Rc<TableColumnPositions>>,
-    captured_values: CapturedValues,
-    tracked_column_per_key: HashMap<String, String>,
 }
 
 impl Tracker {
-    fn new(tracked_columns: &[&str]) -> Result<Rc<RefCell<Self>>, anyhow::Error> {
-        let (captured_values, tracked_column_per_key) = Tracker::prepare_tracked_columns(tracked_columns)?;
+    fn new() -> Result<Rc<RefCell<Self>>, anyhow::Error> {
         Ok(Rc::new(RefCell::new(Tracker {
             data_types: HashMap::new(),
             column_positions: HashMap::new(),
-            captured_values,
-            tracked_column_per_key,
         })))
-    }
-
-    fn prepare_tracked_columns(tracked_columns: &[&str]) -> Result<(CapturedValues, HashMap<String, String>), anyhow::Error> {
-        let mut captured_values: CapturedValues = HashMap::new();
-        let mut tracked_column_per_key: HashMap<String, String> = HashMap::new();
-        for key in tracked_columns {
-            captured_values.insert(key.to_string(), HashSet::new());
-            let mut split = key.split('.');
-            let (Some(_), Some(column), None) = (split.next(), split.next(), split.next()) else {
-                return Err(anyhow::anyhow!("malformed key {}", key));
-            };
-            tracked_column_per_key.insert(key.to_string(), column.to_owned());
-        }
-        Ok((captured_values, tracked_column_per_key))
     }
 
     fn capture_positions(&mut self, statement: &SqlStatement, current_table: &Option<String>) -> EmptyResult {
@@ -220,25 +201,6 @@ impl Tracker {
 
     fn get_table_column_positions(&self, table: &str) -> &Rc<TableColumnPositions> {
         &self.column_positions[table]
-    }
-
-    fn capture_values(&mut self, value_per_field: ValuesRef<'_>) {
-        if self.is_capturing_columns() {
-            for (key, column) in &self.tracked_column_per_key {
-                let value = &value_per_field[column];
-                if let Some(set) = self.captured_values.get_mut(key) {
-                    set.insert(value.0.clone());
-                }
-            }
-        }
-    }
-
-    fn get_captured_values(&self) -> &CapturedValues {
-        &self.captured_values
-    }
-
-    fn is_capturing_columns(&self) -> bool {
-        !self.tracked_column_per_key.is_empty()
     }
 }
 
@@ -368,8 +330,8 @@ struct TransformedStatements<F: TransformFn> {
 }
 
 impl<F: TransformFn> TransformedStatements<F> {
-    fn from_file(sqldump_filepath: &Path, tracked_columns: &[&str], transform: F, preprocess_file: &Option<&Path>) -> Result<Self, anyhow::Error> {
-        let tracker = Tracker::new(tracked_columns)?;
+    fn from_file(sqldump_filepath: &Path, transform: F, preprocess_file: &Option<&Path>) -> Result<Self, anyhow::Error> {
+        let tracker = Tracker::new()?;
         Ok(TransformedStatements {
             iter: TrackedStatements::from_file(sqldump_filepath, &tracker, preprocess_file)?,
             transform,
@@ -384,14 +346,6 @@ impl<F: TransformFn> TransformedStatements<F> {
         Ok(())
     }
 
-    fn try_capture_values(&mut self, insert_statement: &mut InsertStatement) -> EmptyResult {
-        let mut borrowed = self.iter.tracker.borrow_mut();
-        if borrowed.is_capturing_columns() {
-            borrowed.capture_values(insert_statement.try_into()?);
-        }
-        Ok(())
-    }
-
     fn transform_insert_statement(&mut self, insert_statement: &mut InsertStatement) -> Result<SqlStatement, anyhow::Error>
         where F: TransformFn
     {
@@ -399,9 +353,6 @@ impl<F: TransformFn> TransformedStatements<F> {
             return Err(anyhow::anyhow!("cannot share meta"));
         }
         let transformed = (self.transform)(TransformArguments(insert_statement))?;
-        if transformed.is_some() {
-            self.try_capture_values(insert_statement)?;
-        }
         let statement: SqlStatement = SqlStatement::try_from(insert_statement)?;
         Ok(statement)
     }
@@ -428,14 +379,13 @@ impl<F: TransformFn> TransformedStatements<F> {
         }
     }
 
-    fn process_all(self, writers: &mut Writers) -> Result<CapturedValues, anyhow::Error> {
-        let tracker = Rc::clone(&self.iter.tracker);
+    fn process_all(self, writers: &mut Writers) -> Result<(), anyhow::Error> {
         for st in self {
             let statement = st?;
             writers.write_statement(&statement.1, statement.0.as_bytes())?;
         };
         writers.flush()?;
-        Ok(tracker.borrow().get_captured_values().clone())
+        Ok(())
     }
 }
 
@@ -458,23 +408,22 @@ pub fn explode_to_files<F>(
     working_file_path: &Path,
     input_filepath: &Path,
     transform: F,
-) -> Result<CapturedValues, anyhow::Error>
+) -> Result<(), anyhow::Error>
   where F: TransformFn
 {
     let mut writers = Writers::new(working_file_path, false)?;
 
-    let statements = TransformedStatements::from_file(input_filepath, &[], transform, &None)?;
+    let statements = TransformedStatements::from_file(input_filepath, transform, &None)?;
     let res = statements.process_all(&mut writers)?;
 
-    Ok(res)
+    Ok(())
 }
 
 pub fn process_table_inserts<F>(
     working_file_path: &Path,
     table: &str,
-    tracked_columns: &[&str],
     transform: F,
-) -> Result<CapturedValues, anyhow::Error>
+) -> Result<(), anyhow::Error>
   where F: TransformFn
 {
     println!("Processing records of table {table}");
@@ -482,10 +431,10 @@ pub fn process_table_inserts<F>(
     let mut writers = Writers::new(working_file_path, true)?;
     let input_filepath = &writers.get_table_file(table)?;
 
-    let statements = TransformedStatements::from_file(input_filepath, tracked_columns, transform, &Some(working_file_path))?;
+    let statements = TransformedStatements::from_file(input_filepath, transform, &Some(working_file_path))?;
     let res = statements.process_all(&mut writers)?;
 
-    Ok(res)
+    Ok(())
 }
 
 #[allow(dead_code)]
