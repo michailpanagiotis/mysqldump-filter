@@ -4,7 +4,6 @@ mod writers;
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::cell::RefCell;
-use std::collections::HashSet;
 use std::{collections::HashMap, fs::File};
 use std::fs;
 use std::io::{self, BufRead, BufWriter, Write};
@@ -15,7 +14,6 @@ use crate::scanner::sql_parser::{TableColumnPositions, TableDataTypes, get_colum
 use crate::scanner::writers::Writers;
 
 type IteratorItem = SqlStatementResult;
-type CapturedValues = HashMap<String, HashSet<String>>;
 type TrackerCell = Rc<RefCell<Tracker>>;
 
 type SqlStatement = (String, Option<String>);
@@ -414,7 +412,7 @@ pub fn explode_to_files<F>(
     let mut writers = Writers::new(working_file_path, false)?;
 
     let statements = TransformedStatements::from_file(input_filepath, transform, &None)?;
-    let res = statements.process_all(&mut writers)?;
+    statements.process_all(&mut writers)?;
 
     Ok(())
 }
@@ -432,7 +430,7 @@ pub fn process_table_inserts<F>(
     let input_filepath = &writers.get_table_file(table)?;
 
     let statements = TransformedStatements::from_file(input_filepath, transform, &Some(working_file_path))?;
-    let res = statements.process_all(&mut writers)?;
+    statements.process_all(&mut writers)?;
 
     Ok(())
 }

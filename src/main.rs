@@ -74,8 +74,8 @@ fn main() -> Result<(), anyhow::Error> {
 
     let passes = get_passes(config.cascades.iter().chain(&config.filters))?;
     process_checks(passes, working_file_path.as_path())?;
-    // gather(&working_file_path, &output_file)?;
-    //
+    gather(&working_file_path, &output_file)?;
+
     // dbg!(collection);
 
     if let Some(dir) = temp_dir {
