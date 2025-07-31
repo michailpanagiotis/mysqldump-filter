@@ -28,7 +28,7 @@ pub fn process_checks(passes: DBChecks, working_file_path: &Path) -> Result<(), 
     for pending_tables in passes {
         dbg!(&lookup_table);
         // let transforms: HashMap<String, Box<dyn TransformFn>> = pending_tables.0.iter().map(|cks| (cks.get_table().to_owned(), get_table_transform_fn(&cks, &lookup_table))).collect();
-        for table_checks in pending_tables {
+        for (_, table_checks) in pending_tables {
             let (table, tracked_columns, transform_fn) = get_table_transform_fn(&table_checks, &lookup_table);
             let captured = process_table_inserts(
                 working_file_path,

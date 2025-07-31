@@ -9,7 +9,7 @@ use crate::dependencies::{DependencyNode, chunk_by_depth};
 pub type PlainCheckType = Box<dyn PlainColumnCheck>;
 
 #[derive(Debug)]
-pub struct TableChecks(pub Vec<PlainCheckType>);
+pub struct TableChecks(Vec<PlainCheckType>);
 
 impl TableChecks {
     pub fn get_table(&self) -> &str {
@@ -56,23 +56,22 @@ impl From<Vec<PlainCheckType>> for TableChecks {
     }
 }
 
-#[derive(Debug)]
-pub struct PassChecks(pub Vec<TableChecks>);
+type PassChecks = HashMap<String, TableChecks>;
 
-impl From<Vec<Vec<PlainCheckType>>> for PassChecks {
-    fn from(items: Vec<Vec<PlainCheckType>>) -> Self {
-        Self(items.into_iter().map(TableChecks::from).collect())
-    }
-}
+// impl From<Vec<Vec<PlainCheckType>>> for PassChecks {
+//     fn from(items: Vec<Vec<PlainCheckType>>) -> Self {
+//         Self(items.into_iter().map(|it| (it[0].get_table_name().to_string(), TableChecks::from(it))).collect())
+//     }
+// }
 
-impl IntoIterator for PassChecks {
-    type Item = TableChecks;
-    type IntoIter = std::vec::IntoIter<Self::Item>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
-    }
-}
+// impl IntoIterator for PassChecks {
+//     type Item = (String, TableChecks);
+//     type IntoIter = <HashMap<std::string::String, TableChecks> as IntoIterator>::IntoIter;
+//
+//     fn into_iter(self) -> Self::IntoIter {
+//         self.0.into_iter()
+//     }
+// }
 
 
 #[derive(Debug)]
@@ -80,7 +79,9 @@ pub struct DBChecks(pub Vec<PassChecks>);
 
 impl From<Vec<Vec<Vec<PlainCheckType>>>> for DBChecks {
     fn from(items: Vec<Vec<Vec<PlainCheckType>>>) -> Self {
-        Self(items.into_iter().map(PassChecks::from).collect())
+        Self(items.into_iter().map(|t_items| {
+            t_items.into_iter().map(|it| (it[0].get_table_name().to_string(), TableChecks::from(it))).collect()
+        }).collect())
     }
 }
 
