@@ -342,11 +342,6 @@ impl PlainColumnCheck for PlainTrackingTest {
 pub struct TableChecks(Vec<PlainCheckType>);
 
 impl TableChecks {
-    pub fn get_table(&self) -> &str {
-        let tables: Vec<&str> = self.0.iter().map(|c| c.get_table_name()).collect();
-        tables[0]
-    }
-
     pub fn get_tracked_columns(&self) -> Vec<&str> {
         self.0.iter().flat_map(|c| c.get_tracked_columns()).collect()
     }
