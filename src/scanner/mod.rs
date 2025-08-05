@@ -16,7 +16,6 @@ use crate::scanner::writers::Writers;
 
 type DBMetaCell = Rc<RefCell<DBMeta>>;
 
-type SqlStatement = (String, Option<String>);
 type SqlStatementResult = Result<SqlStatement, anyhow::Error>;
 type IteratorItem = SqlStatementResult;
 type EmptyResult = Result<(), anyhow::Error>;
@@ -40,6 +39,29 @@ impl<T: AbstractTransformFn<InsertStatement>> TransformFn for T {}
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
+}
+
+#[derive(Clone)]
+#[derive(Debug)]
+struct SqlStatement {
+    text: String,
+    table: Option<String>,
+    data_types: Option<Rc<TableDataTypes>>,
+    positions: Option<Rc<TableColumnPositions>>,
+}
+
+impl SqlStatement {
+    fn set_meta(&mut self, db_meta_cell: &Rc<RefCell<DBMeta>>) {
+        if let Some(ref table) = self.table {
+            let db_meta = db_meta_cell.borrow();
+            if let Some(positions) = db_meta.column_positions.get(table) {
+                self.positions = Some(Rc::clone(positions));
+            }
+            if let Some(data_types) = db_meta.data_types.get(table) {
+                self.data_types = Some(Rc::clone(data_types));
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -101,6 +123,37 @@ impl IntoIterator for InsertStatement {
     }
 }
 
+impl IntoIterator for SqlStatement {
+    type Item = <ValuesMap as IntoIterator>::Item;
+    type IntoIter = <ValuesMap as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let mut result: Result<InsertStatement, anyhow::Error> = (&self).try_into();
+        if let Ok(ref mut insert_statement) = result {
+            let Some(ref positions) = insert_statement.positions else {
+                panic!("statement with no positions");
+            };
+            let Some(ref data_types) = insert_statement.data_types else {
+                panic!("statement with no data types");
+            };
+
+            let Ok((_, value_array)) = values(&insert_statement.values_part) else {
+                panic!("cannot parse values");
+            };
+
+            let values: ValuesMap = positions
+                .iter()
+                .map(|(column_name, position)| {
+                    (column_name.to_owned(), (value_array[*position].to_string(), data_types[column_name].to_owned()))
+                })
+                .collect();
+            values.into_iter()
+        } else {
+            Self::IntoIter::default()
+        }
+    }
+}
+
 impl Extend<(String, String)> for InsertStatement {
     fn extend<T: IntoIterator<Item=(String, String)>>(&mut self, iter: T) {
         if let Some(ref data_types) = self.data_types {
@@ -113,16 +166,39 @@ impl Extend<(String, String)> for InsertStatement {
     }
 }
 
+impl Extend<(String, String)> for SqlStatement {
+    fn extend<T: IntoIterator<Item=(String, String)>>(&mut self, iter: T) {
+        let mut result: Result<InsertStatement, anyhow::Error> = self.try_into();
+        if let Ok(ref mut insert_statement) = result {
+            if let Some(ref data_types) = insert_statement.data_types {
+                if let Some(ref mut value_per_field) = insert_statement.value_per_field {
+                    for (key, value) in iter {
+                        value_per_field.insert(key.to_owned(), (value.to_owned(), data_types[&key].to_owned()));
+                    }
+                }
+            }
+            self.text = insert_statement.statement.clone();
+        }
+    }
+}
+
 impl<'a> TryFrom<&'a SqlStatement> for InsertStatement {
     type Error = anyhow::Error;
     fn try_from(other: &'a SqlStatement) -> Result<InsertStatement, Self::Error> {
-        InsertStatement::new(&other.0)
+        InsertStatement::new(&other.text)
+    }
+}
+
+impl<'a> TryFrom<&'a mut SqlStatement> for InsertStatement {
+    type Error = anyhow::Error;
+    fn try_from(other: &'a mut SqlStatement) -> Result<InsertStatement, Self::Error> {
+        InsertStatement::new(&other.text)
     }
 }
 
 impl<'a> From<&'a InsertStatement> for SqlStatement {
     fn from(other: &'a InsertStatement) -> Self {
-        (other.into(), Some(other.get_table().to_owned()))
+        Self { text: other.into(), table: Some(other.get_table().to_owned()), data_types: None, positions: None }
     }
 }
 
@@ -147,13 +223,13 @@ impl DBMeta {
     }
 
     fn capture(&mut self, statement: &SqlStatement) -> EmptyResult {
-        if is_create_table(&statement.0) {
-            if let Some((table, data_types)) = get_data_types(&statement.0)? {
+        if is_create_table(&statement.text) {
+            if let Some((table, data_types)) = get_data_types(&statement.text)? {
                 self.data_types.insert(table.to_string(), Rc::new(data_types));
             }
         }
-        if let Some(ref table) = statement.1 {
-            if !self.column_positions.contains_key(table) && is_insert(&statement.0) {
+        if let Some(ref table) = statement.table {
+            if !self.column_positions.contains_key(table) && is_insert(&statement.text) {
                 let insert_statement = InsertStatement::try_from(statement)?;
                 self.column_positions.insert(table.to_string(), Rc::new(get_column_positions(&insert_statement.statement)?));
             };
@@ -270,7 +346,7 @@ impl TrackedStatements {
             self.unlock_next = true;
         }
 
-        Some(Ok((next.to_string(), self.current_table.to_owned())))
+        Some(Ok(SqlStatement{ text: next.to_string(), table: self.current_table.to_owned(), data_types: None, positions: None }))
     }
 }
 
@@ -311,8 +387,9 @@ impl<F: TransformFn> TransformedStatements<F> {
         Ok(transformed)
     }
 
-    fn transform_iteration_item(&mut self, statement_result: SqlStatementResult) -> Option<SqlStatementResult> {
-        let Ok(ref statement) = statement_result else { return Some(statement_result); };
+    fn transform_iteration_item(&mut self, mut statement_result: SqlStatementResult) -> Option<SqlStatementResult> {
+        let Ok(ref mut statement) = statement_result else { return Some(statement_result); };
+        statement.set_meta(&self.iter.db_meta);
         let Ok(insert_statement): Result<InsertStatement, anyhow::Error> = statement.try_into() else { return Some(statement_result); };
         let Ok(transformed_insert_statement) = self.transform_insert_statement(insert_statement) else { return Some(statement_result); };
         transformed_insert_statement.map(|ref x| Ok(x.into()))
@@ -321,7 +398,7 @@ impl<F: TransformFn> TransformedStatements<F> {
     fn process_all(self, writers: &mut Writers) -> Result<(), anyhow::Error> {
         for st in self {
             let statement = st?;
-            writers.write_statement(&statement.1, statement.0.as_bytes())?;
+            writers.write_statement(&statement.table, statement.text.as_bytes())?;
         };
         writers.flush()?;
         Ok(())
