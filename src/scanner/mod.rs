@@ -130,13 +130,12 @@ impl IntoIterator for SqlStatement {
     fn into_iter(self) -> Self::IntoIter {
         let mut result: Result<InsertStatement, anyhow::Error> = (&self).try_into();
         if let Ok(ref mut insert_statement) = result {
-            let Some(ref positions) = insert_statement.positions else {
+            let Some(ref positions) = self.positions else {
                 panic!("statement with no positions");
             };
-            let Some(ref data_types) = insert_statement.data_types else {
+            let Some(ref data_types) = self.data_types else {
                 panic!("statement with no data types");
             };
-
             let Ok((_, value_array)) = values(&insert_statement.values_part) else {
                 panic!("cannot parse values");
             };
