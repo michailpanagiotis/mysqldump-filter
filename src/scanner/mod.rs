@@ -65,20 +65,9 @@ impl InsertStatement {
         &self.table
     }
 
-    fn as_string(&self) -> &str {
-        &self.statement
-    }
-
     fn set_meta(&mut self, column_positions: &Rc<TableColumnPositions>, data_types: &Rc<TableDataTypes>) {
         self.positions = Some(Rc::clone(column_positions));
         self.data_types = Some(Rc::clone(data_types));
-    }
-
-    fn get_value_array(&self) -> Result<Vec<&str>, anyhow::Error> {
-        match values(&self.values_part) {
-            Err(_) => Err(anyhow::anyhow!("cannot parse values")),
-            Ok((_, values)) => Ok(values)
-        }
     }
 
     fn update(&mut self, field: &str, value: &str) -> Result<(), anyhow::Error> {
@@ -133,9 +122,15 @@ impl<'a> TryFrom<&'a SqlStatement> for InsertStatement {
     }
 }
 
-impl From<InsertStatement> for SqlStatement {
-    fn from(other: InsertStatement) -> Self {
-        (other.as_string().to_string(), Some(other.get_table().to_owned()))
+impl<'a> From<&'a InsertStatement> for SqlStatement {
+    fn from(other: &'a InsertStatement) -> Self {
+        (other.into(), Some(other.get_table().to_owned()))
+    }
+}
+
+impl<'a> From<&'a InsertStatement> for String {
+    fn from(other: &'a InsertStatement) -> Self {
+        other.statement.to_string()
     }
 }
 
@@ -343,7 +338,7 @@ impl<F: TransformFn> TransformedStatements<F> {
         let Ok(ref statement) = statement_result else { return Some(statement_result); };
         let Ok(insert_statement): Result<InsertStatement, anyhow::Error> = statement.try_into() else { return Some(statement_result); };
         let Ok(transformed_insert_statement) = self.transform_insert_statement(insert_statement) else { return Some(statement_result); };
-        transformed_insert_statement.map(|x| Ok(x.into()))
+        transformed_insert_statement.map(|ref x| Ok(x.into()))
     }
 
     fn process_all(self, writers: &mut Writers) -> Result<(), anyhow::Error> {
