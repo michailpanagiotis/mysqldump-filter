@@ -73,16 +73,6 @@ impl InsertStatement {
         self.positions = Some(Rc::clone(positions));
         self.data_types = Some(Rc::clone(data_types));
     }
-
-    fn update(&mut self, field: &str, value: &str) -> Result<(), anyhow::Error> {
-        let Some(ref data_types) = self.data_types else {
-            return Err(anyhow::anyhow!("statement with no data types"));
-        };
-        if let Some(ref mut value_per_field) = self.value_per_field {
-            value_per_field.insert(field.to_owned(), (value.to_owned(), data_types[field].to_owned()));
-        }
-        Ok(())
-    }
 }
 
 impl IntoIterator for InsertStatement {
@@ -113,8 +103,12 @@ impl IntoIterator for InsertStatement {
 
 impl Extend<(String, String)> for InsertStatement {
     fn extend<T: IntoIterator<Item=(String, String)>>(&mut self, iter: T) {
-        for (key, value) in iter {
-            self.update(&key, &value);
+        if let Some(ref data_types) = self.data_types {
+            if let Some(ref mut value_per_field) = self.value_per_field {
+                for (key, value) in iter {
+                    value_per_field.insert(key.to_owned(), (value.to_owned(), data_types[&key].to_owned()));
+                }
+            }
         }
     }
 }
