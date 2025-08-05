@@ -66,8 +66,11 @@ impl InsertStatement {
         &self.table
     }
 
-    fn set_meta(&mut self, column_positions: &Rc<TableColumnPositions>, data_types: &Rc<TableDataTypes>) {
-        self.positions = Some(Rc::clone(column_positions));
+    fn set_meta(&mut self, db_meta_cell: &Rc<RefCell<DBMeta>>) {
+        let db_meta = db_meta_cell.borrow();
+        let positions = db_meta.get_table_column_positions(&self.table);
+        let data_types = db_meta.get_table_data_types(&self.table);
+        self.positions = Some(Rc::clone(positions));
         self.data_types = Some(Rc::clone(data_types));
     }
 
@@ -306,20 +309,10 @@ impl<F: TransformFn> TransformedStatements<F> {
         })
     }
 
-    fn try_share_meta(&self, insert_statement: &mut InsertStatement) -> EmptyResult {
-        let borrowed = self.iter.db_meta.borrow();
-        let positions = borrowed.get_table_column_positions(&insert_statement.table);
-        let data_types = borrowed.get_table_data_types(&insert_statement.table);
-        insert_statement.set_meta(positions, data_types);
-        Ok(())
-    }
-
     fn transform_insert_statement(&mut self, mut insert_statement: InsertStatement) -> Result<Option<InsertStatement>, anyhow::Error>
         where F: TransformFn
     {
-        if self.try_share_meta(&mut insert_statement).is_err() {
-            return Err(anyhow::anyhow!("cannot share meta"));
-        }
+        insert_statement.set_meta(&self.iter.db_meta);
         let transformed = (self.transform)(insert_statement)?;
         Ok(transformed)
     }
