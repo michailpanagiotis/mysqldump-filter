@@ -3,6 +3,7 @@ mod writers;
 
 use lazy_static::lazy_static;
 use regex::Regex;
+use sqlparser::ast::Statement;
 use core::panic;
 use std::cell::RefCell;
 use std::{collections::HashMap, fs::File};
@@ -14,18 +15,15 @@ use std::rc::Rc;
 use crate::scanner::sql_parser::{TableColumnPositions, TableDataTypes, get_column_positions, get_data_types, insert_parts, is_create_table, is_insert, values};
 use crate::scanner::writers::Writers;
 
-type IteratorItem = SqlStatementResult;
 type TrackerCell = Rc<RefCell<Tracker>>;
 
 type SqlStatement = (String, Option<String>);
 type SqlStatementResult = Result<SqlStatement, anyhow::Error>;
+type IteratorItem = SqlStatementResult;
 type EmptyResult = Result<(), anyhow::Error>;
 
 type ValuesMap = HashMap<String, (String, sqlparser::ast::DataType)>;
 type ValuesRef<'a> = &'a ValuesMap;
-
-pub struct TransformArguments<'a>(pub &'a mut InsertStatement);
-type TransformResult = Result<Option<InsertStatement>, anyhow::Error>;
 
 pub trait AbstractTransformFn<Iv>: FnMut(Iv) -> Result<Option<Iv>, anyhow::Error>
 where
@@ -55,7 +53,6 @@ pub struct InsertStatement {
     data_types: Option<Rc<TableDataTypes>>,
     positions: Option<Rc<TableColumnPositions>>,
     value_per_field: Option<ValuesMap>,
-    vals: ValuesMap,
 }
 
 impl InsertStatement {
@@ -64,7 +61,7 @@ impl InsertStatement {
             return Err(anyhow::anyhow!("not an insert statement"));
         }
         let (table, _, values_part) = insert_parts(statement)?;
-        Ok(Self { statement: statement.to_string(), table, values_part, value_per_field: None, data_types: None, positions: None, vals: HashMap::new() })
+        Ok(Self { statement: statement.to_string(), table, values_part, value_per_field: None, data_types: None, positions: None })
     }
 
     pub fn get_table(&self) -> &str {
@@ -86,36 +83,6 @@ impl InsertStatement {
             Ok((_, values)) => Ok(values)
         }
     }
-
-    fn resolve_values(&mut self) -> Result<(), anyhow::Error> {
-        if self.value_per_field.is_none() {
-            let Some(ref positions) = self.positions else {
-                return Err(anyhow::anyhow!("statement with no positions"));
-            };
-            let Some(ref data_types) = self.data_types else {
-                return Err(anyhow::anyhow!("statement with no data types"));
-            };
-            let value_array = self.get_value_array()?;
-            let values: ValuesMap = positions
-                .iter()
-                .map(|(column_name, position)| {
-                    (column_name.to_owned(), (value_array[*position].to_string(), data_types[column_name].to_owned()))
-                })
-                .collect();
-            self.value_per_field = Some(values);
-        }
-        Ok(())
-    }
-
-    // fn iter(&mut self) -> Iter {
-    //     if self.value_per_field.is_none() {
-    //         self.resolve_values().expect("cannot resolve values");
-    //     }
-    //     match self.value_per_field {
-    //         Some(ref value_per_field) => Iter(Box::new(value_per_field.iter())),
-    //         None => panic!("cannot resolve values")
-    //     }
-    // }
 
     fn update(&mut self, field: &str, value: &str) -> Result<(), anyhow::Error> {
         let Some(ref data_types) = self.data_types else {
@@ -179,20 +146,16 @@ impl IntoIterator for InsertStatement {
 //     values
 // }
 
-fn apply(st: InsertStatement) {
-    apply_generic(st);
-}
-
-fn apply_generic<T>(mut st: T) -> T
-where
-    T: IntoIterator + Clone + Extend<(String, String)>,
-    HashMap<String, (String, sqlparser::ast::DataType)>: FromIterator<<T>::Item>
-{
-    let values: HashMap<String, (String, sqlparser::ast::DataType)> = st.clone().into_iter().collect();
-    st.extend(HashMap::new());
-    return st;
-}
-
+// fn apply_generic<T>(mut st: T) -> T
+// where
+//     T: IntoIterator + Clone + Extend<(String, String)>,
+//     HashMap<String, (String, sqlparser::ast::DataType)>: FromIterator<<T>::Item>
+// {
+//     let values: HashMap<String, (String, sqlparser::ast::DataType)> = st.clone().into_iter().collect();
+//     st.extend(HashMap::new());
+//     st
+// }
+//
 
 // impl<'b> IntoIterator for &'b mut TransformArguments<'_>
 // {
@@ -249,6 +212,24 @@ impl<'a> TryInto<ValuesRef<'a>> for &'a mut InsertStatement {
             return Err(anyhow::anyhow!("cannot get empty values"));
         };
         Ok(values)
+    }
+}
+
+impl TryFrom<SqlStatement> for InsertStatement {
+    type Error = anyhow::Error;
+
+    fn try_from(other: SqlStatement) -> Result<Self, Self::Error> {
+        if !is_insert(&other.0) {
+            return Err(anyhow::anyhow!("Cannot convert into insert statement"));
+        }
+
+        InsertStatement::new(&other.0)
+    }
+}
+
+impl From<InsertStatement> for SqlStatement {
+    fn from(other: InsertStatement) -> Self {
+        (other.as_string().to_string(), Some(other.get_table().to_owned()))
     }
 }
 
@@ -456,38 +437,21 @@ impl<F: TransformFn> TransformedStatements<F> {
         Ok(())
     }
 
-    fn transform_insert_statement(&mut self, mut insert_statement: InsertStatement) -> Result<SqlStatement, anyhow::Error>
+    fn transform_insert_statement(&mut self, mut insert_statement: InsertStatement) -> Result<Option<InsertStatement>, anyhow::Error>
         where F: TransformFn
     {
         if self.try_share_meta(&mut insert_statement).is_err() {
             return Err(anyhow::anyhow!("cannot share meta"));
         }
-        let mut transformed = apply_generic(insert_statement);
-        // let transformed = (self.transform)(TransformArguments(insert_statement))?;
-        let statement: SqlStatement = SqlStatement::try_from(&mut transformed)?;
-        Ok(statement)
+        let transformed = (self.transform)(insert_statement)?;
+        Ok(transformed)
     }
 
-    fn transform_iteration_item(&mut self, item: IteratorItem) -> Option<IteratorItem> {
-        match item {
-            Err(e) => Some(Err(e)),
-            Ok(ref st) => {
-                if !is_insert(&st.0) {
-                    return Some(item);
-                }
-                match InsertStatement::try_from(st) {
-                    Err(e) => Some(Err(e)),
-                    Ok(insert_statement) => {
-                        match self.transform_insert_statement(insert_statement) {
-                            Err(e) => Some(Err(e)),
-                            Ok(transformed_statement) => {
-                                Some(Ok(transformed_statement))
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    fn transform_iteration_item(&mut self, statement_result: SqlStatementResult) -> Option<SqlStatementResult> {
+        let Ok(ref statement) = statement_result else { return Some(statement_result); };
+        let Ok(insert_statement): Result<InsertStatement, anyhow::Error> = statement.try_into() else { return Some(statement_result); };
+        let Ok(transformed_insert_statement) = self.transform_insert_statement(insert_statement) else { return Some(statement_result); };
+        transformed_insert_statement.map(|x| Ok(x.into()))
     }
 
     fn process_all(self, writers: &mut Writers) -> Result<(), anyhow::Error> {
