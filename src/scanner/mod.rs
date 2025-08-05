@@ -21,7 +21,6 @@ type IteratorItem = SqlStatementResult;
 type EmptyResult = Result<(), anyhow::Error>;
 
 type ValuesMap = HashMap<String, (String, sqlparser::ast::DataType)>;
-type ValuesRef<'a> = &'a ValuesMap;
 
 pub trait AbstractTransformFn<Iv>: FnMut(Iv) -> Result<Option<Iv>, anyhow::Error>
 where
@@ -127,51 +126,6 @@ impl Extend<(String, String)> for InsertStatement {
     }
 }
 
-impl<'a> TryInto<ValuesRef<'a>> for &'a mut InsertStatement {
-    type Error = anyhow::Error;
-
-    fn try_into(self) -> Result<ValuesRef<'a>, Self::Error> {
-        if self.value_per_field.is_none() {
-            let Some(ref positions) = self.positions else {
-                return Err(anyhow::anyhow!("statement with no positions"));
-            };
-            let Some(ref data_types) = self.data_types else {
-                return Err(anyhow::anyhow!("statement with no data types"));
-            };
-            let value_array = self.get_value_array()?;
-            let values: ValuesMap = positions
-                .iter()
-                .map(|(column_name, position)| {
-                    (column_name.to_owned(), (value_array[*position].to_string(), data_types[column_name].to_owned()))
-                })
-                .collect();
-            self.value_per_field = Some(values);
-        }
-        let Some(ref values) = self.value_per_field else {
-            return Err(anyhow::anyhow!("cannot get empty values"));
-        };
-        Ok(values)
-    }
-}
-
-impl TryFrom<SqlStatement> for InsertStatement {
-    type Error = anyhow::Error;
-
-    fn try_from(other: SqlStatement) -> Result<Self, Self::Error> {
-        if !is_insert(&other.0) {
-            return Err(anyhow::anyhow!("Cannot convert into insert statement"));
-        }
-
-        InsertStatement::new(&other.0)
-    }
-}
-
-impl From<InsertStatement> for SqlStatement {
-    fn from(other: InsertStatement) -> Self {
-        (other.as_string().to_string(), Some(other.get_table().to_owned()))
-    }
-}
-
 impl<'a> TryFrom<&'a SqlStatement> for InsertStatement {
     type Error = anyhow::Error;
     fn try_from(other: &'a SqlStatement) -> Result<InsertStatement, Self::Error> {
@@ -179,10 +133,9 @@ impl<'a> TryFrom<&'a SqlStatement> for InsertStatement {
     }
 }
 
-impl<'a> TryFrom<&'a mut InsertStatement> for SqlStatement {
-    type Error = anyhow::Error;
-    fn try_from(other: &'a mut InsertStatement) -> Result<SqlStatement, Self::Error> {
-        Ok((other.as_string().to_string(), Some(other.get_table().to_owned())))
+impl From<InsertStatement> for SqlStatement {
+    fn from(other: InsertStatement) -> Self {
+        (other.as_string().to_string(), Some(other.get_table().to_owned()))
     }
 }
 
