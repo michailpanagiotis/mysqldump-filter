@@ -39,21 +39,22 @@ impl Writers {
         std::path::absolute(self.working_dir_path.join(table).with_extension("sql"))
     }
 
-    fn determine_output_file(&self, table: &str) -> Result<PathBuf, anyhow::Error> {
-        let table_file = std::path::absolute(
-            if self.in_place {
-                self.working_dir_path.join(table).with_extension("proc")
-            } else {
-                self.working_dir_path.join(table).with_extension("sql")
-            }
-        )?;
-        Ok(table_file)
+    pub fn get_processed_table_file(&self, table: &str) -> Result<PathBuf, io::Error> {
+        std::path::absolute(self.working_dir_path.join(table).with_extension("proc"))
+    }
+
+    fn determine_output_file(&self, table: &str, in_place: bool) -> Result<PathBuf, io::Error> {
+        if in_place {
+            self.get_table_file(table)
+        } else {
+            self.get_processed_table_file(table)
+        }
     }
 
     fn determine_writer(&mut self, table: &str) -> EmptyResult {
         if self.current_writer.is_none() || Some(table) != self.current_table.as_deref() {
             self.current_table = Some(table.to_owned());
-            let filepath = self.determine_output_file(table)?;
+            let filepath = self.determine_output_file(table, self.in_place)?;
             self.current_file = Some(filepath.to_owned());
             if !self.written_files.contains(&filepath) {
                 println!("creating file {}", &filepath.display());
@@ -123,6 +124,11 @@ impl Writers {
     pub fn flush(&mut self) -> EmptyResult {
         if let Some(ref mut w) = self.current_writer {
             w.flush()?;
+            if self.in_place && let Some(ref table) = self.current_table {
+                let processsed_file = self.get_processed_table_file(table)?;
+                let table_file = self.get_table_file(table)?;
+                fs::rename(processsed_file, table_file)?;
+            }
         }
         if let Some(ref mut w) = self.working_file_writer {
             w.flush()?;

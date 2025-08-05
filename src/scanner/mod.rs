@@ -34,8 +34,8 @@ where
     ValuesMap: FromIterator<<Iv>::Item>
 {}
 
-pub trait TransformFn: AbstractTransformFn<InsertStatement> {}
-impl<T: AbstractTransformFn<InsertStatement>> TransformFn for T {}
+pub trait TransformFn: AbstractTransformFn<SqlStatement> {}
+impl<T: AbstractTransformFn<SqlStatement>> TransformFn for T {}
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -43,7 +43,7 @@ lazy_static! {
 
 #[derive(Clone)]
 #[derive(Debug)]
-struct SqlStatement {
+pub struct SqlStatement {
     text: String,
     table: Option<String>,
     data_types: Option<Rc<TableDataTypes>>,
@@ -51,6 +51,10 @@ struct SqlStatement {
 }
 
 impl SqlStatement {
+    pub fn get_table(&self) -> &Option<String> {
+        &self.table
+    }
+
     fn set_meta(&mut self, db_meta_cell: &Rc<RefCell<DBMeta>>) {
         if let Some(ref table) = self.table {
             let db_meta = db_meta_cell.borrow();
@@ -338,6 +342,7 @@ impl TrackedStatements {
             let Ok(table) = TrackedStatements::extract_table(&next) else {
                 return Some(Err(anyhow::anyhow!("cannot extract table")));
             };
+            println!("Processing table {table}");
             self.current_table = Some(table.to_owned());
         }
 
@@ -378,20 +383,22 @@ impl<F: TransformFn> TransformedStatements<F> {
         })
     }
 
-    fn transform_insert_statement(&mut self, mut insert_statement: InsertStatement) -> Result<Option<InsertStatement>, anyhow::Error>
-        where F: TransformFn
-    {
-        insert_statement.set_meta(&self.iter.db_meta);
-        let transformed = (self.transform)(insert_statement)?;
-        Ok(transformed)
-    }
+    // fn transform_insert_statement(&mut self, mut insert_statement: InsertStatement) -> Result<Option<InsertStatement>, anyhow::Error>
+    //     where F: TransformFn
+    // {
+    //     insert_statement.set_meta(&self.iter.db_meta);
+    //     let transformed = (self.transform)(insert_statement)?;
+    //     Ok(transformed)
+    // }
 
-    fn transform_iteration_item(&mut self, mut statement_result: SqlStatementResult) -> Option<SqlStatementResult> {
-        let Ok(ref mut statement) = statement_result else { return Some(statement_result); };
+    fn transform_iteration_item(&mut self, statement_result: SqlStatementResult) -> Option<SqlStatementResult> {
+        let Ok(mut statement) = statement_result else { return Some(statement_result); };
         statement.set_meta(&self.iter.db_meta);
-        let Ok(insert_statement): Result<InsertStatement, anyhow::Error> = statement.try_into() else { return Some(statement_result); };
-        let Ok(transformed_insert_statement) = self.transform_insert_statement(insert_statement) else { return Some(statement_result); };
-        transformed_insert_statement.map(|ref x| Ok(x.into()))
+        let tr: Option<SqlStatement> = (self.transform)(statement).expect("err");
+        match tr {
+            Some(transformed) => return Some(Ok(transformed)),
+            None => return None
+        }
     }
 
     fn process_all(self, writers: &mut Writers) -> Result<(), anyhow::Error> {

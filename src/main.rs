@@ -54,20 +54,18 @@ fn main() -> Result<(), anyhow::Error> {
     };
     let working_file_path = working_dir_path.join("INTERIM").with_extension("sql");
 
-    explode_to_files(
-        working_file_path.as_path(),
-        input_file.as_path(),
-        |statement| {
-            if let Some(allowed) = &config.allow_data_on_tables {
-                if !allowed.contains(statement.get_table()) {
-                    return Ok(None);
-                }
-            }
-            Ok(Some(statement))
-        }
-    ).unwrap_or_else(|e| {
-        panic!("Problem exploding to files: {e:?}");
-    });
+    // explode_to_files(
+    //     working_file_path.as_path(),
+    //     input_file.as_path(),
+    //     |statement| {
+    //         if let (Some(allowed), Some(table)) = (&config.allow_data_on_tables, statement.get_table()) && !allowed.contains(table) {
+    //             return Ok(None);
+    //         }
+    //         Ok(Some(statement))
+    //     }
+    // ).unwrap_or_else(|e| {
+    //     panic!("Problem exploding to files: {e:?}");
+    // });
 
     let mut lookup_table = HashMap::new();
     for pending_tables in get_passes(config.cascades.iter().chain(&config.filters))? {

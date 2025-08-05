@@ -310,7 +310,7 @@ impl PlainColumnCheck for PlainTrackingTest {
     ) -> Result<bool, anyhow::Error> {
         let key = self.get_column_key();
         match lookup_table.get_mut(key) {
-            None => { lookup_table.insert(self.get_column_key().to_owned(), HashSet::new()); }
+            None => { lookup_table.insert(self.get_column_key().to_owned(), HashSet::from([value.to_owned()])); }
             Some(values) => { values.insert(value.to_owned()); }
         }
         Ok(true)
@@ -355,10 +355,14 @@ impl TableChecks {
         lookup_table: &mut HashMap<String, HashSet<String>>,
     ) -> Result<Option<T>, anyhow::Error>
         where
-            T: IntoIterator + Clone + Extend<(String, String)>,
+            T: IntoIterator + Clone + Extend<(String, String)> + std::fmt::Debug,
             HashMap<String, (String, sqlparser::ast::DataType)>: FromIterator<<T>::Item>
     {
         let value_per_field: HashMap<String, (String, sqlparser::ast::DataType)> = statement.clone().into_iter().collect();
+
+        if value_per_field.is_empty() {
+            return Ok(Some(statement));
+        }
 
         for check in self.0.iter() {
             let col_name = check.get_column_name();
