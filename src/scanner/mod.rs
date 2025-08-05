@@ -3,8 +3,6 @@ mod writers;
 
 use lazy_static::lazy_static;
 use regex::Regex;
-use sqlparser::ast::Statement;
-use core::panic;
 use std::cell::RefCell;
 use std::{collections::HashMap, fs::File};
 use std::fs;
@@ -28,13 +26,13 @@ type ValuesRef<'a> = &'a ValuesMap;
 pub trait AbstractTransformFn<Iv>: FnMut(Iv) -> Result<Option<Iv>, anyhow::Error>
 where
     Iv: IntoIterator + Clone + Extend<(String, String)>,
-    HashMap<String, (String, sqlparser::ast::DataType)>: FromIterator<<Iv>::Item>
+    ValuesMap: FromIterator<<Iv>::Item>
 {}
 
 impl<Iv, T: FnMut(Iv) -> Result<Option<Iv>, anyhow::Error>> AbstractTransformFn<Iv> for T
 where
     Iv: IntoIterator + Clone + Extend<(String, String)>,
-    HashMap<String, (String, sqlparser::ast::DataType)>: FromIterator<<Iv>::Item>
+    ValuesMap: FromIterator<<Iv>::Item>
 {}
 
 pub trait TransformFn: AbstractTransformFn<InsertStatement> {}
@@ -121,57 +119,6 @@ impl IntoIterator for InsertStatement {
     }
 }
 
-// struct Iter<'a>(Box<dyn Iterator<Item=(&'a String, &'a (String, sqlparser::ast::DataType))> + 'a>);
-//
-// impl<'a> Iterator for Iter<'a> {
-//     type Item = (&'a String, &'a (String, sqlparser::ast::DataType));
-//
-//     fn next(&mut self) -> Option<Self::Item> {
-//         self.0.next()
-//     }
-// }
-//
-// impl<'a> IntoIterator for &'a mut InsertStatement
-// {
-//     type Item = (&'a String, &'a (String, sqlparser::ast::DataType));
-//     type IntoIter = Iter<'a>;
-//
-//     fn into_iter(self) -> Self::IntoIter {
-//         self.iter()
-//     }
-// }
-
-// fn get_values<'a>(mut st: &'a mut InsertStatement) -> HashMap<&'a String, &'a (String, sqlparser::ast::DataType)> {
-//     let values = st.into_iter().collect();
-//     values
-// }
-
-// fn apply_generic<T>(mut st: T) -> T
-// where
-//     T: IntoIterator + Clone + Extend<(String, String)>,
-//     HashMap<String, (String, sqlparser::ast::DataType)>: FromIterator<<T>::Item>
-// {
-//     let values: HashMap<String, (String, sqlparser::ast::DataType)> = st.clone().into_iter().collect();
-//     st.extend(HashMap::new());
-//     st
-// }
-//
-
-// impl<'b> IntoIterator for &'b mut TransformArguments<'_>
-// {
-//     type Item = (&'b String, &'b (String, sqlparser::ast::DataType));
-//     type IntoIter = std::collections::hash_map::Iter<'b, String, (String, sqlparser::ast::DataType)>;
-//
-//     fn into_iter(self) -> std::collections::hash_map::Iter<'b, String, (String, sqlparser::ast::DataType)> {
-//         if self.0.value_per_field.is_none() {
-//             self.0.resolve_values().expect("cannot resolve values");
-//         }
-//         let Some(ref value_per_field) = self.0.value_per_field else { panic!("cannot find values"); };
-//         let res = value_per_field.iter();
-//         return res;
-//     }
-// }
-
 impl Extend<(String, String)> for InsertStatement {
     fn extend<T: IntoIterator<Item=(String, String)>>(&mut self, iter: T) {
         for (key, value) in iter {
@@ -179,14 +126,6 @@ impl Extend<(String, String)> for InsertStatement {
         }
     }
 }
-
-// impl<'a> TryInto<HashMap<&'a String, &'a (String, sqlparser::ast::DataType)>> for &'a mut InsertStatement {
-//     type Error = anyhow::Error;
-//
-//     fn try_into(self) -> Result<HashMap<&'a String, &'a (String, sqlparser::ast::DataType)>, Self::Error> {
-//         Ok(self.into_iter().collect())
-//     }
-// }
 
 impl<'a> TryInto<ValuesRef<'a>> for &'a mut InsertStatement {
     type Error = anyhow::Error;
