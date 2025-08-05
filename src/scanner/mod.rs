@@ -14,7 +14,7 @@ use std::rc::Rc;
 use crate::scanner::sql_parser::{TableColumnPositions, TableDataTypes, get_column_positions, get_data_types, insert_parts, is_create_table, is_insert, values};
 use crate::scanner::writers::Writers;
 
-type TrackerCell = Rc<RefCell<DBMeta>>;
+type DBMetaCell = Rc<RefCell<DBMeta>>;
 
 type SqlStatement = (String, Option<String>);
 type SqlStatementResult = Result<SqlStatement, anyhow::Error>;
@@ -142,7 +142,7 @@ pub struct DBMeta {
 }
 
 impl DBMeta {
-    fn new() -> Result<Rc<RefCell<Self>>, anyhow::Error> {
+    fn new() -> Result<DBMetaCell, anyhow::Error> {
         Ok(Rc::new(RefCell::new(DBMeta {
             data_types: HashMap::new(),
             column_positions: HashMap::new(),
@@ -223,16 +223,16 @@ struct TrackedStatements {
     iter: PlainStatements,
     current_table: Option<String>,
     unlock_next: bool,
-    tracker: Rc<RefCell<DBMeta>>,
+    db_meta: Rc<RefCell<DBMeta>>,
 }
 
 impl TrackedStatements {
-    fn from_file(sqldump_filepath: &Path, tracker: &TrackerCell, preprocess_file: &Option<&Path>) -> Result<Self, anyhow::Error> {
-        let tracker = Rc::clone(tracker);
+    fn from_file(sqldump_filepath: &Path, db_meta: &DBMetaCell, preprocess_file: &Option<&Path>) -> Result<Self, anyhow::Error> {
+        let db_meta = Rc::clone(db_meta);
 
         if let Some(file) = preprocess_file {
-            let statements = TrackedStatements::from_file(file, &tracker, &None)?;
-            // consume iterator to populate tracker
+            let statements = TrackedStatements::from_file(file, &db_meta, &None)?;
+            // consume iterator to populate db_meta
             statements.for_each(drop);
         }
 
@@ -240,7 +240,7 @@ impl TrackedStatements {
             iter: PlainStatements::from_file(sqldump_filepath)?,
             current_table: None,
             unlock_next: false,
-            tracker,
+            db_meta,
         })
     }
 
@@ -283,7 +283,7 @@ impl Iterator for TrackedStatements {
         let mut statement = self.read_statement()?;
 
         if let Ok(st) = &mut statement {
-            if let Err(e) = self.tracker.borrow_mut().capture(st) {
+            if let Err(e) = self.db_meta.borrow_mut().capture(st) {
                 return Some(Err(e));
             }
         }
@@ -299,15 +299,15 @@ struct TransformedStatements<F: TransformFn> {
 
 impl<F: TransformFn> TransformedStatements<F> {
     fn from_file(sqldump_filepath: &Path, transform: F, preprocess_file: &Option<&Path>) -> Result<Self, anyhow::Error> {
-        let tracker = DBMeta::new()?;
+        let db_meta = DBMeta::new()?;
         Ok(TransformedStatements {
-            iter: TrackedStatements::from_file(sqldump_filepath, &tracker, preprocess_file)?,
+            iter: TrackedStatements::from_file(sqldump_filepath, &db_meta, preprocess_file)?,
             transform,
         })
     }
 
     fn try_share_meta(&self, insert_statement: &mut InsertStatement) -> EmptyResult {
-        let borrowed = self.iter.tracker.borrow();
+        let borrowed = self.iter.db_meta.borrow();
         let positions = borrowed.get_table_column_positions(&insert_statement.table);
         let data_types = borrowed.get_table_data_types(&insert_statement.table);
         insert_statement.set_meta(positions, data_types);

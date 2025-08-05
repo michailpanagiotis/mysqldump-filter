@@ -5,13 +5,10 @@ use std::path::{Path, PathBuf};
 use tempdir::TempDir;
 
 mod checks;
-mod dependencies;
-mod table;
 mod scanner;
 
-use table::process_checks;
 use checks::get_passes;
-use scanner::{explode_to_files, gather};
+use scanner::{explode_to_files, gather, process_table_inserts};
 
 #[derive(Debug)]
 #[derive(Deserialize)]
@@ -72,8 +69,20 @@ fn main() -> Result<(), anyhow::Error> {
         panic!("Problem exploding to files: {e:?}");
     });
 
-    let passes = get_passes(config.cascades.iter().chain(&config.filters))?;
-    process_checks(passes, working_file_path.as_path())?;
+    let mut lookup_table = HashMap::new();
+    for pending_tables in get_passes(config.cascades.iter().chain(&config.filters))? {
+        dbg!(&lookup_table);
+        for (table, table_checks) in pending_tables {
+            process_table_inserts(
+                &working_file_path,
+                &table,
+                |statement| {
+                    table_checks.apply(statement, &mut lookup_table)
+                },
+            )?;
+        }
+    }
+
     gather(&working_file_path, &output_file)?;
 
     // dbg!(collection);

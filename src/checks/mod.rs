@@ -1,10 +1,12 @@
+mod dependencies;
+
 use cel_interpreter::{Context, Program};
 use chrono::NaiveDateTime;
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::dependencies::{DependencyNode, chunk_by_depth};
+use crate::checks::dependencies::{DependencyNode, chunk_by_depth};
 
 pub type PlainCheckType = Box<dyn PlainColumnCheck>;
 
