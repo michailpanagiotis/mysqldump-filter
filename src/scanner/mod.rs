@@ -14,7 +14,7 @@ use std::rc::Rc;
 use crate::scanner::sql_parser::{TableColumnPositions, TableDataTypes, get_column_positions, get_data_types, insert_parts, is_create_table, is_insert, values};
 use crate::scanner::writers::Writers;
 
-type TrackerCell = Rc<RefCell<Tracker>>;
+type TrackerCell = Rc<RefCell<DBMeta>>;
 
 type SqlStatement = (String, Option<String>);
 type SqlStatementResult = Result<SqlStatement, anyhow::Error>;
@@ -136,14 +136,14 @@ impl<'a> From<&'a InsertStatement> for String {
 }
 
 #[derive(Debug)]
-pub struct Tracker {
+pub struct DBMeta {
     data_types: HashMap<String, Rc<TableDataTypes>>,
     column_positions: HashMap<String, Rc<TableColumnPositions>>,
 }
 
-impl Tracker {
+impl DBMeta {
     fn new() -> Result<Rc<RefCell<Self>>, anyhow::Error> {
-        Ok(Rc::new(RefCell::new(Tracker {
+        Ok(Rc::new(RefCell::new(DBMeta {
             data_types: HashMap::new(),
             column_positions: HashMap::new(),
         })))
@@ -223,7 +223,7 @@ struct TrackedStatements {
     iter: PlainStatements,
     current_table: Option<String>,
     unlock_next: bool,
-    tracker: Rc<RefCell<Tracker>>,
+    tracker: Rc<RefCell<DBMeta>>,
 }
 
 impl TrackedStatements {
@@ -299,7 +299,7 @@ struct TransformedStatements<F: TransformFn> {
 
 impl<F: TransformFn> TransformedStatements<F> {
     fn from_file(sqldump_filepath: &Path, transform: F, preprocess_file: &Option<&Path>) -> Result<Self, anyhow::Error> {
-        let tracker = Tracker::new()?;
+        let tracker = DBMeta::new()?;
         Ok(TransformedStatements {
             iter: TrackedStatements::from_file(sqldump_filepath, &tracker, preprocess_file)?,
             transform,
