@@ -3,6 +3,7 @@ mod writers;
 
 use lazy_static::lazy_static;
 use regex::Regex;
+use core::panic;
 use std::cell::RefCell;
 use std::{collections::HashMap, fs::File};
 use std::fs;
@@ -148,28 +149,18 @@ impl Tracker {
         })))
     }
 
-    fn capture_positions(&mut self, statement: &SqlStatement, current_table: &Option<String>) -> EmptyResult {
-        if let Some(table) = current_table {
-            if !self.column_positions.contains_key(table) && is_insert(&statement.0) {
-                let insert_statement = InsertStatement::try_from(statement)?;
-                self.column_positions.insert(table.to_string(), Rc::new(get_column_positions(&insert_statement.statement)?));
-            };
-        }
-        Ok(())
-    }
-
-    fn capture_data_types(&mut self, statement: &SqlStatement) -> EmptyResult {
+    fn capture(&mut self, statement: &SqlStatement) -> EmptyResult {
         if is_create_table(&statement.0) {
             if let Some((table, data_types)) = get_data_types(&statement.0)? {
                 self.data_types.insert(table.to_string(), Rc::new(data_types));
             }
         }
-        Ok(())
-    }
-
-    fn capture(&mut self, statement: &SqlStatement, current_table: &Option<String>) -> EmptyResult {
-        self.capture_positions(statement, current_table)?;
-        self.capture_data_types(statement)?;
+        if let Some(ref table) = statement.1 {
+            if !self.column_positions.contains_key(table) && is_insert(&statement.0) {
+                let insert_statement = InsertStatement::try_from(statement)?;
+                self.column_positions.insert(table.to_string(), Rc::new(get_column_positions(&insert_statement.statement)?));
+            };
+        }
         Ok(())
     }
 
@@ -181,7 +172,6 @@ impl Tracker {
         &self.column_positions[table]
     }
 }
-
 
 struct PlainStatements {
     buf: io::BufReader<fs::File>,
@@ -293,7 +283,7 @@ impl Iterator for TrackedStatements {
         let mut statement = self.read_statement()?;
 
         if let Ok(st) = &mut statement {
-            if let Err(e) = self.tracker.borrow_mut().capture(st, &self.current_table) {
+            if let Err(e) = self.tracker.borrow_mut().capture(st) {
                 return Some(Err(e));
             }
         }
