@@ -347,12 +347,17 @@ impl PlainColumnCheck for PlainTrackingTest {
 pub struct TableChecks(Vec<PlainCheckType>);
 
 impl TableChecks {
-    pub fn apply<'a, T: TryInto<&'a HashMap<String, (String, sqlparser::ast::DataType)>>>(
+    pub fn apply<T>(
         &self,
-        statement: T,
+        mut statement: T,
         lookup_table: &mut HashMap<String, HashSet<String>>,
-    ) -> Result<Option<HashMap<String, String>>, anyhow::Error> {
-        let Ok(value_per_field) = statement.try_into() else { Err(anyhow::anyhow!("cannot parse values"))? };
+    ) -> Result<Option<T>, anyhow::Error>
+        where
+            T: IntoIterator + Clone + Extend<(String, String)>,
+            HashMap<String, (String, sqlparser::ast::DataType)>: FromIterator<<T>::Item>
+    {
+        let value_per_field: HashMap<String, (String, sqlparser::ast::DataType)> = statement.clone().into_iter().collect();
+
         for check in self.0.iter() {
             let col_name = check.get_column_name();
             let (str_value, data_type): &(String, sqlparser::ast::DataType) = &value_per_field[col_name];
@@ -360,7 +365,9 @@ impl TableChecks {
                 return Ok(None);
             }
         }
-        Ok(Some(HashMap::new()))
+
+        statement.extend(HashMap::new());
+        Ok(Some(statement))
     }
 }
 

@@ -9,8 +9,8 @@ mod dependencies;
 mod table;
 mod scanner;
 
-use table::{process_checks};
-use checks::{get_passes};
+use table::process_checks;
+use checks::get_passes;
 use scanner::{explode_to_files, gather};
 
 #[derive(Debug)]
@@ -57,20 +57,20 @@ fn main() -> Result<(), anyhow::Error> {
     };
     let working_file_path = working_dir_path.join("INTERIM").with_extension("sql");
 
-    // explode_to_files(
-    //     working_file_path.as_path(),
-    //     input_file.as_path(),
-    //     |statement| {
-    //         if let Some(allowed) = &config.allow_data_on_tables {
-    //             if !allowed.contains(statement.get_table()) {
-    //                 return Ok(None);
-    //             }
-    //         }
-    //         Ok(Some(()))
-    //     }
-    // ).unwrap_or_else(|e| {
-    //     panic!("Problem exploding to files: {e:?}");
-    // });
+    explode_to_files(
+        working_file_path.as_path(),
+        input_file.as_path(),
+        |statement| {
+            if let Some(allowed) = &config.allow_data_on_tables {
+                if !allowed.contains(statement.get_table()) {
+                    return Ok(None);
+                }
+            }
+            Ok(Some(statement))
+        }
+    ).unwrap_or_else(|e| {
+        panic!("Problem exploding to files: {e:?}");
+    });
 
     let passes = get_passes(config.cascades.iter().chain(&config.filters))?;
     process_checks(passes, working_file_path.as_path())?;

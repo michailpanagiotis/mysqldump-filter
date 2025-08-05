@@ -3,6 +3,7 @@ mod writers;
 
 use lazy_static::lazy_static;
 use regex::Regex;
+use core::panic;
 use std::cell::RefCell;
 use std::{collections::HashMap, fs::File};
 use std::fs;
@@ -23,15 +24,23 @@ type EmptyResult = Result<(), anyhow::Error>;
 type ValuesMap = HashMap<String, (String, sqlparser::ast::DataType)>;
 type ValuesRef<'a> = &'a ValuesMap;
 
-pub struct TransformArguments<'a>(&'a mut InsertStatement);
-type TransformResult = Result<Option<HashMap<String, String>>, anyhow::Error>;
+pub struct TransformArguments<'a>(pub &'a mut InsertStatement);
+type TransformResult = Result<Option<InsertStatement>, anyhow::Error>;
 
-pub trait AbstractTransformFn<'a, Iv: TryInto<ValuesRef<'a>>>: FnMut(Iv) -> TransformResult {}
-impl<'a, Iv: TryInto<ValuesRef<'a>>, T: FnMut(Iv) -> TransformResult> AbstractTransformFn<'a, Iv> for T {}
+pub trait AbstractTransformFn<Iv>: FnMut(Iv) -> Result<Option<Iv>, anyhow::Error>
+where
+    Iv: IntoIterator + Clone + Extend<(String, String)>,
+    HashMap<String, (String, sqlparser::ast::DataType)>: FromIterator<<Iv>::Item>
+{}
 
-pub trait TransformFn: for<'a> AbstractTransformFn<'a, TransformArguments<'a>> {}
-impl<T: for<'a> AbstractTransformFn<'a, TransformArguments<'a>>> TransformFn for T {}
+impl<Iv, T: FnMut(Iv) -> Result<Option<Iv>, anyhow::Error>> AbstractTransformFn<Iv> for T
+where
+    Iv: IntoIterator + Clone + Extend<(String, String)>,
+    HashMap<String, (String, sqlparser::ast::DataType)>: FromIterator<<Iv>::Item>
+{}
 
+pub trait TransformFn: AbstractTransformFn<InsertStatement> {}
+impl<T: AbstractTransformFn<InsertStatement>> TransformFn for T {}
 
 lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
@@ -46,6 +55,7 @@ pub struct InsertStatement {
     data_types: Option<Rc<TableDataTypes>>,
     positions: Option<Rc<TableColumnPositions>>,
     value_per_field: Option<ValuesMap>,
+    vals: ValuesMap,
 }
 
 impl InsertStatement {
@@ -54,7 +64,7 @@ impl InsertStatement {
             return Err(anyhow::anyhow!("not an insert statement"));
         }
         let (table, _, values_part) = insert_parts(statement)?;
-        Ok(Self { statement: statement.to_string(), table, values_part, value_per_field: None, data_types: None, positions: None })
+        Ok(Self { statement: statement.to_string(), table, values_part, value_per_field: None, data_types: None, positions: None, vals: HashMap::new() })
     }
 
     pub fn get_table(&self) -> &str {
@@ -96,22 +106,124 @@ impl InsertStatement {
         }
         Ok(())
     }
-}
 
-impl<'a> TryInto<ValuesRef<'a>> for TransformArguments<'a> {
-    type Error = anyhow::Error;
+    // fn iter(&mut self) -> Iter {
+    //     if self.value_per_field.is_none() {
+    //         self.resolve_values().expect("cannot resolve values");
+    //     }
+    //     match self.value_per_field {
+    //         Some(ref value_per_field) => Iter(Box::new(value_per_field.iter())),
+    //         None => panic!("cannot resolve values")
+    //     }
+    // }
 
-    fn try_into(self) -> Result<ValuesRef<'a>, Self::Error> {
-        if self.0.value_per_field.is_none() {
-            self.0.resolve_values()?;
-        }
-
-        let Some(ref values) = self.0.value_per_field else {
-            return Err(anyhow::anyhow!("values have not been resolved"));
+    fn update(&mut self, field: &str, value: &str) -> Result<(), anyhow::Error> {
+        let Some(ref data_types) = self.data_types else {
+            return Err(anyhow::anyhow!("statement with no data types"));
         };
-        Ok(values)
+        if let Some(ref mut value_per_field) = self.value_per_field {
+            value_per_field.insert(field.to_owned(), (value.to_owned(), data_types[field].to_owned()));
+        }
+        Ok(())
     }
 }
+
+impl IntoIterator for InsertStatement {
+    type Item = <ValuesMap as IntoIterator>::Item;
+    type IntoIter = <ValuesMap as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let Some(ref positions) = self.positions else {
+            panic!("statement with no positions");
+        };
+        let Some(ref data_types) = self.data_types else {
+            panic!("statement with no data types");
+        };
+
+        let Ok((_, value_array)) = values(&self.values_part) else {
+            panic!("cannot parse values");
+        };
+
+        let values: ValuesMap = positions
+            .iter()
+            .map(|(column_name, position)| {
+                (column_name.to_owned(), (value_array[*position].to_string(), data_types[column_name].to_owned()))
+            })
+            .collect();
+        values.into_iter()
+    }
+}
+
+// struct Iter<'a>(Box<dyn Iterator<Item=(&'a String, &'a (String, sqlparser::ast::DataType))> + 'a>);
+//
+// impl<'a> Iterator for Iter<'a> {
+//     type Item = (&'a String, &'a (String, sqlparser::ast::DataType));
+//
+//     fn next(&mut self) -> Option<Self::Item> {
+//         self.0.next()
+//     }
+// }
+//
+// impl<'a> IntoIterator for &'a mut InsertStatement
+// {
+//     type Item = (&'a String, &'a (String, sqlparser::ast::DataType));
+//     type IntoIter = Iter<'a>;
+//
+//     fn into_iter(self) -> Self::IntoIter {
+//         self.iter()
+//     }
+// }
+
+// fn get_values<'a>(mut st: &'a mut InsertStatement) -> HashMap<&'a String, &'a (String, sqlparser::ast::DataType)> {
+//     let values = st.into_iter().collect();
+//     values
+// }
+
+fn apply(st: InsertStatement) {
+    apply_generic(st);
+}
+
+fn apply_generic<T>(mut st: T) -> T
+where
+    T: IntoIterator + Clone + Extend<(String, String)>,
+    HashMap<String, (String, sqlparser::ast::DataType)>: FromIterator<<T>::Item>
+{
+    let values: HashMap<String, (String, sqlparser::ast::DataType)> = st.clone().into_iter().collect();
+    st.extend(HashMap::new());
+    return st;
+}
+
+
+// impl<'b> IntoIterator for &'b mut TransformArguments<'_>
+// {
+//     type Item = (&'b String, &'b (String, sqlparser::ast::DataType));
+//     type IntoIter = std::collections::hash_map::Iter<'b, String, (String, sqlparser::ast::DataType)>;
+//
+//     fn into_iter(self) -> std::collections::hash_map::Iter<'b, String, (String, sqlparser::ast::DataType)> {
+//         if self.0.value_per_field.is_none() {
+//             self.0.resolve_values().expect("cannot resolve values");
+//         }
+//         let Some(ref value_per_field) = self.0.value_per_field else { panic!("cannot find values"); };
+//         let res = value_per_field.iter();
+//         return res;
+//     }
+// }
+
+impl Extend<(String, String)> for InsertStatement {
+    fn extend<T: IntoIterator<Item=(String, String)>>(&mut self, iter: T) {
+        for (key, value) in iter {
+            self.update(&key, &value);
+        }
+    }
+}
+
+// impl<'a> TryInto<HashMap<&'a String, &'a (String, sqlparser::ast::DataType)>> for &'a mut InsertStatement {
+//     type Error = anyhow::Error;
+//
+//     fn try_into(self) -> Result<HashMap<&'a String, &'a (String, sqlparser::ast::DataType)>, Self::Error> {
+//         Ok(self.into_iter().collect())
+//     }
+// }
 
 impl<'a> TryInto<ValuesRef<'a>> for &'a mut InsertStatement {
     type Error = anyhow::Error;
@@ -344,14 +456,15 @@ impl<F: TransformFn> TransformedStatements<F> {
         Ok(())
     }
 
-    fn transform_insert_statement(&mut self, insert_statement: &mut InsertStatement) -> Result<SqlStatement, anyhow::Error>
+    fn transform_insert_statement(&mut self, mut insert_statement: InsertStatement) -> Result<SqlStatement, anyhow::Error>
         where F: TransformFn
     {
-        if self.try_share_meta(insert_statement).is_err() {
+        if self.try_share_meta(&mut insert_statement).is_err() {
             return Err(anyhow::anyhow!("cannot share meta"));
         }
-        let transformed = (self.transform)(TransformArguments(insert_statement))?;
-        let statement: SqlStatement = SqlStatement::try_from(insert_statement)?;
+        let mut transformed = apply_generic(insert_statement);
+        // let transformed = (self.transform)(TransformArguments(insert_statement))?;
+        let statement: SqlStatement = SqlStatement::try_from(&mut transformed)?;
         Ok(statement)
     }
 
@@ -364,7 +477,7 @@ impl<F: TransformFn> TransformedStatements<F> {
                 }
                 match InsertStatement::try_from(st) {
                     Err(e) => Some(Err(e)),
-                    Ok(ref mut insert_statement) => {
+                    Ok(insert_statement) => {
                         match self.transform_insert_statement(insert_statement) {
                             Err(e) => Some(Err(e)),
                             Ok(transformed_statement) => {
