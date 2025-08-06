@@ -37,16 +37,13 @@ impl Writers {
         std::path::absolute(self.working_dir_path.join(table).with_extension("sql"))
     }
 
-    fn get_processed_table_file(&self, table: &str) -> Result<PathBuf, io::Error> {
-        std::path::absolute(self.working_dir_path.join(table).with_extension("proc"))
+    fn determine_output_file(&self, table: &str, in_place: bool) -> Result<PathBuf, io::Error> {
+        let filepath = self.get_table_file(table)?;
+        Ok(if in_place { filepath.with_extension("proc") } else { filepath })
     }
 
-    fn determine_output_file(&self, table: &str, in_place: bool) -> Result<PathBuf, io::Error> {
-        if in_place {
-            self.get_processed_table_file(table)
-        } else {
-            self.get_table_file(table)
-        }
+    fn get_processed_table_file(&self, table: &str) -> Result<PathBuf, io::Error> {
+        self.determine_output_file(table, true)
     }
 
     fn determine_writer(&mut self, table: &str) -> EmptyResult {
