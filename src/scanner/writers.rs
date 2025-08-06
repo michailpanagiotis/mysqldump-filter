@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::fs;
 use std::io::{self, BufWriter, Write};
@@ -7,9 +7,57 @@ use std::path::{Path, PathBuf};
 type EmptyResult = Result<(), anyhow::Error>;
 
 #[derive(Debug)]
+struct Writer {
+    table: Option<String>,
+    filepath: PathBuf,
+    tmp_filepath: PathBuf,
+    buf_writer: Option<BufWriter<File>>,
+}
+
+impl Writer {
+    fn new(working_file_path: &Path, table: &Option<String>) -> Result<Self, anyhow::Error> {
+        let working_dir_path = working_file_path.parent().ok_or(anyhow::anyhow!("cannot find parent directory"))?;
+        let filepath = match table {
+            Some(t) => std::path::absolute(working_dir_path.join(t).with_extension("sql"))?,
+            None => std::path::absolute(working_file_path)?,
+        };
+        let tmp_filepath = filepath.clone().with_extension("proc").to_owned();
+        Ok(Self {
+            table: table.to_owned(),
+            filepath,
+            tmp_filepath,
+            buf_writer: None,
+        })
+    }
+
+    fn write_statement(&mut self, statement: &[u8]) -> EmptyResult {
+        if self.buf_writer.is_none() {
+            fs::File::create(&self.tmp_filepath)?;
+            let file = fs::OpenOptions::new().append(true).open(&self.tmp_filepath)?;
+            self.buf_writer = Some(BufWriter::new(file));
+        }
+
+        self.buf_writer.as_mut().unwrap().write_all(statement)?;
+
+        Ok(())
+    }
+
+    fn flush(&mut self) -> EmptyResult {
+        if let Some(ref mut writer) = self.buf_writer {
+            writer.flush()?;
+            dbg!("RENAMING", &self.tmp_filepath, &self.filepath);
+            fs::rename(&self.tmp_filepath, &self.filepath)?;
+            self.buf_writer = None;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
 pub struct Writers {
     working_dir_path: PathBuf,
     working_file_path: PathBuf,
+    writer_per_table: HashMap<Option<String>, Writer>,
     in_place: bool,
     written_files: HashSet<PathBuf>,
     working_file_writer: Option<BufWriter<File>>,
@@ -24,6 +72,7 @@ impl Writers {
         Ok(Writers {
             working_dir_path: working_dir_path.to_owned(),
             working_file_path: working_file_path.to_owned(),
+            writer_per_table: HashMap::new(),
             in_place,
             written_files: HashSet::new(),
             working_file_writer: None,
@@ -46,79 +95,29 @@ impl Writers {
         self.determine_output_file(table, true)
     }
 
-    fn determine_writer(&mut self, table: &str) -> EmptyResult {
-        if self.current_writer.is_none() || Some(table) != self.current_table.as_deref() {
-            self.current_table = Some(table.to_owned());
-            dbg!(self.in_place);
-            let filepath = self.determine_output_file(table, self.in_place)?;
-            self.current_file = Some(filepath.to_owned());
-            if !self.written_files.contains(&filepath) {
-                println!("creating file {}", &filepath.display());
-                self.written_files.insert(filepath.to_owned());
-                fs::File::create(&filepath)?;
-            } else {
-                println!("appending to file {}", &filepath.display());
-            }
-            let file = fs::OpenOptions::new().append(true).open(&filepath)?;
-            if let Some(ref mut writer) = self.current_writer {
-                writer.flush()?;
-            }
-            self.current_writer = Some(BufWriter::new(file));
+    fn get_writer<'a>(&'a mut self, table_option: &Option<String>) -> Result<&'a mut Writer, anyhow::Error> {
+        if !self.writer_per_table.contains_key(table_option) {
+            self.writer_per_table.insert(table_option.to_owned(), Writer::new(&self.working_file_path, table_option)?);
         }
-        Ok(())
-    }
-
-    fn try_write_inline_file(&mut self, table: &str) -> EmptyResult {
-        let filepath = self.get_table_file(table)?;
-        let Some(ref mut working_file_writer) = self.working_file_writer else {
-            return Err(anyhow::anyhow!("cannot find output file"));
-        };
-        working_file_writer.write_all(format!("--- INLINE {} {}\n", filepath.display(), table).as_bytes())?;
-        Ok(())
+        Ok(self.writer_per_table.get_mut(table_option).unwrap())
     }
 
     pub fn write_statement(&mut self, table_option: &Option<String>, statement: &[u8]) -> EmptyResult {
-        match table_option {
-            Some(table) => {
-                self.determine_writer(table)?;
-                let Some(writer) = &mut self.current_writer else {
-                    return Err(anyhow::anyhow!("cannot find writer"));
-                };
-                writer.write_all(statement)?;
-
-                if !self.in_place && let Some(table) = table_option {
-                    self.try_write_inline_file(table)?;
-                }
-            },
-            None => {
-                if self.working_file_writer.is_none() {
-                    println!("determining working file writer");
-                    fs::File::create(&self.working_file_path)?;
-                    let file = fs::OpenOptions::new().append(true).open(&self.working_file_path)?;
-                    self.working_file_writer = Some(BufWriter::new(file));
-                }
-
-                let Some(writer) = &mut self.working_file_writer else {
-                    return Err(anyhow::anyhow!("cannot find working file writer"));
-                };
-                writer.write_all(statement)?;
+        if let Some(table) = table_option {
+            if self.writer_per_table.contains_key(&None) && !self.writer_per_table.contains_key(table_option) {
+                let filepath = std::path::absolute(self.working_dir_path.join(table).with_extension("sql"))?;
+                let working_file_writer = self.get_writer(&None)?;
+                working_file_writer.write_statement(format!("--- INLINE {} {}\n", filepath.display(), table).as_bytes())?;
             }
         }
-
+        let writer = self.get_writer(table_option)?;
+        writer.write_statement(statement)?;
         Ok(())
     }
 
     pub fn flush(&mut self) -> EmptyResult {
-        if let Some(ref mut w) = self.current_writer {
-            w.flush()?;
-            if self.in_place && let Some(ref table) = self.current_table {
-                let processsed_file = self.get_processed_table_file(table)?;
-                let table_file = self.get_table_file(table)?;
-                fs::rename(processsed_file, table_file)?;
-            }
-        }
-        if let Some(ref mut w) = self.working_file_writer {
-            w.flush()?;
+        for (_, writer) in self.writer_per_table.iter_mut() {
+            writer.flush()?
         }
         Ok(())
     }
