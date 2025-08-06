@@ -75,7 +75,6 @@ pub struct InsertStatement {
     table: String,
     values_part: String,
     data_types: Option<Rc<TableDataTypes>>,
-    positions: Option<Rc<TableColumnPositions>>,
     value_per_field: Option<ValuesMap>,
 }
 
@@ -85,19 +84,11 @@ impl InsertStatement {
             return Err(anyhow::anyhow!("not an insert statement"));
         }
         let (table, _, values_part) = insert_parts(statement)?;
-        Ok(Self { statement: statement.to_string(), table, values_part, value_per_field: None, data_types: None, positions: None })
+        Ok(Self { statement: statement.to_string(), table, values_part, value_per_field: None, data_types: None })
     }
 
     pub fn get_table(&self) -> &str {
         &self.table
-    }
-
-    fn set_meta(&mut self, db_meta_cell: &Rc<RefCell<DBMeta>>) {
-        let db_meta = db_meta_cell.borrow();
-        let positions = db_meta.get_table_column_positions(&self.table);
-        let data_types = db_meta.get_table_data_types(&self.table);
-        self.positions = Some(Rc::clone(positions));
-        self.data_types = Some(Rc::clone(data_types));
     }
 }
 
@@ -212,14 +203,6 @@ impl DBMeta {
             };
         }
         Ok(())
-    }
-
-    fn get_table_data_types(&self, table: &str) -> &Rc<TableDataTypes> {
-        &self.data_types[table]
-    }
-
-    fn get_table_column_positions(&self, table: &str) -> &Rc<TableColumnPositions> {
-        &self.column_positions[table]
     }
 }
 
@@ -357,22 +340,11 @@ impl<F: TransformFn> TransformedStatements<F> {
         })
     }
 
-    // fn transform_insert_statement(&mut self, mut insert_statement: InsertStatement) -> Result<Option<InsertStatement>, anyhow::Error>
-    //     where F: TransformFn
-    // {
-    //     insert_statement.set_meta(&self.iter.db_meta);
-    //     let transformed = (self.transform)(insert_statement)?;
-    //     Ok(transformed)
-    // }
-
     fn transform_iteration_item(&mut self, statement_result: SqlStatementResult) -> Option<SqlStatementResult> {
         let Ok(mut statement) = statement_result else { return Some(statement_result); };
         statement.set_meta(&self.iter.db_meta);
         let tr: Option<SqlStatement> = (self.transform)(statement).expect("err");
-        match tr {
-            Some(transformed) => return Some(Ok(transformed)),
-            None => return None
-        }
+        tr.map(Ok)
     }
 
     fn process_all(self, writers: &mut Writers) -> Result<(), anyhow::Error> {
@@ -407,7 +379,7 @@ pub fn explode_to_files<F>(
 ) -> Result<(), anyhow::Error>
   where F: TransformFn
 {
-    let mut writers = Writers::new(working_file_path, false)?;
+    let mut writers = Writers::new(working_file_path)?;
 
     let statements = TransformedStatements::from_file(input_filepath, transform, &None)?;
     statements.process_all(&mut writers)?;
@@ -424,7 +396,7 @@ pub fn process_table_inserts<F>(
 {
     println!("Processing records of table {table}");
 
-    let mut writers = Writers::new(working_file_path, true)?;
+    let mut writers = Writers::new(working_file_path)?;
     let input_filepath = &writers.get_table_file(table)?;
 
     let statements = TransformedStatements::from_file(input_filepath, transform, &Some(working_file_path))?;
