@@ -101,32 +101,6 @@ impl InsertStatement {
     }
 }
 
-impl IntoIterator for InsertStatement {
-    type Item = <ValuesMap as IntoIterator>::Item;
-    type IntoIter = <ValuesMap as IntoIterator>::IntoIter;
-
-    fn into_iter(self) -> Self::IntoIter {
-        let Some(ref positions) = self.positions else {
-            panic!("statement with no positions");
-        };
-        let Some(ref data_types) = self.data_types else {
-            panic!("statement with no data types");
-        };
-
-        let Ok((_, value_array)) = values(&self.values_part) else {
-            panic!("cannot parse values");
-        };
-
-        let values: ValuesMap = positions
-            .iter()
-            .map(|(column_name, position)| {
-                (column_name.to_owned(), (value_array[*position].to_string(), data_types[column_name].to_owned()))
-            })
-            .collect();
-        values.into_iter()
-    }
-}
-
 impl IntoIterator for SqlStatement {
     type Item = <ValuesMap as IntoIterator>::Item;
     type IntoIter = <ValuesMap as IntoIterator>::IntoIter;
