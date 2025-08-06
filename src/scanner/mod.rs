@@ -72,7 +72,6 @@ impl SqlStatement {
 #[derive(Debug)]
 pub struct InsertStatement {
     statement: String,
-    table: String,
     values_part: String,
     data_types: Option<Rc<TableDataTypes>>,
     value_per_field: Option<ValuesMap>,
@@ -83,12 +82,8 @@ impl InsertStatement {
         if !is_insert(statement) {
             return Err(anyhow::anyhow!("not an insert statement"));
         }
-        let (table, _, values_part) = insert_parts(statement)?;
-        Ok(Self { statement: statement.to_string(), table, values_part, value_per_field: None, data_types: None })
-    }
-
-    pub fn get_table(&self) -> &str {
-        &self.table
+        let (_, _, values_part) = insert_parts(statement)?;
+        Ok(Self { statement: statement.to_string(), values_part, value_per_field: None, data_types: None })
     }
 }
 
@@ -97,7 +92,7 @@ impl IntoIterator for SqlStatement {
     type IntoIter = <ValuesMap as IntoIterator>::IntoIter;
 
     fn into_iter(self) -> Self::IntoIter {
-        let mut result: Result<InsertStatement, anyhow::Error> = (&self).try_into();
+        let mut result: Result<InsertStatement, anyhow::Error> = InsertStatement::new(&self.text);
         if let Ok(ref mut insert_statement) = result {
             let Some(ref positions) = self.positions else {
                 panic!("statement with no positions");
@@ -122,21 +117,9 @@ impl IntoIterator for SqlStatement {
     }
 }
 
-impl Extend<(String, String)> for InsertStatement {
-    fn extend<T: IntoIterator<Item=(String, String)>>(&mut self, iter: T) {
-        if let Some(ref data_types) = self.data_types {
-            if let Some(ref mut value_per_field) = self.value_per_field {
-                for (key, value) in iter {
-                    value_per_field.insert(key.to_owned(), (value.to_owned(), data_types[&key].to_owned()));
-                }
-            }
-        }
-    }
-}
-
 impl Extend<(String, String)> for SqlStatement {
     fn extend<T: IntoIterator<Item=(String, String)>>(&mut self, iter: T) {
-        let mut result: Result<InsertStatement, anyhow::Error> = self.try_into();
+        let mut result: Result<InsertStatement, anyhow::Error> = InsertStatement::new(&self.text);
         if let Ok(ref mut insert_statement) = result {
             if let Some(ref data_types) = insert_statement.data_types {
                 if let Some(ref mut value_per_field) = insert_statement.value_per_field {
@@ -147,32 +130,6 @@ impl Extend<(String, String)> for SqlStatement {
             }
             self.text = insert_statement.statement.clone();
         }
-    }
-}
-
-impl<'a> TryFrom<&'a SqlStatement> for InsertStatement {
-    type Error = anyhow::Error;
-    fn try_from(other: &'a SqlStatement) -> Result<InsertStatement, Self::Error> {
-        InsertStatement::new(&other.text)
-    }
-}
-
-impl<'a> TryFrom<&'a mut SqlStatement> for InsertStatement {
-    type Error = anyhow::Error;
-    fn try_from(other: &'a mut SqlStatement) -> Result<InsertStatement, Self::Error> {
-        InsertStatement::new(&other.text)
-    }
-}
-
-impl<'a> From<&'a InsertStatement> for SqlStatement {
-    fn from(other: &'a InsertStatement) -> Self {
-        Self { text: other.into(), table: Some(other.get_table().to_owned()), data_types: None, positions: None }
-    }
-}
-
-impl<'a> From<&'a InsertStatement> for String {
-    fn from(other: &'a InsertStatement) -> Self {
-        other.statement.to_string()
     }
 }
 
@@ -198,8 +155,7 @@ impl DBMeta {
         }
         if let Some(ref table) = statement.table {
             if !self.column_positions.contains_key(table) && is_insert(&statement.text) {
-                let insert_statement = InsertStatement::try_from(statement)?;
-                self.column_positions.insert(table.to_string(), Rc::new(get_column_positions(&insert_statement.statement)?));
+                self.column_positions.insert(table.to_string(), Rc::new(get_column_positions(&statement.text)?));
             };
         }
         Ok(())
