@@ -11,7 +11,7 @@ use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use crate::scanner::sql_parser::{TableColumnPositions, TableDataTypes, get_column_positions, get_data_types, insert_parts, is_create_table, is_insert, values};
+use crate::scanner::sql_parser::{TableColumnPositions, TableDataTypes, get_column_positions, get_data_types, split_insert_parts, is_create_table, is_insert, values};
 use crate::scanner::writers::Writers;
 
 type DBMetaCell = Rc<RefCell<DBMeta>>;
@@ -66,24 +66,45 @@ impl SqlStatement {
             }
         }
     }
-}
 
-#[derive(Clone)]
-#[derive(Debug)]
-pub struct InsertStatement {
-    statement: String,
-    values_part: String,
-    data_types: Option<Rc<TableDataTypes>>,
-    value_per_field: Option<ValuesMap>,
-}
+    fn reconstruct_text(&mut self, table: String, columns_part: String, value_array: Vec<String>) -> String {
+        format!("INSERT INTO `{}` ({}) VALUES ({});\n", table, columns_part, value_array.join(","))
+    }
 
-impl InsertStatement {
-    fn new(statement: &str) -> Result<Self, anyhow::Error> {
-        if !is_insert(statement) {
-            return Err(anyhow::anyhow!("not an insert statement"));
+    fn get_insert_parts(&self) -> Option<(String, String, Vec<String>)> {
+        if !is_insert(&self.text) {
+            return None;
         }
-        let (_, _, values_part) = insert_parts(statement)?;
-        Ok(Self { statement: statement.to_string(), values_part, value_per_field: None, data_types: None })
+
+        let Ok((table, columns_part, values_part)) = split_insert_parts(&self.text) else {
+            panic!("cannot split insert parts");
+        };
+
+        let Ok((_, value_array)) = values(&values_part) else {
+            panic!("cannot parse values");
+        };
+
+        Some((table, columns_part, value_array.iter().map(|x| x.to_string()).collect()))
+    }
+
+    fn get_insert_values(&self) -> ValuesMap {
+        let Some((table, columns_part, value_array)) = self.get_insert_parts() else {
+            return ValuesMap::default();
+        };
+        let Some(ref positions) = self.positions else {
+            panic!("statement with no positions");
+        };
+        let Some(ref data_types) = self.data_types else {
+            panic!("statement with no data types");
+        };
+
+        let values: ValuesMap = positions
+            .iter()
+            .map(|(column_name, position)| {
+                (column_name.to_owned(), (value_array[*position].to_string(), data_types[column_name].to_owned()))
+            })
+            .collect();
+        values
     }
 }
 
@@ -92,43 +113,26 @@ impl IntoIterator for SqlStatement {
     type IntoIter = <ValuesMap as IntoIterator>::IntoIter;
 
     fn into_iter(self) -> Self::IntoIter {
-        let mut result: Result<InsertStatement, anyhow::Error> = InsertStatement::new(&self.text);
-        if let Ok(ref mut insert_statement) = result {
-            let Some(ref positions) = self.positions else {
-                panic!("statement with no positions");
-            };
-            let Some(ref data_types) = self.data_types else {
-                panic!("statement with no data types");
-            };
-            let Ok((_, value_array)) = values(&insert_statement.values_part) else {
-                panic!("cannot parse values");
-            };
-
-            let values: ValuesMap = positions
-                .iter()
-                .map(|(column_name, position)| {
-                    (column_name.to_owned(), (value_array[*position].to_string(), data_types[column_name].to_owned()))
-                })
-                .collect();
-            values.into_iter()
-        } else {
-            Self::IntoIter::default()
-        }
+        self.get_insert_values().into_iter()
     }
 }
 
 impl Extend<(String, String)> for SqlStatement {
     fn extend<T: IntoIterator<Item=(String, String)>>(&mut self, iter: T) {
-        let mut result: Result<InsertStatement, anyhow::Error> = InsertStatement::new(&self.text);
-        if let Ok(ref mut insert_statement) = result {
-            if let Some(ref data_types) = insert_statement.data_types {
-                if let Some(ref mut value_per_field) = insert_statement.value_per_field {
-                    for (key, value) in iter {
-                        value_per_field.insert(key.to_owned(), (value.to_owned(), data_types[&key].to_owned()));
-                    }
-                }
+        if let Some((table, columns_part, mut values)) = self.get_insert_parts() {
+            let Some(ref positions) = self.positions else {
+                panic!("statement with no positions");
+            };
+            for (field, value) in iter {
+                values[positions[&field]] = value;
             }
-            self.text = insert_statement.statement.clone();
+            let new_text = self.reconstruct_text(table, columns_part, values);
+            if new_text != self.text {
+                dbg!(&self.text);
+                dbg!(&new_text);
+                panic!("WRONG TEXT");
+            }
+            self.text = new_text;
         }
     }
 }

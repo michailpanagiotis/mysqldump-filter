@@ -52,7 +52,7 @@ pub fn values(i: &str) -> IResult<&str, Vec<&str>> {
     ).parse(i)
 }
 
-pub fn insert_parts(insert_statement: &str) -> Result<(String, String, String), anyhow::Error> {
+pub fn split_insert_parts(insert_statement: &str) -> Result<(String, String, String), anyhow::Error> {
     let mut parser = (
         // table
         preceded(tag("INSERT INTO `"), take_until("` (")),
