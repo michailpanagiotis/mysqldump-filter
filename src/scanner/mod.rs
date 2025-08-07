@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use crate::scanner::sql_parser::{TableColumnPositions, TableDataTypes, get_column_positions, get_data_types, split_insert_parts, is_create_table, is_insert, values};
-use crate::scanner::writers::Writers;
+use crate::scanner::writers::{Writers, get_table_file};
 
 type DBMetaCell = Rc<RefCell<DBMeta>>;
 
@@ -128,6 +128,14 @@ pub struct DBMeta {
 }
 
 impl DBMeta {
+    fn from_file(filename: &Path) -> Result<Rc<RefCell<Self>>, anyhow::Error> {
+        let db_meta = DBMeta::new()?;
+        let statements = TrackedStatements::from_file(filename, &db_meta)?;
+        // consume iterator to populate db_meta
+        statements.for_each(drop);
+        Ok(db_meta)
+    }
+
     fn new() -> Result<DBMetaCell, anyhow::Error> {
         Ok(Rc::new(RefCell::new(DBMeta {
             data_types: HashMap::new(),
@@ -204,15 +212,8 @@ struct TrackedStatements {
 }
 
 impl TrackedStatements {
-    fn from_file(sqldump_filepath: &Path, db_meta: &DBMetaCell, preprocess_file: &Option<&Path>) -> Result<Self, anyhow::Error> {
+    fn from_file(sqldump_filepath: &Path, db_meta: &DBMetaCell) -> Result<Self, anyhow::Error> {
         let db_meta = Rc::clone(db_meta);
-
-        if let Some(file) = preprocess_file {
-            let statements = TrackedStatements::from_file(file, &db_meta, &None)?;
-            // consume iterator to populate db_meta
-            statements.for_each(drop);
-        }
-
         Ok(TrackedStatements {
             iter: PlainStatements::from_file(sqldump_filepath)?,
             current_table: None,
@@ -276,10 +277,9 @@ struct TransformedStatements<F: TransformFn> {
 }
 
 impl<F: TransformFn> TransformedStatements<F> {
-    fn from_file(sqldump_filepath: &Path, transform: F, preprocess_file: &Option<&Path>) -> Result<Self, anyhow::Error> {
-        let db_meta = DBMeta::new()?;
+    fn from_file(sqldump_filepath: &Path, transform: F, db_meta: &DBMetaCell) -> Result<Self, anyhow::Error> {
         Ok(TransformedStatements {
-            iter: TrackedStatements::from_file(sqldump_filepath, &db_meta, preprocess_file)?,
+            iter: TrackedStatements::from_file(sqldump_filepath, db_meta)?,
             transform,
         })
     }
@@ -323,9 +323,10 @@ pub fn explode_to_files<F>(
 ) -> Result<(), anyhow::Error>
   where F: TransformFn
 {
-    let mut writers = Writers::new(working_file_path)?;
+    let db_meta = DBMeta::new()?;
 
-    let statements = TransformedStatements::from_file(input_filepath, transform, &None)?;
+    let mut writers = Writers::new(working_file_path)?;
+    let statements = TransformedStatements::from_file(input_filepath, transform, &db_meta)?;
     statements.process_all(&mut writers)?;
 
     Ok(())
@@ -340,10 +341,11 @@ pub fn process_table_inserts<F>(
 {
     println!("Processing records of table {table}");
 
-    let mut writers = Writers::new(working_file_path)?;
-    let input_filepath = &writers.get_table_file(table)?;
+    let input_filepath = &get_table_file(working_file_path, table)?;
+    let db_meta = DBMeta::from_file(working_file_path)?;
 
-    let statements = TransformedStatements::from_file(input_filepath, transform, &Some(working_file_path))?;
+    let mut writers = Writers::new(working_file_path)?;
+    let statements = TransformedStatements::from_file(input_filepath, transform, &db_meta)?;
     statements.process_all(&mut writers)?;
 
     Ok(())

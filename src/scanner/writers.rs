@@ -6,6 +6,11 @@ use std::path::{Path, PathBuf};
 
 type EmptyResult = Result<(), anyhow::Error>;
 
+pub fn get_table_file(working_file_path: &Path, table: &str) -> Result<PathBuf, anyhow::Error> {
+    let working_dir_path = working_file_path.parent().ok_or(anyhow::anyhow!("cannot find parent directory"))?;
+    Ok(std::path::absolute(working_dir_path.join(table).with_extension("sql"))?)
+}
+
 #[derive(Debug)]
 struct Writer {
     table: Option<String>,
@@ -62,9 +67,8 @@ impl Writers {
         })
     }
 
-    pub fn get_table_file(&self, table: &str) -> Result<PathBuf, anyhow::Error> {
-        let working_dir_path = self.working_file_path.parent().ok_or(anyhow::anyhow!("cannot find parent directory"))?;
-        Ok(std::path::absolute(working_dir_path.join(table).with_extension("sql"))?)
+    fn get_table_file(&self, table: &str) -> Result<PathBuf, anyhow::Error> {
+        get_table_file(&self.working_file_path, table)
     }
 
     fn get_writer<'a>(&'a mut self, table_option: &Option<String>) -> Result<&'a mut Writer, anyhow::Error> {
