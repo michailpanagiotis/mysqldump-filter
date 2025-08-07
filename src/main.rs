@@ -16,7 +16,7 @@ use scanner::{explode_to_files, gather, process_table_inserts};
 pub struct Config {
     allow_data_on_tables: Option<HashSet<String>>,
     cascades: HashMap<String, Vec<String>>,
-    transforms: HashMap<String, HashMap<String, String>>,
+    text_transforms: HashMap<String, HashMap<String, String>>,
     filters: HashMap<String, Vec<String>>
 }
 
@@ -69,7 +69,7 @@ fn main() -> Result<(), anyhow::Error> {
     // });
 
     let mut lookup_table = HashMap::new();
-    for pending_tables in get_passes(config.cascades.iter().chain(&config.filters), config.transforms)? {
+    for pending_tables in get_passes(config.cascades.iter().chain(&config.filters), config.text_transforms)? {
         dbg!(&lookup_table);
         for (table, table_checks) in pending_tables {
             process_table_inserts(

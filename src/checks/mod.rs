@@ -346,10 +346,10 @@ impl PlainColumnCheck for PlainTrackingTest {
 }
 
 #[derive(Debug)]
-pub struct TableChecks { checks: Vec<PlainCheckType>, transforms: HashMap<String, String> }
+pub struct TableChecks { checks: Vec<PlainCheckType>, text_transforms: HashMap<String, String> }
 
 impl TableChecks {
-    pub fn new(mut checks: Vec<PlainCheckType>) -> Self {
+    pub fn new(mut checks: Vec<PlainCheckType>, text_transforms: Option<&HashMap<String, String>>) -> Self {
         // tests have implicit order
         checks.sort_by_key(|a| {
             if a.as_any().downcast_ref::<PlainTrackingTest>().is_some() {
@@ -357,16 +357,18 @@ impl TableChecks {
             }
             false
         });
-        Self { checks, transforms: HashMap::new() }
+        Self { checks, text_transforms: text_transforms.map(|x| x.iter().map(
+            |(f, v)| (f.to_owned(), format!("'{v}'")),
+        ).collect()).unwrap_or_default() }
     }
 
-    pub fn apply<T>(
-        &self,
+    pub fn apply<'a, T>(
+        &'a self,
         mut statement: T,
-        lookup_table: &mut HashMap<String, HashSet<String>>,
+        lookup_table: &'a mut HashMap<String, HashSet<String>>,
     ) -> Result<Option<T>, anyhow::Error>
         where
-            T: IntoIterator + Clone + Extend<(String, String)> + std::fmt::Debug,
+            T: IntoIterator + Clone + Extend<(&'a String, &'a String)> + std::fmt::Debug,
             HashMap<String, (String, sqlparser::ast::DataType)>: FromIterator<<T>::Item>
     {
         let value_per_field: HashMap<String, (String, sqlparser::ast::DataType)> = statement.clone().into_iter().collect();
@@ -383,7 +385,7 @@ impl TableChecks {
             }
         }
 
-        statement.extend(HashMap::new());
+        statement.extend(self.text_transforms.iter());
         Ok(Some(statement))
     }
 }
@@ -393,10 +395,13 @@ type PassChecks = HashMap<String, TableChecks>;
 #[derive(Debug)]
 pub struct DBChecks(pub Vec<PassChecks>);
 
-impl From<Vec<Vec<Vec<PlainCheckType>>>> for DBChecks {
-    fn from(items: Vec<Vec<Vec<PlainCheckType>>>) -> Self {
+impl DBChecks {
+    fn new(items: Vec<Vec<Vec<PlainCheckType>>>, text_transforms: HashMap<String, HashMap<String, String>>) -> Self {
         Self(items.into_iter().map(|t_items| {
-            t_items.into_iter().map(|it| (it[0].get_table_name().to_string(), TableChecks::new(it))).collect()
+            t_items.into_iter().map(|it| {
+                let table_name = it[0].get_table_name().to_owned();
+                (table_name.to_string(), TableChecks::new(it, text_transforms.get(&table_name)))
+            }).collect()
         }).collect())
     }
 }
@@ -441,8 +446,7 @@ fn split_column_key(key: &str) -> Result<(&str, &str), anyhow::Error> {
     Ok((table, column))
 }
 
-pub fn get_passes<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(conditions: I, transforms: HashMap<String, HashMap<String, String>>) -> Result<DBChecks, anyhow::Error> {
-    dbg!(transforms);
+pub fn get_passes<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(conditions: I, text_transforms: HashMap<String, HashMap<String, String>>) -> Result<DBChecks, anyhow::Error> {
     let definitions: Vec<(String, String)> = conditions.flat_map(|(table, conds)| {
         conds.iter().map(|c| (table.to_owned(), c.to_owned()))
     }).collect();
@@ -462,7 +466,7 @@ pub fn get_passes<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(condition
     }
 
 
-    let db_checks = DBChecks::from(chunk_by_depth(root));
+    let db_checks = DBChecks::new(chunk_by_depth(root), text_transforms);
     dbg!(&db_checks);
 
     Ok(db_checks)

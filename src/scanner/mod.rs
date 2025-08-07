@@ -24,13 +24,13 @@ type ValuesMap = HashMap<String, (String, sqlparser::ast::DataType)>;
 
 pub trait AbstractTransformFn<Iv>: FnMut(Iv) -> Result<Option<Iv>, anyhow::Error>
 where
-    Iv: IntoIterator + Clone + Extend<(String, String)>,
+    Iv: IntoIterator + Clone + for<'a> Extend<(&'a String, &'a String)>,
     ValuesMap: FromIterator<<Iv>::Item>
 {}
 
 impl<Iv, T: FnMut(Iv) -> Result<Option<Iv>, anyhow::Error>> AbstractTransformFn<Iv> for T
 where
-    Iv: IntoIterator + Clone + Extend<(String, String)>,
+    Iv: IntoIterator + Clone + for<'a> Extend<(&'a String, &'a String)>,
     ValuesMap: FromIterator<<Iv>::Item>
 {}
 
@@ -106,8 +106,8 @@ impl IntoIterator for SqlStatement {
     }
 }
 
-impl Extend<(String, String)> for SqlStatement {
-    fn extend<T: IntoIterator<Item=(String, String)>>(&mut self, iter: T) {
+impl<'a> Extend<(&'a String, &'a String)> for SqlStatement {
+    fn extend<T: IntoIterator<Item=(&'a String, &'a String)>>(&mut self, iter: T) {
         if let Some((table, columns_part, mut values)) = self.get_insert_parts() {
             let Some(ref meta) = self.db_meta else {
                 panic!("statement with no meta");
@@ -118,7 +118,7 @@ impl Extend<(String, String)> for SqlStatement {
             };
 
             for (field, value) in iter {
-                values[positions[&field]] = value;
+                values[positions[field]] = value.to_string();
             }
             self.text = format!("INSERT INTO `{}` ({}) VALUES ({});\n", table, columns_part, values.join(","));
         }
