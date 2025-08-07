@@ -107,7 +107,6 @@ impl<T> DependencyNode<T>
     }
 
     pub fn move_into(&mut self, group_key: &str, child_key: &str) -> Result<(), anyhow::Error> {
-        println!("Moving {child_key} into {group_key}");
         let child = self.pop_child(child_key).ok_or(anyhow::anyhow!("child {child_key} does not exist"))?;
         let parent = self.get_node_mut(group_key).ok_or(anyhow::anyhow!("parent {group_key} does not exist"))?;
         match &mut parent.node_type {

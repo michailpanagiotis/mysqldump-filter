@@ -346,7 +346,7 @@ impl PlainColumnCheck for PlainTrackingTest {
 }
 
 #[derive(Debug)]
-pub struct TableChecks(Vec<PlainCheckType>);
+pub struct TableChecks { checks: Vec<PlainCheckType> }
 
 impl TableChecks {
     pub fn apply<T>(
@@ -364,7 +364,7 @@ impl TableChecks {
             return Ok(Some(statement));
         }
 
-        for check in self.0.iter() {
+        for check in self.checks.iter() {
             let col_name = check.get_column_name();
             let (str_value, data_type): &(String, sqlparser::ast::DataType) = &value_per_field[col_name];
             if !check.test_value(str_value, data_type, lookup_table)? {
@@ -379,9 +379,9 @@ impl TableChecks {
 
 impl From<Vec<PlainCheckType>> for TableChecks {
     fn from(items: Vec<PlainCheckType>) -> Self {
-        let mut res = Self(items);
+        let mut res = Self { checks: items };
         // tests have implicit order
-        res.0.sort_by_key(|a| {
+        res.checks.sort_by_key(|a| {
             if a.as_any().downcast_ref::<PlainTrackingTest>().is_some() {
                 return true;
             }
@@ -444,7 +444,8 @@ fn split_column_key(key: &str) -> Result<(&str, &str), anyhow::Error> {
     Ok((table, column))
 }
 
-pub fn get_passes<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(conditions: I) -> Result<DBChecks, anyhow::Error> {
+pub fn get_passes<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(conditions: I, transforms: HashMap<String, HashMap<String, String>>) -> Result<DBChecks, anyhow::Error> {
+    dbg!(transforms);
     let definitions: Vec<(String, String)> = conditions.flat_map(|(table, conds)| {
         conds.iter().map(|c| (table.to_owned(), c.to_owned()))
     }).collect();

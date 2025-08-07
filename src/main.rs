@@ -14,8 +14,9 @@ use scanner::{explode_to_files, gather, process_table_inserts};
 #[derive(Deserialize)]
 #[serde(rename = "name")]
 pub struct Config {
-    pub allow_data_on_tables: Option<HashSet<String>>,
-    pub cascades: HashMap<String, Vec<String>>,
+    allow_data_on_tables: Option<HashSet<String>>,
+    cascades: HashMap<String, Vec<String>>,
+    transforms: HashMap<String, HashMap<String, String>>,
     filters: HashMap<String, Vec<String>>
 }
 
@@ -54,21 +55,21 @@ fn main() -> Result<(), anyhow::Error> {
     };
     let working_file_path = working_dir_path.join("INTERIM").with_extension("sql");
 
-    explode_to_files(
-        working_file_path.as_path(),
-        input_file.as_path(),
-        |statement| {
-            if let (Some(allowed), Some(table)) = (&config.allow_data_on_tables, statement.get_table()) && !allowed.contains(table) {
-                return Ok(None);
-            }
-            Ok(Some(statement))
-        }
-    ).unwrap_or_else(|e| {
-        panic!("Problem exploding to files: {e:?}");
-    });
+    // explode_to_files(
+    //     working_file_path.as_path(),
+    //     input_file.as_path(),
+    //     |statement| {
+    //         if let (Some(allowed), Some(table)) = (&config.allow_data_on_tables, statement.get_table()) && !allowed.contains(table) {
+    //             return Ok(None);
+    //         }
+    //         Ok(Some(statement))
+    //     }
+    // ).unwrap_or_else(|e| {
+    //     panic!("Problem exploding to files: {e:?}");
+    // });
 
     let mut lookup_table = HashMap::new();
-    for pending_tables in get_passes(config.cascades.iter().chain(&config.filters))? {
+    for pending_tables in get_passes(config.cascades.iter().chain(&config.filters), config.transforms)? {
         dbg!(&lookup_table);
         for (table, table_checks) in pending_tables {
             process_table_inserts(
