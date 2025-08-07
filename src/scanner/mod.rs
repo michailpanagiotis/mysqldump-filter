@@ -55,7 +55,7 @@ impl SqlStatement {
         &self.table
     }
 
-    fn set_meta(&mut self, db_meta_cell: &Rc<RefCell<DBMeta>>) {
+    fn set_meta(&mut self, db_meta_cell: &DBMetaCell) {
         if let Some(ref table) = self.table {
             let db_meta = db_meta_cell.borrow();
             if let Some(positions) = db_meta.column_positions.get(table) {
@@ -208,7 +208,7 @@ struct TrackedStatements {
     iter: PlainStatements,
     current_table: Option<String>,
     unlock_next: bool,
-    db_meta: Rc<RefCell<DBMeta>>,
+    db_meta: DBMetaCell,
 }
 
 impl TrackedStatements {
