@@ -46,8 +46,7 @@ lazy_static! {
 pub struct SqlStatement {
     text: String,
     table: Option<String>,
-    data_types: Option<Rc<TableDataTypes>>,
-    positions: Option<Rc<TableColumnPositions>>,
+    db_meta: Option<DBMetaCell>,
 }
 
 impl SqlStatement {
@@ -56,18 +55,10 @@ impl SqlStatement {
     }
 
     fn set_meta(&mut self, db_meta_cell: &DBMetaCell) {
-        if let Some(ref table) = self.table {
-            let db_meta = db_meta_cell.borrow();
-            if let Some(positions) = db_meta.column_positions.get(table) {
-                self.positions = Some(Rc::clone(positions));
-            }
-            if let Some(data_types) = db_meta.data_types.get(table) {
-                self.data_types = Some(Rc::clone(data_types));
-            }
-        }
+        self.db_meta = Some(Rc::clone(db_meta_cell));
     }
 
-    fn get_insert_parts(&self) -> Option<(String, String, Vec<String>, &Rc<TableColumnPositions>)> {
+    fn get_insert_parts(&self) -> Option<(String, String, Vec<String>)> {
         if !is_insert(&self.text) {
             return None;
         }
@@ -80,11 +71,7 @@ impl SqlStatement {
             panic!("cannot parse values");
         };
 
-        let Some(ref positions) = self.positions else {
-            panic!("statement with no positions");
-        };
-
-        Some((table, columns_part, value_array.iter().map(|x| x.to_string()).collect(), positions))
+        Some((table, columns_part, value_array.iter().map(|x| x.to_string()).collect()))
     }
 }
 
@@ -93,11 +80,20 @@ impl IntoIterator for SqlStatement {
     type IntoIter = <ValuesMap as IntoIterator>::IntoIter;
 
     fn into_iter(self) -> Self::IntoIter {
-        let Some((_, _, value_array, positions)) = self.get_insert_parts() else {
+        let Some((table, _, value_array)) = self.get_insert_parts() else {
             return ValuesMap::default().into_iter();
         };
-        let Some(ref data_types) = self.data_types else {
+
+        let Some(ref meta) = self.db_meta else {
+            panic!("statement with no meta");
+        };
+        let binding = meta.borrow();
+        let Some(data_types) = binding.data_types.get(&table) else {
             panic!("statement with no data types");
+        };
+
+        let Some(positions) = binding.column_positions.get(&table) else {
+            panic!("statement with no positions");
         };
 
         let values: ValuesMap = positions
@@ -112,7 +108,15 @@ impl IntoIterator for SqlStatement {
 
 impl Extend<(String, String)> for SqlStatement {
     fn extend<T: IntoIterator<Item=(String, String)>>(&mut self, iter: T) {
-        if let Some((table, columns_part, mut values, positions)) = self.get_insert_parts() {
+        if let Some((table, columns_part, mut values)) = self.get_insert_parts() {
+            let Some(ref meta) = self.db_meta else {
+                panic!("statement with no meta");
+            };
+            let binding = meta.borrow();
+            let Some(positions) = binding.column_positions.get(&table) else {
+                panic!("statement with no positions");
+            };
+
             for (field, value) in iter {
                 values[positions[&field]] = value;
             }
@@ -252,7 +256,7 @@ impl TrackedStatements {
             self.unlock_next = true;
         }
 
-        Some(Ok(SqlStatement{ text: next.to_string(), table: self.current_table.to_owned(), data_types: None, positions: None }))
+        Some(Ok(SqlStatement{ text: next.to_string(), table: self.current_table.to_owned(), db_meta: None }))
     }
 }
 
