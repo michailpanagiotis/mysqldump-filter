@@ -346,9 +346,20 @@ impl PlainColumnCheck for PlainTrackingTest {
 }
 
 #[derive(Debug)]
-pub struct TableChecks { checks: Vec<PlainCheckType> }
+pub struct TableChecks { checks: Vec<PlainCheckType>, transforms: HashMap<String, String> }
 
 impl TableChecks {
+    pub fn new(mut checks: Vec<PlainCheckType>) -> Self {
+        // tests have implicit order
+        checks.sort_by_key(|a| {
+            if a.as_any().downcast_ref::<PlainTrackingTest>().is_some() {
+                return true;
+            }
+            false
+        });
+        Self { checks, transforms: HashMap::new() }
+    }
+
     pub fn apply<T>(
         &self,
         mut statement: T,
@@ -377,20 +388,6 @@ impl TableChecks {
     }
 }
 
-impl From<Vec<PlainCheckType>> for TableChecks {
-    fn from(items: Vec<PlainCheckType>) -> Self {
-        let mut res = Self { checks: items };
-        // tests have implicit order
-        res.checks.sort_by_key(|a| {
-            if a.as_any().downcast_ref::<PlainTrackingTest>().is_some() {
-                return true;
-            }
-            false
-        });
-        res
-    }
-}
-
 type PassChecks = HashMap<String, TableChecks>;
 
 #[derive(Debug)]
@@ -399,7 +396,7 @@ pub struct DBChecks(pub Vec<PassChecks>);
 impl From<Vec<Vec<Vec<PlainCheckType>>>> for DBChecks {
     fn from(items: Vec<Vec<Vec<PlainCheckType>>>) -> Self {
         Self(items.into_iter().map(|t_items| {
-            t_items.into_iter().map(|it| (it[0].get_table_name().to_string(), TableChecks::from(it))).collect()
+            t_items.into_iter().map(|it| (it[0].get_table_name().to_string(), TableChecks::new(it))).collect()
         }).collect())
     }
 }
