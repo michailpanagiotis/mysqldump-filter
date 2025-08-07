@@ -134,7 +134,7 @@ pub struct DBMeta {
 impl DBMeta {
     fn from_file(filename: &Path) -> Result<Rc<RefCell<Self>>, anyhow::Error> {
         let db_meta = DBMeta::new()?;
-        let statements = TrackedStatements::from_file(filename, &db_meta)?;
+        let statements = TrackedStatements::from_file(filename, Some(&db_meta))?;
         // consume iterator to populate db_meta
         statements.for_each(drop);
         Ok(db_meta)
@@ -216,8 +216,8 @@ struct TrackedStatements {
 }
 
 impl TrackedStatements {
-    fn from_file(sqldump_filepath: &Path, db_meta: &DBMetaCell) -> Result<Self, anyhow::Error> {
-        let db_meta = Rc::clone(db_meta);
+    fn from_file(sqldump_filepath: &Path, db_meta: Option<&DBMetaCell>) -> Result<Self, anyhow::Error> {
+        let db_meta = if let Some(db_meta) = db_meta { Rc::clone(db_meta) } else { DBMeta::new()? };
         Ok(TrackedStatements {
             iter: PlainStatements::from_file(sqldump_filepath)?,
             current_table: None,
@@ -281,7 +281,7 @@ struct TransformedStatements<F: TransformFn> {
 }
 
 impl<F: TransformFn> TransformedStatements<F> {
-    fn from_file(sqldump_filepath: &Path, transform: F, db_meta: &DBMetaCell) -> Result<Self, anyhow::Error> {
+    fn from_file(sqldump_filepath: &Path, transform: F, db_meta: Option<&DBMetaCell>) -> Result<Self, anyhow::Error> {
         Ok(TransformedStatements {
             iter: TrackedStatements::from_file(sqldump_filepath, db_meta)?,
             transform,
@@ -293,15 +293,6 @@ impl<F: TransformFn> TransformedStatements<F> {
         statement.set_meta(&self.iter.db_meta);
         let tr: Option<SqlStatement> = (self.transform)(statement).expect("err");
         tr.map(Ok)
-    }
-
-    fn process_all(self, writers: &mut Writers) -> Result<(), anyhow::Error> {
-        for st in self {
-            let statement = st?;
-            writers.write_statement(&statement.table, statement.text.as_bytes())?;
-        };
-        writers.flush()?;
-        Ok(())
     }
 }
 
@@ -320,6 +311,19 @@ impl<F: TransformFn> Iterator for TransformedStatements<F> {
     }
 }
 
+pub fn process<F>(working_file_path: &Path, input_filepath: &Path, transform: F, db_meta: Option<DBMetaCell>,) -> Result<(), anyhow::Error>
+  where F: TransformFn
+{
+    let mut writers = Writers::new(working_file_path)?;
+    for st in TransformedStatements::from_file(input_filepath, transform, db_meta.as_ref())? {
+        let statement = st?;
+        writers.write_statement(&statement.table, statement.text.as_bytes())?;
+    };
+    writers.flush()?;
+
+    Ok(())
+}
+
 pub fn explode_to_files<F>(
     working_file_path: &Path,
     input_filepath: &Path,
@@ -327,13 +331,7 @@ pub fn explode_to_files<F>(
 ) -> Result<(), anyhow::Error>
   where F: TransformFn
 {
-    let db_meta = DBMeta::new()?;
-
-    let mut writers = Writers::new(working_file_path)?;
-    let statements = TransformedStatements::from_file(input_filepath, transform, &db_meta)?;
-    statements.process_all(&mut writers)?;
-
-    Ok(())
+    process(working_file_path, input_filepath, transform, None)
 }
 
 pub fn process_table_inserts<F>(
@@ -344,15 +342,9 @@ pub fn process_table_inserts<F>(
   where F: TransformFn
 {
     println!("Processing records of table {table}");
-
     let input_filepath = &get_table_file(working_file_path, table)?;
-    let db_meta = DBMeta::from_file(working_file_path)?;
 
-    let mut writers = Writers::new(working_file_path)?;
-    let statements = TransformedStatements::from_file(input_filepath, transform, &db_meta)?;
-    statements.process_all(&mut writers)?;
-
-    Ok(())
+    process(working_file_path, input_filepath, transform, Some(DBMeta::from_file(working_file_path)?))
 }
 
 #[allow(dead_code)]
