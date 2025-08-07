@@ -67,11 +67,7 @@ impl SqlStatement {
         }
     }
 
-    fn reconstruct_text(&mut self, table: String, columns_part: String, value_array: Vec<String>) -> String {
-        format!("INSERT INTO `{}` ({}) VALUES ({});\n", table, columns_part, value_array.join(","))
-    }
-
-    fn get_insert_parts(&self) -> Option<(String, String, Vec<String>)> {
+    fn get_insert_parts(&self) -> Option<(String, String, Vec<String>, &Rc<TableColumnPositions>)> {
         if !is_insert(&self.text) {
             return None;
         }
@@ -84,15 +80,21 @@ impl SqlStatement {
             panic!("cannot parse values");
         };
 
-        Some((table, columns_part, value_array.iter().map(|x| x.to_string()).collect()))
-    }
-
-    fn get_insert_values(&self) -> ValuesMap {
-        let Some((table, columns_part, value_array)) = self.get_insert_parts() else {
-            return ValuesMap::default();
-        };
         let Some(ref positions) = self.positions else {
             panic!("statement with no positions");
+        };
+
+        Some((table, columns_part, value_array.iter().map(|x| x.to_string()).collect(), positions))
+    }
+}
+
+impl IntoIterator for SqlStatement {
+    type Item = <ValuesMap as IntoIterator>::Item;
+    type IntoIter = <ValuesMap as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let Some((_, _, value_array, positions)) = self.get_insert_parts() else {
+            return ValuesMap::default().into_iter();
         };
         let Some(ref data_types) = self.data_types else {
             panic!("statement with no data types");
@@ -104,35 +106,17 @@ impl SqlStatement {
                 (column_name.to_owned(), (value_array[*position].to_string(), data_types[column_name].to_owned()))
             })
             .collect();
-        values
-    }
-}
-
-impl IntoIterator for SqlStatement {
-    type Item = <ValuesMap as IntoIterator>::Item;
-    type IntoIter = <ValuesMap as IntoIterator>::IntoIter;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.get_insert_values().into_iter()
+        values.into_iter()
     }
 }
 
 impl Extend<(String, String)> for SqlStatement {
     fn extend<T: IntoIterator<Item=(String, String)>>(&mut self, iter: T) {
-        if let Some((table, columns_part, mut values)) = self.get_insert_parts() {
-            let Some(ref positions) = self.positions else {
-                panic!("statement with no positions");
-            };
+        if let Some((table, columns_part, mut values, positions)) = self.get_insert_parts() {
             for (field, value) in iter {
                 values[positions[&field]] = value;
             }
-            let new_text = self.reconstruct_text(table, columns_part, values);
-            if new_text != self.text {
-                dbg!(&self.text);
-                dbg!(&new_text);
-                panic!("WRONG TEXT");
-            }
-            self.text = new_text;
+            self.text = format!("INSERT INTO `{}` ({}) VALUES ({});\n", table, columns_part, values.join(","));
         }
     }
 }
