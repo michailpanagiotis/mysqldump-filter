@@ -5,6 +5,7 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use core::panic;
 use std::cell::RefCell;
+use std::panic::panic_any;
 use std::{collections::HashMap, fs::File};
 use std::fs;
 use std::io::{self, BufRead, BufWriter, Write};
@@ -41,11 +42,18 @@ lazy_static! {
     static ref TABLE_DUMP_RE: Regex = Regex::new(r"-- Dumping data for table `([^`]*)`").unwrap();
 }
 
+/// Represents a parsed SQL statement from a MySQL dump file
+///
+/// Contains the raw SQL text along with metadata about which table it operates on
+/// and database schema information for processing column values.
 #[derive(Clone)]
 #[derive(Debug)]
 pub struct SqlStatement {
+    /// The raw SQL statement text
     text: String,
+    /// The table name this statement operates on (if applicable)
     table: Option<String>,
+    /// Reference to shared database metadata for column type information
     db_meta: Option<DBMetaCell>,
 }
 
@@ -61,6 +69,18 @@ impl SqlStatement {
     fn get_insert_parts(&self) -> Option<(String, String, Vec<String>)> {
         if !is_insert(&self.text) {
             return None;
+        }
+
+        dbg!(&self.text);
+
+        match split_insert_parts(&self.text) {
+            Ok((table, columns_part, values_part)) => {
+
+            },
+            Err(e) => {
+                dbg!(&e);
+                panic!("cannot split insert parts");
+            },
         }
 
         let Ok((table, columns_part, values_part)) = split_insert_parts(&self.text) else {
@@ -125,9 +145,15 @@ impl<'a> Extend<(&'a String, &'a String)> for SqlStatement {
     }
 }
 
+/// Database metadata container
+///
+/// Stores information about table schemas including column data types
+/// and column positions within INSERT statements.
 #[derive(Debug)]
 pub struct DBMeta {
+    /// Maps table names to their column data type information
     data_types: HashMap<String, Rc<TableDataTypes>>,
+    /// Maps table names to column position mappings for INSERT statements
     column_positions: HashMap<String, Rc<TableColumnPositions>>,
 }
 
@@ -334,6 +360,16 @@ pub fn explode_to_files<F>(
     process(working_file_path, input_filepath, transform, None)
 }
 
+/// Process INSERT statements for a specific table with transformation function
+///
+/// # Arguments
+/// * `working_file_path` - Path to working directory containing intermediate files
+/// * `table` - Name of the table to process
+/// * `transform` - Function to apply to each SQL statement for filtering/transformation
+///
+/// # Returns
+/// * `Ok(())` on successful processing
+/// * `Err(anyhow::Error)` if processing fails
 pub fn process_table_inserts<F>(
     working_file_path: &Path,
     table: &str,
@@ -347,6 +383,18 @@ pub fn process_table_inserts<F>(
     process(working_file_path, input_filepath, transform, Some(DBMeta::from_file(working_file_path)?))
 }
 
+/// Gather all processed SQL statements from working files into final output
+///
+/// Reads the main working file and inlines any referenced table-specific files
+/// to create the final filtered MySQL dump output.
+///
+/// # Arguments
+/// * `working_file_path` - Path to the main working file containing inline references
+/// * `output_path` - Path where the final output file should be written
+///
+/// # Returns
+/// * `Ok(())` on successful gathering
+/// * `Err(anyhow::Error)` if file operations fail
 #[allow(dead_code)]
 pub fn gather(working_file_path: &Path, output_path: &Path) -> EmptyResult {
     let output = File::create(output_path)?;
@@ -373,4 +421,305 @@ pub fn gather(working_file_path: &Path, output_path: &Path) -> EmptyResult {
     }
     writer.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempdir::TempDir;
+    use std::fs::File;
+    use std::io::Write;
+
+    fn create_test_sql_dump(content: &str) -> Result<TempDir, anyhow::Error> {
+        let temp_dir = TempDir::new("sql_test")?;
+        let sql_path = temp_dir.path().join("test.sql");
+        let mut file = File::create(&sql_path)?;
+        file.write_all(content.as_bytes())?;
+        Ok(temp_dir)
+    }
+
+    #[test]
+    fn test_sql_statement_creation() {
+        let statement = SqlStatement {
+            text: "INSERT INTO `users` (`id`, `name`) VALUES (1, 'John');".to_string(),
+            table: Some("users".to_string()),
+            db_meta: None,
+        };
+
+        assert_eq!(statement.get_table(), &Some("users".to_string()));
+        assert_eq!(statement.text, "INSERT INTO `users` (`id`, `name`) VALUES (1, 'John');");
+    }
+
+    #[test]
+    fn test_sql_statement_get_insert_parts() {
+        let statement = SqlStatement {
+            text: "INSERT INTO `users` (`id`, `name`) VALUES (1, 'John');\n".to_string(),
+            table: Some("users".to_string()),
+            db_meta: None,
+        };
+
+        let parts = statement.get_insert_parts();
+        assert!(parts.is_some());
+        let (table, columns, values) = parts.unwrap();
+        assert_eq!(table, "users");
+        assert_eq!(columns, "`id`, `name`");
+        assert_eq!(values.len(), 2);
+    }
+
+    #[test]
+    fn test_sql_statement_get_insert_parts_non_insert() {
+        let statement = SqlStatement {
+            text: "CREATE TABLE `users` (`id` int, `name` varchar(255));".to_string(),
+            table: None,
+            db_meta: None,
+        };
+
+        let parts = statement.get_insert_parts();
+        assert!(parts.is_none());
+    }
+
+    #[test]
+    fn test_db_meta_new() {
+        let db_meta = DBMeta::new().unwrap();
+        let borrowed = db_meta.borrow();
+        assert!(borrowed.data_types.is_empty());
+        assert!(borrowed.column_positions.is_empty());
+    }
+
+    #[test]
+    fn test_db_meta_from_file() {
+        let sql_content = r#"
+CREATE TABLE `users` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `name` varchar(255) NOT NULL,
+  `email` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB;
+
+-- Dumping data for table `users`
+LOCK TABLES `users` WRITE;
+INSERT INTO `users` (`id`, `name`, `email`) VALUES (1, 'John', 'john@example.com');
+UNLOCK TABLES;
+"#;
+
+        let temp_dir = create_test_sql_dump(sql_content).unwrap();
+        let sql_path = temp_dir.path().join("test.sql");
+
+        let db_meta = DBMeta::from_file(&sql_path).unwrap();
+        let borrowed = db_meta.borrow();
+
+        assert!(borrowed.data_types.contains_key("users"));
+        assert!(borrowed.column_positions.contains_key("users"));
+
+        let positions = borrowed.column_positions.get("users").unwrap();
+        assert_eq!(positions.len(), 3);
+        assert_eq!(positions["id"], 0);
+        assert_eq!(positions["name"], 1);
+        assert_eq!(positions["email"], 2);
+    }
+
+    #[test]
+    fn test_plain_statements_from_file() {
+        let sql_content = r#"CREATE TABLE test;
+INSERT INTO test VALUES (1);
+-- This is a comment
+SELECT * FROM test;"#;
+
+        let temp_dir = create_test_sql_dump(sql_content).unwrap();
+        let sql_path = temp_dir.path().join("test.sql");
+
+        let statements = PlainStatements::from_file(&sql_path).unwrap();
+        let collected: Vec<String> = statements.collect();
+
+        assert_eq!(collected.len(), 4);
+        assert!(collected[0].starts_with("CREATE TABLE"));
+        assert!(collected[1].starts_with("INSERT INTO"));
+        assert!(collected[2].starts_with("-- This is"));
+        assert!(collected[3].starts_with("SELECT"));
+    }
+
+    #[test]
+    fn test_plain_statements_is_full_line() {
+        assert!(PlainStatements::is_full_line("SELECT * FROM test;\n"));
+        assert!(PlainStatements::is_full_line("-- Comment\n"));
+        assert!(PlainStatements::is_full_line("\n"));
+        assert!(!PlainStatements::is_full_line("SELECT * FROM"));
+        assert!(!PlainStatements::is_full_line("test"));
+    }
+
+    #[test]
+    fn test_tracked_statements_extract_table() {
+        let comment = "-- Dumping data for table `users`";
+        let result = TrackedStatements::extract_table(comment);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "users");
+
+        let invalid_comment = "-- Some other comment";
+        let result = TrackedStatements::extract_table(invalid_comment);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_tracked_statements_from_file() {
+        let sql_content = r#"-- MySQL dump 10.13
+--
+-- Table structure for table `users`
+--
+DROP TABLE IF EXISTS `users`;
+CREATE TABLE `users` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `name` varchar(255) NOT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB;
+
+-- Dumping data for table `users`
+LOCK TABLES `users` WRITE;
+INSERT INTO `users` VALUES (1,'John');
+INSERT INTO `users` VALUES (2,'Jane');
+UNLOCK TABLES;
+"#;
+
+        let temp_dir = create_test_sql_dump(sql_content).unwrap();
+        let sql_path = temp_dir.path().join("test.sql");
+
+        let statements = TrackedStatements::from_file(&sql_path, None).unwrap();
+        let results: Vec<Result<SqlStatement, anyhow::Error>> = statements.collect();
+
+        assert!(!results.is_empty());
+
+        // Find INSERT statements and verify they have table context
+        let insert_statements: Vec<_> = results.into_iter()
+            .filter_map(|r| r.ok())
+            .filter(|stmt| stmt.text.starts_with("INSERT"))
+            .collect();
+
+        assert_eq!(insert_statements.len(), 2);
+        for stmt in insert_statements {
+            assert_eq!(stmt.table, Some("users".to_string()));
+        }
+    }
+
+    #[test]
+    fn test_process_basic_transform() {
+        let sql_content = r#"-- Dumping data for table `users`
+LOCK TABLES `users` WRITE;
+INSERT INTO `users` VALUES (1,'John');
+INSERT INTO `users` VALUES (2,'Jane');
+UNLOCK TABLES;
+"#;
+
+        let temp_dir = create_test_sql_dump(sql_content).unwrap();
+        let input_path = temp_dir.path().join("test.sql");
+        let working_path = temp_dir.path().join("working.sql");
+
+        // Transform that keeps only statements containing "John"
+        let transform = |stmt: SqlStatement| -> Result<Option<SqlStatement>, anyhow::Error> {
+            if stmt.text.contains("John") {
+                Ok(Some(stmt))
+            } else {
+                Ok(None)
+            }
+        };
+
+        let result = process(&working_path, &input_path, transform, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_gather_simple() {
+        let working_content = r#"CREATE TABLE test;
+INSERT INTO test VALUES (1);
+"#;
+
+        let temp_dir = create_test_sql_dump(working_content).unwrap();
+        let working_path = temp_dir.path().join("test.sql");
+        let output_path = temp_dir.path().join("output.sql");
+
+        let result = gather(&working_path, &output_path);
+        assert!(result.is_ok());
+
+        // Verify output file exists and has content
+        assert!(output_path.exists());
+        let output_content = std::fs::read_to_string(&output_path).unwrap();
+        assert!(output_content.contains("CREATE TABLE"));
+        assert!(output_content.contains("INSERT INTO"));
+    }
+
+    #[test]
+    fn test_gather_with_inline_references() {
+        let working_content = "--- INLINE /path/to/users.sql users\n";
+        let inline_content = "INSERT INTO users VALUES (1, 'John');\n";
+
+        let temp_dir = TempDir::new("gather_test").unwrap();
+        let working_path = temp_dir.path().join("working.sql");
+        let inline_path = temp_dir.path().join("users.sql");
+        let output_path = temp_dir.path().join("output.sql");
+
+        // Create working file with inline reference to absolute path
+        let mut working_file = File::create(&working_path).unwrap();
+        let inline_ref = format!("--- INLINE {} users\n", inline_path.display());
+        working_file.write_all(inline_ref.as_bytes()).unwrap();
+
+        // Create the inline file
+        let mut inline_file = File::create(&inline_path).unwrap();
+        inline_file.write_all(inline_content.as_bytes()).unwrap();
+
+        let result = gather(&working_path, &output_path);
+        assert!(result.is_ok());
+
+        let output_content = std::fs::read_to_string(&output_path).unwrap();
+        assert!(output_content.contains("INSERT INTO users"));
+        assert!(output_content.contains("John"));
+    }
+
+    #[test]
+    fn test_explode_to_files() {
+        let sql_content = r#"CREATE TABLE `users` (
+  `id` int(11) NOT NULL,
+  `name` varchar(255) NOT NULL
+) ENGINE=InnoDB;
+
+-- Dumping data for table `users`
+INSERT INTO `users` VALUES (1,'John');
+INSERT INTO `users` VALUES (2,'Jane');
+"#;
+
+        let temp_dir = create_test_sql_dump(sql_content).unwrap();
+        let input_path = temp_dir.path().join("test.sql");
+        let working_path = temp_dir.path().join("working.sql");
+
+        let transform = |stmt: SqlStatement| -> Result<Option<SqlStatement>, anyhow::Error> {
+            Ok(Some(stmt)) // Keep all statements
+        };
+
+        let result = explode_to_files(&working_path, &input_path, transform);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_sql_statement_into_iter_empty() {
+        let statement = SqlStatement {
+            text: "CREATE TABLE test;".to_string(),
+            table: None,
+            db_meta: None,
+        };
+
+        let values: ValuesMap = statement.into_iter().collect();
+        assert!(values.is_empty());
+    }
+
+    #[test]
+    fn test_sql_statement_extend_empty() {
+        let mut statement = SqlStatement {
+            text: "CREATE TABLE test;".to_string(),
+            table: None,
+            db_meta: None,
+        };
+
+        let updates = HashMap::new();
+        statement.extend(updates.iter());
+
+        // Should remain unchanged since it's not an INSERT
+        assert_eq!(statement.text, "CREATE TABLE test;");
+    }
 }
