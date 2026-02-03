@@ -8,7 +8,7 @@ mod checks;
 mod scanner;
 
 use checks::get_passes;
-use scanner::{explode_to_files, gather, process_table_inserts};
+use scanner::{explode_to_files, gather, process_table_inserts, DBMeta};
 
 /// Configuration structure for the mysqldump filter
 ///
@@ -103,6 +103,10 @@ fn main() -> Result<(), anyhow::Error> {
     };
     let working_file_path = working_dir_path.join("INTERIM").with_extension("sql");
 
+    // Read schema to get all table names
+    let db_meta = DBMeta::from_file(&input_file)?;
+    let schema_tables = db_meta.borrow().get_all_tables();
+
     // explode_to_files(
     //     working_file_path.as_path(),
     //     input_file.as_path(),
@@ -116,7 +120,12 @@ fn main() -> Result<(), anyhow::Error> {
     //     panic!("Problem exploding to files: {e:?}");
     // });
 
-    let passes = get_passes(config.cascades.iter().chain(&config.filters), config.text_transforms)?;
+    let passes = get_passes(
+        config.cascades.iter().chain(&config.filters),
+        config.text_transforms,
+        config.allow_data_on_tables,
+        schema_tables,
+    )?;
     passes.print_plan();
 
     if cli.plan_only {

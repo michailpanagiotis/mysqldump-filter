@@ -428,24 +428,56 @@ impl TableChecks {
 type PassChecks = HashMap<String, TableChecks>;
 
 #[derive(Debug)]
-pub struct DBChecks(pub Vec<PassChecks>);
+pub struct DBChecks {
+    passes: Vec<PassChecks>,
+    allowed_tables: Option<HashSet<String>>,
+    schema_tables: HashSet<String>,
+}
 
 impl DBChecks {
-    fn new(items: Vec<Vec<Vec<PlainCheckType>>>, text_transforms: HashMap<String, HashMap<String, String>>) -> Self {
-        Self(items.into_iter().map(|t_items| {
+    fn new(
+        items: Vec<Vec<Vec<PlainCheckType>>>,
+        text_transforms: HashMap<String, HashMap<String, String>>,
+        allowed_tables: Option<HashSet<String>>,
+        schema_tables: HashSet<String>,
+    ) -> Self {
+        let passes = items.into_iter().map(|t_items| {
             t_items.into_iter().map(|it| {
                 let table_name = it[0].get_table_name().to_owned();
                 (table_name.to_string(), TableChecks::new(it, text_transforms.get(&table_name)))
             }).collect()
-        }).collect())
+        }).collect();
+        Self { passes, allowed_tables, schema_tables }
     }
 
     /// Print the execution plan showing passes and tables to be processed
     pub fn print_plan(&self) {
         println!("=== Execution Plan ===");
-        println!("Total passes: {}", self.0.len());
         println!();
-        for (pass_idx, pass_checks) in self.0.iter().enumerate() {
+        match &self.allowed_tables {
+            Some(allowed) => {
+                // Find tables from schema that will be dropped (not in allowed list)
+                let mut dropped: Vec<_> = self.schema_tables
+                    .iter()
+                    .filter(|t| !allowed.contains(*t))
+                    .cloned()
+                    .collect();
+                dropped.sort();
+
+                if dropped.is_empty() {
+                    println!("Dropped tables: none");
+                } else {
+                    println!("Dropped tables: {}", dropped.join(", "));
+                }
+            }
+            None => {
+                println!("Dropped tables: none");
+            }
+        }
+        println!();
+        println!("Total passes: {}", self.passes.len());
+        println!();
+        for (pass_idx, pass_checks) in self.passes.iter().enumerate() {
             println!("Pass {}:", pass_idx + 1);
             for (table, table_checks) in pass_checks {
                 println!("  Table: {}", table);
@@ -457,6 +489,14 @@ impl DBChecks {
         println!("======================");
         println!();
     }
+
+    /// Check if a table's data is allowed
+    pub fn is_table_allowed(&self, table: &str) -> bool {
+        match &self.allowed_tables {
+            Some(tables) => tables.contains(table),
+            None => true,
+        }
+    }
 }
 
 impl IntoIterator for DBChecks {
@@ -464,7 +504,7 @@ impl IntoIterator for DBChecks {
     type IntoIter = std::vec::IntoIter<Self::Item>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
+        self.passes.into_iter()
     }
 }
 
@@ -526,11 +566,18 @@ pub fn test_get_passes(definitions: &[(String, String)]) -> Result<(), anyhow::E
 /// # Arguments
 /// * `conditions` - Iterator over table names and their associated filter/cascade definitions
 /// * `text_transforms` - Text replacement rules for data anonymization
+/// * `allowed_tables` - Optional whitelist of tables whose INSERT data should be included
+/// * `schema_tables` - Set of all table names found in the database schema
 ///
 /// # Returns
 /// * `Ok(DBChecks)` containing the organized processing passes
 /// * `Err(anyhow::Error)` if dependency analysis fails
-pub fn get_passes<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(conditions: I, text_transforms: HashMap<String, HashMap<String, String>>) -> Result<DBChecks, anyhow::Error> {
+pub fn get_passes<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(
+    conditions: I,
+    text_transforms: HashMap<String, HashMap<String, String>>,
+    allowed_tables: Option<HashSet<String>>,
+    schema_tables: HashSet<String>,
+) -> Result<DBChecks, anyhow::Error> {
     let definitions: Vec<(String, String)> = conditions.flat_map(|(table, conds)| {
         conds.iter().map(|c| (table.to_owned(), c.to_owned()))
     }).collect();
@@ -552,7 +599,7 @@ pub fn get_passes<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(condition
 
     let chunked = chunk_by_depth(root);
 
-    let db_checks = DBChecks::new(chunked, text_transforms);
+    let db_checks = DBChecks::new(chunked, text_transforms, allowed_tables, schema_tables);
 
     Ok(db_checks)
 }
@@ -944,11 +991,11 @@ mod tests {
 
         let text_transforms = HashMap::new();
 
-        let result = get_passes(conditions.iter(), text_transforms);
+        let result = get_passes(conditions.iter(), text_transforms, None, HashSet::new());
         assert!(result.is_ok());
 
         let db_checks = result.unwrap();
-        assert!(!db_checks.0.is_empty());
+        assert!(!db_checks.passes.is_empty());
     }
 
     #[test]
@@ -959,12 +1006,12 @@ mod tests {
 
         let text_transforms = HashMap::new();
 
-        let result = get_passes(conditions.iter(), text_transforms);
+        let result = get_passes(conditions.iter(), text_transforms, None, HashSet::new());
         assert!(result.is_ok());
 
         let db_checks = result.unwrap();
         // Should have multiple passes due to dependencies
-        assert!(!db_checks.0.is_empty());
+        assert!(!db_checks.passes.is_empty());
     }
 
     #[test]
@@ -977,11 +1024,11 @@ mod tests {
         user_transforms.insert("email".to_string(), "anonymized@example.com".to_string());
         text_transforms.insert("users".to_string(), user_transforms);
 
-        let result = get_passes(conditions.iter(), text_transforms);
+        let result = get_passes(conditions.iter(), text_transforms, None, HashSet::new());
         assert!(result.is_ok());
 
         let db_checks = result.unwrap();
-        assert!(!db_checks.0.is_empty());
+        assert!(!db_checks.passes.is_empty());
     }
 
     // Mock implementation for testing SqlStatement-like objects

@@ -6,7 +6,8 @@ use regex::Regex;
 use core::panic;
 use std::cell::RefCell;
 use std::panic::panic_any;
-use std::{collections::HashMap, fs::File};
+use std::collections::{HashMap, HashSet};
+use std::fs::File;
 use std::fs;
 use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -156,7 +157,7 @@ pub struct DBMeta {
 }
 
 impl DBMeta {
-    fn from_file(filename: &Path) -> Result<Rc<RefCell<Self>>, anyhow::Error> {
+    pub fn from_file(filename: &Path) -> Result<Rc<RefCell<Self>>, anyhow::Error> {
         let db_meta = DBMeta::new()?;
         let statements = TrackedStatements::from_file(filename, Some(&db_meta))?;
         // consume iterator to populate db_meta
@@ -169,6 +170,11 @@ impl DBMeta {
             data_types: HashMap::new(),
             column_positions: HashMap::new(),
         })))
+    }
+
+    /// Returns all table names found in the schema (from CREATE TABLE statements)
+    pub fn get_all_tables(&self) -> HashSet<String> {
+        self.data_types.keys().cloned().collect()
     }
 
     fn capture(&mut self, statement: &SqlStatement) -> EmptyResult {
