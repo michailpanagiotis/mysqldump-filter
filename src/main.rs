@@ -9,6 +9,7 @@ mod scanner;
 
 use checks::get_passes;
 use scanner::{count_records, gather, process_table_inserts, get_schema_tables};
+use scanner::range_discovery::{discover_ranges, merge_table_data, RangeKind};
 
 /// Configuration structure for the mysqldump filter
 ///
@@ -63,6 +64,10 @@ enum Cli {
     Filter(FilterCli),
     /// Count records per table in a mysqldump file
     Count(CountCli),
+    /// Discover byte ranges in a mysqldump file using interpolation search
+    Ranges(RangesCli),
+    /// Read a byte range from a file
+    ReadRange(ReadRangeCli),
 }
 
 #[derive(Parser, Debug)]
@@ -99,10 +104,42 @@ struct CountCli {
     input: PathBuf,
 }
 
+#[derive(Parser, Debug)]
+struct RangesCli {
+    /// Input MySQL dump file to discover ranges in
+    #[clap(value_name = "FILE")]
+    input: PathBuf,
+
+    /// Don't group LOCK/INSERT/UNLOCK into single table ranges
+    #[clap(long)]
+    no_group: bool,
+}
+
+#[derive(Parser, Debug)]
+struct ReadRangeCli {
+    /// Input file to read from
+    #[clap(value_name = "FILE")]
+    input: PathBuf,
+
+    /// Start byte offset (inclusive)
+    #[clap(value_name = "START")]
+    start: u64,
+
+    /// Size in bytes to read, or use --end for end offset
+    #[clap(value_name = "SIZE")]
+    size: Option<u64>,
+
+    /// End byte offset (exclusive), alternative to SIZE
+    #[clap(short, long, conflicts_with = "size")]
+    end: Option<u64>,
+}
+
 fn main() -> Result<(), anyhow::Error> {
     match Cli::parse() {
         Cli::Filter(args) => run_filter(args),
         Cli::Count(args) => run_count(args),
+        Cli::Ranges(args) => run_ranges(args),
+        Cli::ReadRange(args) => run_read_range(args),
     }
 }
 
@@ -179,6 +216,134 @@ fn run_count(cli: CountCli) -> Result<(), anyhow::Error> {
     }
     println!("{:-<width$}", "", width = max_name_len + 2 + max_count_len);
     println!("{:<width$}  {:>cwidth$}", "Total", total, width = max_name_len, cwidth = max_count_len);
+
+    Ok(())
+}
+
+/// Format bytes in human-readable form (KiB, MiB, GiB)
+fn humanize_bytes(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    const GIB: f64 = MIB * 1024.0;
+
+    let bytes_f = bytes as f64;
+    if bytes_f >= GIB {
+        format!("{:.2} GiB", bytes_f / GIB)
+    } else if bytes_f >= MIB {
+        format!("{:.2} MiB", bytes_f / MIB)
+    } else if bytes_f >= KIB {
+        format!("{:.2} KiB", bytes_f / KIB)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
+fn format_kind(kind: &RangeKind) -> String {
+    match kind {
+        RangeKind::Insert(table) => format!("INSERT({})", table),
+        RangeKind::DumpingData(table) => format!("DUMPING({})", table),
+        RangeKind::Lock(table) => format!("LOCK({})", table),
+        RangeKind::Unlock => "UNLOCK".to_string(),
+        RangeKind::DisableKeys(table) => format!("DISABLE_KEYS({})", table),
+        RangeKind::EnableKeys(table) => format!("ENABLE_KEYS({})", table),
+        RangeKind::Other => "Other".to_string(),
+    }
+}
+
+fn run_ranges(cli: RangesCli) -> Result<(), anyhow::Error> {
+    let input_file = std::env::current_dir()?.join(&cli.input);
+    let ranges = discover_ranges(&input_file)?;
+
+    if ranges.is_empty() {
+        println!("No ranges found.");
+        return Ok(());
+    }
+
+    // Group Lock + Insert + Unlock into single table ranges (unless --no-group)
+    let ranges = if cli.no_group {
+        ranges
+    } else {
+        merge_table_data(ranges)
+    };
+
+    // Calculate column widths
+    let max_kind_len = ranges
+        .iter()
+        .map(|r| format_kind(&r.kind).len())
+        .max()
+        .unwrap_or(0);
+
+    let max_start_len = ranges.iter().map(|r| format!("{}", r.start).len()).max().unwrap_or(0);
+    let max_size_len = ranges.iter().map(|r| format!("{}", r.end - r.start).len()).max().unwrap_or(0);
+    let max_human_len = ranges
+        .iter()
+        .map(|r| humanize_bytes(r.end - r.start).len())
+        .max()
+        .unwrap_or(0);
+
+    // Print header
+    println!(
+        "{:<kw$}  {:>sw$}  {:>zw$}  {:>hw$}",
+        "Kind", "Start", "Size", "",
+        kw = max_kind_len, sw = max_start_len, zw = max_size_len, hw = max_human_len
+    );
+    println!(
+        "{:-<kw$}  {:-<sw$}  {:-<zw$}  {:-<hw$}",
+        "", "", "", "",
+        kw = max_kind_len, sw = max_start_len, zw = max_size_len, hw = max_human_len
+    );
+
+    // Print ranges
+    for range in &ranges {
+        let size = range.end - range.start;
+        println!(
+            "{:<kw$}  {:>sw$}  {:>zw$}  {:>hw$}",
+            format_kind(&range.kind), range.start, size, humanize_bytes(size),
+            kw = max_kind_len, sw = max_start_len, zw = max_size_len, hw = max_human_len
+        );
+    }
+
+    Ok(())
+}
+
+fn run_read_range(cli: ReadRangeCli) -> Result<(), anyhow::Error> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+
+    let input_file = std::env::current_dir()?.join(&cli.input);
+    let mut file = std::fs::File::open(&input_file)?;
+    let file_size = file.metadata()?.len();
+
+    // Determine the size to read
+    let size = match (cli.size, cli.end) {
+        (Some(s), _) => s,
+        (None, Some(e)) => {
+            if e <= cli.start {
+                return Err(anyhow::anyhow!("end ({}) must be greater than start ({})", e, cli.start));
+            }
+            e - cli.start
+        }
+        (None, None) => {
+            return Err(anyhow::anyhow!("either SIZE or --end must be provided"));
+        }
+    };
+
+    // Validate range
+    if cli.start >= file_size {
+        return Err(anyhow::anyhow!(
+            "start ({}) is beyond file size ({})",
+            cli.start, file_size
+        ));
+    }
+
+    let actual_size = size.min(file_size - cli.start);
+
+    // Seek and read
+    file.seek(SeekFrom::Start(cli.start))?;
+    let mut buffer = vec![0u8; actual_size as usize];
+    file.read_exact(&mut buffer)?;
+
+    // Write to stdout
+    std::io::stdout().write_all(&buffer)?;
 
     Ok(())
 }

@@ -1,5 +1,6 @@
 mod sql_parser;
 mod writers;
+pub mod range_discovery;
 
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -9,7 +10,7 @@ use std::panic::panic_any;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::fs;
-use std::io::{self, BufRead, BufWriter, Write};
+use std::io::{self, BufRead, BufWriter, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -208,30 +209,80 @@ pub fn get_schema_tables(filepath: &Path) -> Result<HashSet<String>, anyhow::Err
     Ok(tables)
 }
 
-/// Count the number of records per table in a mysqldump file.
-/// Returns a sorted list of (table_name, record_count) pairs.
+/// Count the number of INSERT statements per table in a mysqldump file.
+/// Exploits the sequential structure: LOCK TABLES / UNLOCK TABLES bracket
+/// each table's INSERT block.  Phase 1 finds those byte-offset boundaries;
+/// phase 2 counts newlines in each range with raw I/O — no per-line parsing.
 pub fn count_records(filepath: &Path) -> Result<Vec<(String, usize)>, anyhow::Error> {
-    let statements = PlainStatements::from_file(filepath)?;
-    let mut counts: HashMap<String, usize> = HashMap::new();
-    let mut current_table: Option<String> = None;
+    // Phase 1: find INSERT block byte ranges
+    let sections = {
+        let file = File::open(filepath)?;
+        let mut reader = io::BufReader::new(file);
+        find_insert_sections(&mut reader)?
+    };
 
-    for text in statements {
-        if text.starts_with("-- Dumping data for table") {
-            if let Some(captures) = TABLE_DUMP_RE.captures(&text) {
-                if let Some(m) = captures.get(1) {
-                    current_table = Some(m.as_str().to_owned());
-                }
-            }
-        } else if is_insert(&text) {
-            if let Some(ref table) = current_table {
-                *counts.entry(table.clone()).or_insert(0) += 1;
-            }
-        }
+    // Phase 2: count newlines in each range (raw byte scan, no line parsing)
+    let mut file = File::open(filepath)?;
+    let mut counts: Vec<(String, usize)> = Vec::with_capacity(sections.len());
+    for (table, start, end) in sections {
+        file.seek(io::SeekFrom::Start(start))?;
+        counts.push((table, count_newlines(&mut file, end - start)?));
     }
 
-    let mut result: Vec<(String, usize)> = counts.into_iter().collect();
-    result.sort_by_key(|(name, _)| name.clone());
-    Ok(result)
+    counts.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
+    Ok(counts)
+}
+
+/// Sequential scan recording (table_name, byte_after_LOCK, byte_of_UNLOCK).
+/// Only three line-prefix checks per line; table name extracted with a plain
+/// byte-slice search instead of a regex.
+fn find_insert_sections(reader: &mut impl BufRead) -> io::Result<Vec<(String, u64, u64)>> {
+    let mut sections = Vec::new();
+    let mut current_table: Option<String> = None;
+    let mut inserts_start: u64 = 0;
+    let mut offset: u64 = 0;
+    let mut line: Vec<u8> = Vec::new();
+
+    loop {
+        line.clear();
+        let n = reader.read_until(b'\n', &mut line)?;
+        if n == 0 { break; }
+
+        if line.starts_with(b"-- Dumping data for table `") {
+            let rest = &line[27..];
+            if let Some(end) = rest.iter().position(|&b| b == b'`') {
+                if let Ok(table_name) = std::str::from_utf8(&rest[..end]) {
+                    current_table = Some(table_name.to_owned());
+                }
+            }
+        } else if line.starts_with(b"LOCK TABLES") {
+            inserts_start = offset + n as u64;
+        } else if line.starts_with(b"UNLOCK TABLES") {
+            if let Some(table) = current_table.take() {
+                sections.push((table, inserts_start, offset));
+            }
+        }
+
+        offset += n as u64;
+    }
+
+    Ok(sections)
+}
+
+/// Count newlines in the next `len` bytes.  No line parsing — just raw
+/// buffer scanning.  Used by phase 2 after seeking to a known offset.
+fn count_newlines(file: &mut File, len: u64) -> io::Result<usize> {
+    let mut count = 0;
+    let mut remaining = len;
+    let mut buf = [0u8; 8192];
+    while remaining > 0 {
+        let to_read = (remaining as usize).min(buf.len());
+        let n = file.read(&mut buf[..to_read])?;
+        if n == 0 { break; }
+        count += buf[..n].iter().filter(|&&b| b == b'\n').count();
+        remaining -= n as u64;
+    }
+    Ok(count)
 }
 
 struct PlainStatements {
