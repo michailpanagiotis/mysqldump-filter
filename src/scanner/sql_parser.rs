@@ -94,6 +94,19 @@ pub fn get_data_types(create_statement: &str) -> Result<Option<(String, TableDat
     Ok(None)
 }
 
+/// Extract just the table name from a CREATE TABLE statement (lightweight, no column parsing)
+pub fn get_table_name(create_statement: &str) -> Result<Option<String>, anyhow::Error> {
+    let dialect = MySqlDialect {};
+    let ast = SqlParser::parse_sql(&dialect, create_statement)?;
+    for st in ast.into_iter().filter(|x| matches!(x, sqlparser::ast::Statement::CreateTable(_))) {
+        if let sqlparser::ast::Statement::CreateTable(ct) = st {
+            let table = ct.name.0[0].as_ident().unwrap().value.to_string();
+            return Ok(Some(table));
+        }
+    }
+    Ok(None)
+}
+
 pub fn get_column_positions(insert_statement: &str) -> Result<HashMap<String, usize>, anyhow::Error> {
     let dialect = MySqlDialect {};
     let ast = SqlParser::parse_sql(&dialect, insert_statement)?;
@@ -422,4 +435,5 @@ CREATE TABLE `users` (
         assert_eq!(positions["name"], 1);
         assert_eq!(positions["email"], 2);
     }
+
 }

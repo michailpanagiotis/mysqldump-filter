@@ -13,7 +13,7 @@ use std::io::{self, BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use crate::scanner::sql_parser::{TableColumnPositions, TableDataTypes, get_column_positions, get_data_types, split_insert_parts, is_create_table, is_insert, values};
+use crate::scanner::sql_parser::{TableColumnPositions, TableDataTypes, get_column_positions, get_data_types, get_table_name, split_insert_parts, is_create_table, is_insert, values};
 use crate::scanner::writers::{Writers, get_table_file};
 
 type DBMetaCell = Rc<RefCell<DBMeta>>;
@@ -172,11 +172,6 @@ impl DBMeta {
         })))
     }
 
-    /// Returns all table names found in the schema (from CREATE TABLE statements)
-    pub fn get_all_tables(&self) -> HashSet<String> {
-        self.data_types.keys().cloned().collect()
-    }
-
     fn capture(&mut self, statement: &SqlStatement) -> EmptyResult {
         if is_create_table(&statement.text) {
             if let Some((table, data_types)) = get_data_types(&statement.text)? {
@@ -190,6 +185,53 @@ impl DBMeta {
         }
         Ok(())
     }
+}
+
+/// Extract all table names from CREATE TABLE statements in a dump file.
+/// This is a lightweight scan that stops at the first INSERT statement,
+/// since all CREATE TABLE statements precede INSERT statements in mysqldump files.
+pub fn get_schema_tables(filepath: &Path) -> Result<HashSet<String>, anyhow::Error> {
+    let mut tables = HashSet::new();
+    let statements = PlainStatements::from_file(filepath)?;
+
+    for text in statements {
+        if is_insert(&text) {
+            break;
+        }
+        if is_create_table(&text) {
+            if let Some(table_name) = get_table_name(&text)? {
+                tables.insert(table_name);
+            }
+        }
+    }
+
+    Ok(tables)
+}
+
+/// Count the number of records per table in a mysqldump file.
+/// Returns a sorted list of (table_name, record_count) pairs.
+pub fn count_records(filepath: &Path) -> Result<Vec<(String, usize)>, anyhow::Error> {
+    let statements = PlainStatements::from_file(filepath)?;
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    let mut current_table: Option<String> = None;
+
+    for text in statements {
+        if text.starts_with("-- Dumping data for table") {
+            if let Some(captures) = TABLE_DUMP_RE.captures(&text) {
+                if let Some(m) = captures.get(1) {
+                    current_table = Some(m.as_str().to_owned());
+                }
+            }
+        } else if is_insert(&text) {
+            if let Some(ref table) = current_table {
+                *counts.entry(table.clone()).or_insert(0) += 1;
+            }
+        }
+    }
+
+    let mut result: Vec<(String, usize)> = counts.into_iter().collect();
+    result.sort_by_key(|(name, _)| name.clone());
+    Ok(result)
 }
 
 struct PlainStatements {

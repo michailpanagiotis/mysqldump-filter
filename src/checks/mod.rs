@@ -441,12 +441,26 @@ impl DBChecks {
         allowed_tables: Option<HashSet<String>>,
         schema_tables: HashSet<String>,
     ) -> Self {
-        let passes = items.into_iter().map(|t_items| {
+        let mut passes: Vec<PassChecks> = items.into_iter().map(|t_items| {
             t_items.into_iter().map(|it| {
                 let table_name = it[0].get_table_name().to_owned();
                 (table_name.to_string(), TableChecks::new(it, text_transforms.get(&table_name)))
             }).collect()
         }).collect();
+
+        // Tables that only have text_transforms (no filters/cascades) never enter the
+        // dependency tree, so add them explicitly. They have no dependencies and go in
+        // the first pass.
+        for (table_name, transforms) in &text_transforms {
+            let already_present = passes.iter().any(|pass| pass.contains_key(table_name));
+            if !already_present {
+                if passes.is_empty() {
+                    passes.push(HashMap::new());
+                }
+                passes[0].insert(table_name.clone(), TableChecks::new(vec![], Some(transforms)));
+            }
+        }
+
         Self { passes, allowed_tables, schema_tables }
     }
 
@@ -467,7 +481,10 @@ impl DBChecks {
                 if dropped.is_empty() {
                     println!("Dropped tables: none");
                 } else {
-                    println!("Dropped tables: {}", dropped.join(", "));
+                    println!("Dropped tables:");
+                    for table in &dropped {
+                        println!("  - {table}");
+                    }
                 }
             }
             None => {
@@ -484,10 +501,19 @@ impl DBChecks {
                 for check in &table_checks.checks {
                     println!("    - {}", check.get_key());
                 }
+                let mut transforms: Vec<_> = table_checks.text_transforms.iter().collect();
+                transforms.sort_by_key(|(col, _)| col.as_str());
+                for (column, value) in transforms {
+                    println!("    - transform: {column} -> {value}");
+                }
             }
         }
         println!("======================");
         println!();
+    }
+
+    pub fn len(&self) -> usize {
+        self.passes.len()
     }
 
     /// Check if a table's data is allowed

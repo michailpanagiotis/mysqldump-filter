@@ -8,7 +8,7 @@ mod checks;
 mod scanner;
 
 use checks::get_passes;
-use scanner::{explode_to_files, gather, process_table_inserts, DBMeta};
+use scanner::{count_records, gather, process_table_inserts, get_schema_tables};
 
 /// Configuration structure for the mysqldump filter
 ///
@@ -56,10 +56,17 @@ impl Config {
     }
 }
 
-/// Command-line interface structure
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
-struct Cli {
+enum Cli {
+    /// Filter a mysqldump file according to configuration
+    Filter(FilterCli),
+    /// Count records per table in a mysqldump file
+    Count(CountCli),
+}
+
+#[derive(Parser, Debug)]
+struct FilterCli {
     /// Input MySQL dump file to process
     #[clap(value_name = "FILE", required=true)]
     input: PathBuf,
@@ -79,21 +86,30 @@ struct Cli {
     /// Show the execution plan only, without running the filter
     #[clap(long)]
     plan_only: bool,
+
+    /// Run only the first N passes (1-indexed, defaults to all)
+    #[clap(long)]
+    passes: Option<usize>,
 }
 
-/// Main entry point for the mysqldump-filter application
-///
-/// Processes a MySQL dump file according to the provided configuration,
-/// applying filters, cascading rules, and text transformations.
-///
-/// # Returns
-/// * `Ok(())` on successful processing
-/// * `Err(anyhow::Error)` if processing fails
+#[derive(Parser, Debug)]
+struct CountCli {
+    /// Input MySQL dump file to count records in
+    #[clap(value_name = "FILE")]
+    input: PathBuf,
+}
+
 fn main() -> Result<(), anyhow::Error> {
-    let cli = Cli::parse();
-    let input_file = std::env::current_dir().unwrap().to_path_buf().join(cli.input);
-    let output_file = std::env::current_dir().unwrap().to_path_buf().join(cli.output);
-    let config_file = std::env::current_dir().unwrap().to_path_buf().join(cli.config);
+    match Cli::parse() {
+        Cli::Filter(args) => run_filter(args),
+        Cli::Count(args) => run_count(args),
+    }
+}
+
+fn run_filter(cli: FilterCli) -> Result<(), anyhow::Error> {
+    let input_file = std::env::current_dir()?.join(&cli.input);
+    let output_file = std::env::current_dir()?.join(&cli.output);
+    let config_file = std::env::current_dir()?.join(&cli.config);
     let temp_dir = if cli.working_dir.is_none() { Some(TempDir::new("sql_parser").expect("cannot create temporary dir")) } else { None };
     let config = Config::from_file(config_file.as_path());
 
@@ -103,22 +119,7 @@ fn main() -> Result<(), anyhow::Error> {
     };
     let working_file_path = working_dir_path.join("INTERIM").with_extension("sql");
 
-    // Read schema to get all table names
-    let db_meta = DBMeta::from_file(&input_file)?;
-    let schema_tables = db_meta.borrow().get_all_tables();
-
-    // explode_to_files(
-    //     working_file_path.as_path(),
-    //     input_file.as_path(),
-    //     |statement| {
-    //         if let (Some(allowed), Some(table)) = (&config.allow_data_on_tables, statement.get_table()) && !allowed.contains(table) {
-    //             return Ok(None);
-    //         }
-    //         Ok(Some(statement))
-    //     }
-    // ).unwrap_or_else(|e| {
-    //     panic!("Problem exploding to files: {e:?}");
-    // });
+    let schema_tables = get_schema_tables(&input_file)?;
 
     let passes = get_passes(
         config.cascades.iter().chain(&config.filters),
@@ -128,12 +129,18 @@ fn main() -> Result<(), anyhow::Error> {
     )?;
     passes.print_plan();
 
+    let run_passes = match cli.passes {
+        Some(n) if n >= 1 && n <= passes.len() => n,
+        Some(n) => return Err(anyhow::anyhow!("--passes must be between 1 and {}, got {n}", passes.len())),
+        None => passes.len(),
+    };
+
     if cli.plan_only {
         return Ok(());
     }
 
     let mut lookup_table = HashMap::new();
-    for pending_tables in passes {
+    for pending_tables in passes.into_iter().take(run_passes) {
         for (table, table_checks) in pending_tables {
             process_table_inserts(
                 &working_file_path,
@@ -150,6 +157,28 @@ fn main() -> Result<(), anyhow::Error> {
     if let Some(dir) = temp_dir {
        let _ = dir.close();
     }
+
+    Ok(())
+}
+
+fn run_count(cli: CountCli) -> Result<(), anyhow::Error> {
+    let input_file = std::env::current_dir()?.join(&cli.input);
+    let counts = count_records(&input_file)?;
+
+    if counts.is_empty() {
+        println!("No tables found.");
+        return Ok(());
+    }
+
+    let max_name_len = counts.iter().map(|(name, _)| name.len()).max().unwrap_or(0).max("Total".len());
+    let total: usize = counts.iter().map(|(_, count)| count).sum();
+    let max_count_len = format!("{total}").len();
+
+    for (table, count) in &counts {
+        println!("{:<width$}  {:>cwidth$}", table, count, width = max_name_len, cwidth = max_count_len);
+    }
+    println!("{:-<width$}", "", width = max_name_len + 2 + max_count_len);
+    println!("{:<width$}  {:>cwidth$}", "Total", total, width = max_name_len, cwidth = max_count_len);
 
     Ok(())
 }
