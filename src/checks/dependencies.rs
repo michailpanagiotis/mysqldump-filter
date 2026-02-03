@@ -75,7 +75,6 @@ impl<T> DependencyNode<T>
 
     pub fn add_target(&mut self, payload: T) -> Result<(), anyhow::Error> {
         let key = (&payload).into().to_string();
-        println!("From {key}");
         let mut split = key.split('.');
         let (Some(group_key), Some(_), None) = (split.next(), split.next(), split.next()) else {
             return Err(anyhow::anyhow!("malformed key {}", key));
@@ -83,12 +82,10 @@ impl<T> DependencyNode<T>
 
 
         if !self.has_child(group_key) {
-            println!("Adding group {group_key}");
             self.dependents.push(DependencyNode::new_group(group_key));
         }
 
         if !self.has_child(&(&payload).into()) {
-            println!("Adding key {key}");
             self.dependents.push(DependencyNode::new_node(payload));
         }
 

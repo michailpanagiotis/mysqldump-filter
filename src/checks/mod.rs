@@ -96,11 +96,8 @@ impl<'a> From<&'a CheckDefinition> for String {
     fn from(item: &'a CheckDefinition) -> Self {
         // dbg!(&item);
         if !item.1.contains("->") {
-            println!("cel {0}", item.1);
             return item.0.to_string() + "." + item.1.as_str();
         }
-
-        println!("lookup {0}", item.1);
 
         let definition = item.0.as_str().to_owned() + "." + item.1.as_str();
         let column = definition.split("->").next().unwrap();
@@ -135,7 +132,6 @@ impl PlainCelTest {
         if variables.len() > 1 {
             return Err(anyhow::anyhow!("Each CEL test must have only one variable"));
         }
-        dbg!(&variables);
         let column_name = &variables[0];
         Ok((column_name.to_owned(), Vec::new()))
     }
@@ -443,6 +439,24 @@ impl DBChecks {
             }).collect()
         }).collect())
     }
+
+    /// Print the execution plan showing passes and tables to be processed
+    pub fn print_plan(&self) {
+        println!("=== Execution Plan ===");
+        println!("Total passes: {}", self.0.len());
+        println!();
+        for (pass_idx, pass_checks) in self.0.iter().enumerate() {
+            println!("Pass {}:", pass_idx + 1);
+            for (table, table_checks) in pass_checks {
+                println!("  Table: {}", table);
+                for check in &table_checks.checks {
+                    println!("    - {}", check.get_key());
+                }
+            }
+        }
+        println!("======================");
+        println!();
+    }
 }
 
 impl IntoIterator for DBChecks {
@@ -499,11 +513,8 @@ pub fn test_get_passes(definitions: &[(String, String)]) -> Result<(), anyhow::E
         }
     }
 
-    dbg!(&root);
+    let _chunked = chunk_by_depth(root);
 
-    let chunked = chunk_by_depth(root);
-
-    panic!("stop");
     Ok(())
 }
 
@@ -541,11 +552,7 @@ pub fn get_passes<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(condition
 
     let chunked = chunk_by_depth(root);
 
-    dbg!(&chunked);
-
     let db_checks = DBChecks::new(chunked, text_transforms);
-
-    panic!("stop");
 
     Ok(db_checks)
 }

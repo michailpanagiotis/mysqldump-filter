@@ -75,6 +75,10 @@ struct Cli {
     /// Optional working directory for temporary files (defaults to system temp)
     #[clap(short, long, required = false)]
     working_dir: Option<PathBuf>,
+
+    /// Show the execution plan only, without running the filter
+    #[clap(long)]
+    plan_only: bool,
 }
 
 /// Main entry point for the mysqldump-filter application
@@ -112,9 +116,15 @@ fn main() -> Result<(), anyhow::Error> {
     //     panic!("Problem exploding to files: {e:?}");
     // });
 
+    let passes = get_passes(config.cascades.iter().chain(&config.filters), config.text_transforms)?;
+    passes.print_plan();
+
+    if cli.plan_only {
+        return Ok(());
+    }
+
     let mut lookup_table = HashMap::new();
-    for pending_tables in get_passes(config.cascades.iter().chain(&config.filters), config.text_transforms)? {
-        dbg!(&lookup_table);
+    for pending_tables in passes {
         for (table, table_checks) in pending_tables {
             process_table_inserts(
                 &working_file_path,
