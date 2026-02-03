@@ -18,7 +18,7 @@ pub struct DependencyNode<T> {
 }
 
 impl<T> DependencyNode<T>
-    where for<'a> &'a T: Into<&'a str>
+    where for<'a> &'a T: Into<String>
 {
     fn new_node(payload: T) -> Self {
         DependencyNode {
@@ -41,11 +41,11 @@ impl<T> DependencyNode<T>
         }
     }
 
-    fn get_key(&self) -> &str {
+    fn get_key(&self) -> String {
         match &self.node_type {
-            NodeType::Root => ROOT.as_str(),
+            NodeType::Root => ROOT.to_owned(),
             NodeType::Node { payload } => payload.into(),
-            NodeType::Group { name, .. } => name,
+            NodeType::Group { name, .. } => name.to_owned(),
         }
     }
 
@@ -66,9 +66,32 @@ impl<T> DependencyNode<T>
             self.dependents.push(DependencyNode::new_group(group_key));
         }
 
-        if !self.has_child((&payload).into()) {
+        if !self.has_child(&(&payload).into()) {
             self.dependents.push(DependencyNode::new_node(payload));
         }
+        self.move_into(group_key, &key)?;
+        Ok(())
+    }
+
+    pub fn add_target(&mut self, payload: T) -> Result<(), anyhow::Error> {
+        let key = (&payload).into().to_string();
+        println!("From {key}");
+        let mut split = key.split('.');
+        let (Some(group_key), Some(_), None) = (split.next(), split.next(), split.next()) else {
+            return Err(anyhow::anyhow!("malformed key {}", key));
+        };
+
+
+        if !self.has_child(group_key) {
+            println!("Adding group {group_key}");
+            self.dependents.push(DependencyNode::new_group(group_key));
+        }
+
+        if !self.has_child(&(&payload).into()) {
+            println!("Adding key {key}");
+            self.dependents.push(DependencyNode::new_node(payload));
+        }
+
         self.move_into(group_key, &key)?;
         Ok(())
     }
@@ -100,7 +123,7 @@ impl<T> DependencyNode<T>
         None
     }
 
-    pub fn move_under(&mut self, parent_key: &str, child_key: &str) -> Result<(), anyhow::Error> {
+    pub fn add_dependency(&mut self, parent_key: &str, child_key: &str) -> Result<(), anyhow::Error> {
         let child = self.pop_child(child_key).ok_or(anyhow::anyhow!("child {child_key} does not exist"))?;
         self.get_node_mut(parent_key).ok_or(anyhow::anyhow!("parent {parent_key} does not exist"))?.dependents.push(child);
         Ok(())
@@ -113,9 +136,9 @@ impl<T> DependencyNode<T>
             NodeType::Group { payloads, .. } => {
                 match child.node_type {
                     NodeType::Node { payload } => {
-                        let needle: &str = (&payload).into();
+                        let needle: &str = &(&payload).into();
                         let found = payloads.iter().find(|x| {
-                            let haystack: &str = (*x).into();
+                            let haystack: &str = &(*x).into();
                             needle == haystack
                         });
                         if found.is_none() {
@@ -168,9 +191,9 @@ mod tests {
         key: String,
     }
 
-    impl<'a> From<&'a MockPayload> for &'a str {
+    impl<'a> From<&'a MockPayload> for String {
         fn from(item: &'a MockPayload) -> Self {
-            &item.key
+            item.key.to_owned()
         }
     }
 
@@ -375,12 +398,12 @@ mod tests {
     }
 
     #[test]
-    fn test_dependency_node_move_under() {
+    fn test_dependency_node_add_dependency() {
         let mut root: DependencyNode<MockPayload> = DependencyNode::new();
         root.dependents.push(DependencyNode::new_group("parent"));
         root.dependents.push(DependencyNode::new_node(create_mock_payload("child")));
 
-        let result = root.move_under("parent", "child");
+        let result = root.add_dependency("parent", "child");
         assert!(result.is_ok());
 
         // Child should no longer be at root level
@@ -393,20 +416,20 @@ mod tests {
     }
 
     #[test]
-    fn test_dependency_node_move_under_nonexistent_parent() {
+    fn test_dependency_node_add_dependency_nonexistent_parent() {
         let mut root: DependencyNode<MockPayload> = DependencyNode::new();
         root.dependents.push(DependencyNode::new_node(create_mock_payload("child")));
 
-        let result = root.move_under("nonexistent", "child");
+        let result = root.add_dependency("nonexistent", "child");
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_dependency_node_move_under_nonexistent_child() {
+    fn test_dependency_node_add_dependency_nonexistent_child() {
         let mut root: DependencyNode<MockPayload> = DependencyNode::new();
         root.dependents.push(DependencyNode::new_group("parent"));
 
-        let result = root.move_under("parent", "nonexistent");
+        let result = root.add_dependency("parent", "nonexistent");
         assert!(result.is_err());
     }
 
@@ -504,7 +527,7 @@ mod tests {
 
         // Level 1: child group under parent
         root.add_child_to_group(create_mock_payload("child_item"), "child_group").unwrap();
-        root.move_under("parent_group", "child_group").unwrap();
+        root.add_dependency("parent_group", "child_group").unwrap();
 
         let result = chunk_by_depth(root);
 
@@ -540,12 +563,12 @@ mod tests {
         // Level 1: children of l0_group1
         root.add_child_to_group(create_mock_payload("l1_item1"), "l1_group1").unwrap();
         root.add_child_to_group(create_mock_payload("l1_item2"), "l1_group2").unwrap();
-        root.move_under("l0_group1", "l1_group1").unwrap();
-        root.move_under("l0_group1", "l1_group2").unwrap();
+        root.add_dependency("l0_group1", "l1_group1").unwrap();
+        root.add_dependency("l0_group1", "l1_group2").unwrap();
 
         // Level 2: child of l1_group1
         root.add_child_to_group(create_mock_payload("l2_item1"), "l2_group1").unwrap();
-        root.move_under("l1_group1", "l2_group1").unwrap();
+        root.add_dependency("l1_group1", "l2_group1").unwrap();
 
         let result = chunk_by_depth(root);
 

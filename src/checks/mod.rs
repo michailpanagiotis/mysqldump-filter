@@ -83,9 +83,28 @@ pub trait PlainColumnCheck {
     fn as_any(&self) -> &dyn Any;
 }
 
-impl<'a> From<&'a PlainCheckType> for &'a str {
+impl<'a> From<&'a PlainCheckType> for String {
     fn from(item: &'a PlainCheckType) -> Self {
-        item.get_key()
+        item.get_key().to_owned()
+    }
+}
+
+#[derive(Debug)]
+struct CheckDefinition (String, String);
+
+impl<'a> From<&'a CheckDefinition> for String {
+    fn from(item: &'a CheckDefinition) -> Self {
+        // dbg!(&item);
+        if !item.1.contains("->") {
+            println!("cel {0}", item.1);
+            return item.0.to_string() + "." + item.1.as_str();
+        }
+
+        println!("lookup {0}", item.1);
+
+        let definition = item.0.as_str().to_owned() + "." + item.1.as_str();
+        let column = definition.split("->").next().unwrap();
+        column.to_owned()
     }
 }
 
@@ -466,6 +485,28 @@ fn split_column_key(key: &str) -> Result<(&str, &str), anyhow::Error> {
     Ok((table, column))
 }
 
+pub fn test_get_passes(definitions: &[(String, String)]) -> Result<(), anyhow::Error> {
+    let mut root = DependencyNode::<CheckDefinition>::new();
+    for (source_table, definition) in definitions.iter() {
+        root.add_target(CheckDefinition(source_table.to_string(), definition.to_string()))?;
+
+        for target_key in determine_foreign_keys(definition)? {
+            let (target_table, target_column) = split_column_key(&target_key)?;
+
+            root.add_target(CheckDefinition(target_table.to_string(), target_column.to_string()))?;
+
+            root.add_dependency(target_table, source_table)?;
+        }
+    }
+
+    dbg!(&root);
+
+    let chunked = chunk_by_depth(root);
+
+    panic!("stop");
+    Ok(())
+}
+
 /// Build database checks from configuration conditions
 ///
 /// Analyzes filter and cascade definitions to create a multi-pass processing plan
@@ -483,6 +524,7 @@ pub fn get_passes<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(condition
         conds.iter().map(|c| (table.to_owned(), c.to_owned()))
     }).collect();
 
+    test_get_passes(&definitions)?;
     let mut root = DependencyNode::<PlainCheckType>::new();
     for (source_table, definition) in definitions.iter() {
         root.add_child_to_group(new_plain_test(source_table, definition)?, source_table)?;
@@ -493,13 +535,17 @@ pub fn get_passes<'a, I: Iterator<Item=(&'a String, &'a Vec<String>)>>(condition
             let target_check = new_tracking_test(target_table, &target_key)?;
             root.add_child_to_group(target_check, target_table)?;
 
-            root.move_under(target_table, source_table)?;
+            root.add_dependency(target_table, source_table)?;
         }
     }
 
+    let chunked = chunk_by_depth(root);
 
-    let db_checks = DBChecks::new(chunk_by_depth(root), text_transforms);
-    dbg!(&db_checks);
+    dbg!(&chunked);
+
+    let db_checks = DBChecks::new(chunked, text_transforms);
+
+    panic!("stop");
 
     Ok(db_checks)
 }

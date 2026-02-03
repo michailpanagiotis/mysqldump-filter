@@ -71,8 +71,6 @@ impl SqlStatement {
             return None;
         }
 
-        dbg!(&self.text);
-
         match split_insert_parts(&self.text) {
             Ok((table, columns_part, values_part)) => {
 
