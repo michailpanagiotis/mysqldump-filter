@@ -251,7 +251,21 @@ fn invert_ranges(skip_ranges: &[(u64, u64)], file_size: u64) -> Vec<(u64, u64)> 
     copy_ranges
 }
 
-/// Linux-optimized write using copy_file_range (zero-copy).
+// FICLONERANGE ioctl number (from linux/fs.h)
+#[cfg(target_os = "linux")]
+const FICLONERANGE: libc::c_ulong = 0x4020940D;
+
+/// file_clone_range struct for FICLONERANGE ioctl
+#[cfg(target_os = "linux")]
+#[repr(C)]
+struct FileCloneRange {
+    src_fd: i64,
+    src_offset: u64,
+    src_length: u64,
+    dest_offset: u64,
+}
+
+/// Linux-optimized write trying reflink first, then copy_file_range, then buffered I/O.
 #[cfg(target_os = "linux")]
 fn write_filtered_dump_linux(
     input_path: &Path,
@@ -264,6 +278,81 @@ fn write_filtered_dump_linux(
     let in_fd = input.as_raw_fd();
     let out_fd = output.as_raw_fd();
 
+    // Try reflink first (O(1) copy-on-write on btrfs, xfs with reflink)
+    if try_reflink_copy(in_fd, out_fd, copy_ranges) {
+        return Ok(());
+    }
+
+    // Fall back to copy_file_range with kernel hints
+    match write_with_copy_file_range(&input, &output, in_fd, out_fd, copy_ranges) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            // Check if it's a cross-filesystem or unsupported error
+            if let Some(os_err) = e.downcast_ref::<std::io::Error>() {
+                if os_err.raw_os_error() == Some(libc::EXDEV)
+                    || os_err.raw_os_error() == Some(libc::ENOSYS)
+                {
+                    drop(input);
+                    drop(output);
+                    std::fs::remove_file(output_path)?;
+                    return write_filtered_dump_generic(input_path, output_path, copy_ranges);
+                }
+            }
+            Err(e)
+        }
+    }
+}
+
+/// Attempt reflink copy using FICLONERANGE. Returns true if successful.
+#[cfg(target_os = "linux")]
+fn try_reflink_copy(in_fd: i32, out_fd: i32, copy_ranges: &[(u64, u64)]) -> bool {
+    let mut dest_offset = 0u64;
+
+    for (start, end) in copy_ranges {
+        let range = FileCloneRange {
+            src_fd: in_fd as i64,
+            src_offset: *start,
+            src_length: end - start,
+            dest_offset,
+        };
+
+        let ret = unsafe { libc::ioctl(out_fd, FICLONERANGE, &range) };
+
+        if ret < 0 {
+            // Reflink not supported or failed - caller should try another method
+            // Truncate output file since we may have partially written
+            unsafe { libc::ftruncate(out_fd, 0) };
+            return false;
+        }
+
+        dest_offset += end - start;
+    }
+
+    true
+}
+
+/// Copy using copy_file_range with kernel hints for optimal performance.
+#[cfg(target_os = "linux")]
+fn write_with_copy_file_range(
+    input: &File,
+    _output: &File,
+    in_fd: i32,
+    out_fd: i32,
+    copy_ranges: &[(u64, u64)],
+) -> Result<()> {
+    let input_size = input.metadata()?.len() as i64;
+
+    // Hint kernel about sequential access pattern for aggressive read-ahead
+    unsafe {
+        libc::posix_fadvise(in_fd, 0, input_size, libc::POSIX_FADV_SEQUENTIAL);
+    }
+
+    // Pre-allocate output file to reduce fragmentation
+    let total_copy_size: u64 = copy_ranges.iter().map(|(s, e)| e - s).sum();
+    unsafe {
+        libc::fallocate(out_fd, 0, 0, total_copy_size as i64);
+    }
+
     for (start, end) in copy_ranges {
         let mut in_off = *start as i64;
         let mut remaining = end - start;
@@ -271,38 +360,36 @@ fn write_filtered_dump_linux(
         while remaining > 0 {
             let to_copy = std::cmp::min(remaining, i64::MAX as u64) as usize;
 
-            // SAFETY: We're passing valid file descriptors and offsets
             let copied = unsafe {
                 libc::copy_file_range(
                     in_fd,
                     &mut in_off,
                     out_fd,
-                    std::ptr::null_mut(), // append to output
+                    std::ptr::null_mut(),
                     to_copy,
-                    0, // flags (none)
+                    0,
                 )
             };
 
             if copied < 0 {
-                let err = std::io::Error::last_os_error();
-                // Fall back to generic copy if copy_file_range fails
-                // (e.g., cross-filesystem, older kernel)
-                if err.raw_os_error() == Some(libc::EXDEV)
-                    || err.raw_os_error() == Some(libc::ENOSYS)
-                {
-                    drop(input);
-                    drop(output);
-                    std::fs::remove_file(output_path)?;
-                    return write_filtered_dump_generic(input_path, output_path, copy_ranges);
-                }
-                return Err(err.into());
+                return Err(std::io::Error::last_os_error().into());
             }
 
             if copied == 0 {
-                break; // EOF
+                break;
             }
 
             remaining -= copied as u64;
+        }
+
+        // Tell kernel we're done with this input range
+        unsafe {
+            libc::posix_fadvise(
+                in_fd,
+                *start as i64,
+                (end - start) as i64,
+                libc::POSIX_FADV_DONTNEED,
+            );
         }
     }
 
