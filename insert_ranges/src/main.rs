@@ -9,6 +9,10 @@ use clap::Parser;
 use std::collections::{BTreeMap, HashSet};
 use std::fs::File;
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
+#[cfg(target_os = "linux")]
+use std::os::fd::AsRawFd;
+#[cfg(target_os = "linux")]
+extern crate libc;
 use std::path::{Path, PathBuf};
 
 // ============================================================================
@@ -189,11 +193,7 @@ fn write_filtered_dump(
     exclude: &HashSet<&str>,
     include: &HashSet<&str>,
 ) -> Result<()> {
-    let mut input = File::open(input_path)?;
-    let output = File::create(output_path)?;
-    let mut writer = BufWriter::new(output);
-
-    let file_size = input.metadata()?.len();
+    let file_size = std::fs::metadata(input_path)?.len();
 
     // Build list of ranges to exclude (gaps to skip)
     let mut skip_ranges: Vec<(u64, u64)> = Vec::new();
@@ -208,25 +208,19 @@ fn write_filtered_dump(
     skip_ranges.sort_by_key(|(start, _)| *start);
     let skip_ranges = merge_skip_ranges(skip_ranges);
 
-    // Copy file, skipping excluded ranges
-    let mut pos = 0u64;
-    const BUFFER_SIZE: usize = 64 * 1024;
-    let mut buffer = vec![0u8; BUFFER_SIZE];
+    // Build list of ranges to copy (inverse of skip ranges)
+    let copy_ranges = invert_ranges(&skip_ranges, file_size);
 
-    for (skip_start, skip_end) in &skip_ranges {
-        // Copy from current position to start of skip range
-        if pos < *skip_start {
-            copy_range(&mut input, &mut writer, pos, *skip_start, &mut buffer)?;
-        }
-        pos = *skip_end;
+    // Use platform-specific optimized copy
+    #[cfg(target_os = "linux")]
+    {
+        write_filtered_dump_linux(input_path, output_path, &copy_ranges)?;
     }
 
-    // Copy remaining bytes after last skip range
-    if pos < file_size {
-        copy_range(&mut input, &mut writer, pos, file_size, &mut buffer)?;
+    #[cfg(not(target_os = "linux"))]
+    {
+        write_filtered_dump_generic(input_path, output_path, &copy_ranges)?;
     }
-
-    writer.flush()?;
 
     let skipped_bytes: u64 = skip_ranges.iter().map(|(s, e)| e - s).sum();
     eprintln!(
@@ -235,6 +229,105 @@ fn write_filtered_dump(
         humanize_bytes(skipped_bytes)
     );
 
+    Ok(())
+}
+
+/// Invert skip ranges to get copy ranges.
+fn invert_ranges(skip_ranges: &[(u64, u64)], file_size: u64) -> Vec<(u64, u64)> {
+    let mut copy_ranges = Vec::new();
+    let mut pos = 0u64;
+
+    for (skip_start, skip_end) in skip_ranges {
+        if pos < *skip_start {
+            copy_ranges.push((pos, *skip_start));
+        }
+        pos = *skip_end;
+    }
+
+    if pos < file_size {
+        copy_ranges.push((pos, file_size));
+    }
+
+    copy_ranges
+}
+
+/// Linux-optimized write using copy_file_range (zero-copy).
+#[cfg(target_os = "linux")]
+fn write_filtered_dump_linux(
+    input_path: &Path,
+    output_path: &Path,
+    copy_ranges: &[(u64, u64)],
+) -> Result<()> {
+    let input = File::open(input_path)?;
+    let output = File::create(output_path)?;
+
+    let in_fd = input.as_raw_fd();
+    let out_fd = output.as_raw_fd();
+
+    for (start, end) in copy_ranges {
+        let mut in_off = *start as i64;
+        let mut remaining = end - start;
+
+        while remaining > 0 {
+            let to_copy = std::cmp::min(remaining, i64::MAX as u64) as usize;
+
+            // SAFETY: We're passing valid file descriptors and offsets
+            let copied = unsafe {
+                libc::copy_file_range(
+                    in_fd,
+                    &mut in_off,
+                    out_fd,
+                    std::ptr::null_mut(), // append to output
+                    to_copy,
+                    0, // flags (none)
+                )
+            };
+
+            if copied < 0 {
+                let err = std::io::Error::last_os_error();
+                // Fall back to generic copy if copy_file_range fails
+                // (e.g., cross-filesystem, older kernel)
+                if err.raw_os_error() == Some(libc::EXDEV)
+                    || err.raw_os_error() == Some(libc::ENOSYS)
+                {
+                    drop(input);
+                    drop(output);
+                    std::fs::remove_file(output_path)?;
+                    return write_filtered_dump_generic(input_path, output_path, copy_ranges);
+                }
+                return Err(err.into());
+            }
+
+            if copied == 0 {
+                break; // EOF
+            }
+
+            remaining -= copied as u64;
+        }
+    }
+
+    Ok(())
+}
+
+/// Generic write implementation using buffered I/O.
+#[allow(dead_code)]
+fn write_filtered_dump_generic(
+    input_path: &Path,
+    output_path: &Path,
+    copy_ranges: &[(u64, u64)],
+) -> Result<()> {
+    let mut input = File::open(input_path)?;
+    let output = File::create(output_path)?;
+    let mut writer = BufWriter::with_capacity(1024 * 1024, output); // 1MB buffer
+
+    const BUFFER_SIZE: usize = 1024 * 1024; // 1MB read buffer
+    let mut buffer = vec![0u8; BUFFER_SIZE];
+
+    for (start, end) in copy_ranges {
+        copy_range(&mut input, &mut writer, *start, *end, &mut buffer)?;
+    }
+
+    writer.flush()?;
     Ok(())
 }
 
