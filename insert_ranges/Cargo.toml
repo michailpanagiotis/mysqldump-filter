@@ -1,0 +1,10 @@
+[package]
+name = "insert_ranges"
+version = "0.1.0"
+edition = "2021"
+description = "Discover INSERT statement byte ranges in MySQL dump files using interpolation search"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
