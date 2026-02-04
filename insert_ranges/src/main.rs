@@ -48,9 +48,37 @@ struct Cli {
     #[clap(long)]
     no_data: bool,
 
+    /// Merge INSERT statements into bulk inserts not exceeding this size (e.g., "16M", "64M")
+    #[clap(long, value_name = "BYTES", value_parser = parse_size)]
+    merge_inserts: Option<u64>,
+
     /// Check if another file's INSERT ranges are a subset of this file (by table name and size)
     #[clap(long, value_name = "FILE")]
     check_subset: Option<PathBuf>,
+}
+
+/// Parse a size string like "16M", "64M", "1G" into bytes
+fn parse_size(s: &str) -> Result<u64, String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Err("empty size".to_string());
+    }
+
+    let (num_str, multiplier) = if let Some(n) = s.strip_suffix(['k', 'K']) {
+        (n, 1024u64)
+    } else if let Some(n) = s.strip_suffix(['m', 'M']) {
+        (n, 1024 * 1024)
+    } else if let Some(n) = s.strip_suffix(['g', 'G']) {
+        (n, 1024 * 1024 * 1024)
+    } else {
+        (s, 1)
+    };
+
+    num_str
+        .trim()
+        .parse::<u64>()
+        .map(|n| n * multiplier)
+        .map_err(|e| e.to_string())
 }
 
 fn main() -> Result<()> {
@@ -88,17 +116,17 @@ fn main() -> Result<()> {
 
     // If output file is specified, write filtered dump
     if let Some(output_path) = &cli.output {
-        // Validate that at least one filter is specified when writing output
-        if exclude_set.is_empty() && include_set.is_empty() && !cli.no_data {
-            bail!("--output requires either --exclude-tables, --include-tables, or --no-data");
+        // Validate that at least one filter or transform is specified when writing output
+        if exclude_set.is_empty() && include_set.is_empty() && !cli.no_data && cli.merge_inserts.is_none() {
+            bail!("--output requires either --exclude-tables, --include-tables, --no-data, or --merge-inserts");
         }
 
         if output_path.as_os_str() == "-" {
             // Write to stdout
-            write_filtered_dump_stdout(&input_file, &ranges, &exclude_set, &include_set, cli.no_data)?;
+            write_filtered_dump_stdout(&input_file, &ranges, &exclude_set, &include_set, cli.no_data, cli.merge_inserts)?;
         } else {
             let output_file = std::env::current_dir()?.join(output_path);
-            write_filtered_dump(&input_file, &output_file, &ranges, &exclude_set, &include_set, cli.no_data)?;
+            write_filtered_dump(&input_file, &output_file, &ranges, &exclude_set, &include_set, cli.no_data, cli.merge_inserts)?;
         }
         return Ok(());
     }
@@ -321,44 +349,51 @@ fn write_filtered_dump_stdout(
     exclude: &HashSet<&str>,
     include: &HashSet<&str>,
     no_data: bool,
+    merge_inserts: Option<u64>,
 ) -> Result<()> {
     let file_size = std::fs::metadata(input_path)?.len();
-
-    // Build list of ranges to exclude (gaps to skip)
-    let mut skip_ranges: Vec<(u64, u64)> = Vec::new();
-
-    for range in ranges {
-        if !should_include_range(range, exclude, include, no_data) {
-            skip_ranges.push((range.start, range.end));
-        }
-    }
-
-    // Sort and merge overlapping skip ranges
-    skip_ranges.sort_by_key(|(start, _)| *start);
-    let skip_ranges = merge_skip_ranges(skip_ranges);
-
-    // Build list of ranges to copy (inverse of skip ranges)
-    let copy_ranges = invert_ranges(&skip_ranges, file_size);
 
     // Write to stdout using buffered I/O
     let mut input = File::open(input_path)?;
     let stdout = std::io::stdout();
     let mut writer = BufWriter::with_capacity(1024 * 1024, stdout.lock());
 
-    const BUFFER_SIZE: usize = 1024 * 1024;
-    let mut buffer = vec![0u8; BUFFER_SIZE];
+    let mut buffer = vec![0u8; merge_inserts.unwrap_or(1024 * 1024) as usize];
+    let mut pos = 0u64;
+    let mut written = 0u64;
 
-    for (start, end) in &copy_ranges {
-        copy_range(&mut input, &mut writer, *start, *end, &mut buffer)?;
+    for range in ranges {
+        // Copy any gap before this range
+        if range.start > pos {
+            copy_range(&mut input, &mut writer, pos, range.start, &mut buffer)?;
+            written += range.start - pos;
+        }
+
+        if should_include_range(range, exclude, include, no_data) {
+            // Check if this is an INSERT range that should be merged
+            if let (Some(max_size), RangeKind::Insert(table)) = (merge_inserts, &range.kind) {
+                written += copy_insert_range_merged(&mut input, &mut writer, range.start, range.end, table, max_size, &mut buffer)?;
+            } else {
+                copy_range(&mut input, &mut writer, range.start, range.end, &mut buffer)?;
+                written += range.end - range.start;
+            }
+        }
+
+        pos = range.end;
+    }
+
+    // Copy any remaining content after the last range
+    if pos < file_size {
+        copy_range(&mut input, &mut writer, pos, file_size, &mut buffer)?;
+        written += file_size - pos;
     }
 
     writer.flush()?;
 
-    let skipped_bytes: u64 = skip_ranges.iter().map(|(s, e)| e - s).sum();
     eprintln!(
         "Wrote {} (skipped {})",
-        humanize_bytes(file_size - skipped_bytes),
-        humanize_bytes(skipped_bytes)
+        humanize_bytes(written),
+        humanize_bytes(file_size - written)
     );
 
     Ok(())
@@ -372,8 +407,55 @@ fn write_filtered_dump(
     exclude: &HashSet<&str>,
     include: &HashSet<&str>,
     no_data: bool,
+    merge_inserts: Option<u64>,
 ) -> Result<()> {
     let file_size = std::fs::metadata(input_path)?.len();
+
+    // If merge_inserts is enabled, we must use buffered I/O (can't use zero-copy)
+    if merge_inserts.is_some() {
+        let mut input = File::open(input_path)?;
+        let output = File::create(output_path)?;
+        let mut writer = BufWriter::with_capacity(1024 * 1024, output);
+
+        let mut buffer = vec![0u8; merge_inserts.unwrap_or(1024 * 1024) as usize];
+        let mut pos = 0u64;
+        let mut written = 0u64;
+
+        for range in ranges {
+            // Copy any gap before this range
+            if range.start > pos {
+                copy_range(&mut input, &mut writer, pos, range.start, &mut buffer)?;
+                written += range.start - pos;
+            }
+
+            if should_include_range(range, exclude, include, no_data) {
+                if let (Some(max_size), RangeKind::Insert(table)) = (merge_inserts, &range.kind) {
+                    written += copy_insert_range_merged(&mut input, &mut writer, range.start, range.end, table, max_size, &mut buffer)?;
+                } else {
+                    copy_range(&mut input, &mut writer, range.start, range.end, &mut buffer)?;
+                    written += range.end - range.start;
+                }
+            }
+
+            pos = range.end;
+        }
+
+        // Copy any remaining content after the last range
+        if pos < file_size {
+            copy_range(&mut input, &mut writer, pos, file_size, &mut buffer)?;
+            written += file_size - pos;
+        }
+
+        writer.flush()?;
+
+        eprintln!(
+            "Wrote {} (skipped {})",
+            humanize_bytes(written),
+            humanize_bytes(file_size - written)
+        );
+
+        return Ok(());
+    }
 
     // Build list of ranges to exclude (gaps to skip)
     let mut skip_ranges: Vec<(u64, u64)> = Vec::new();
@@ -645,6 +727,139 @@ fn copy_range<R: Read + Seek, W: Write>(
     }
 
     Ok(())
+}
+
+/// Copy an INSERT range while merging multiple INSERT statements into bulk inserts.
+/// Returns the number of bytes written (which may differ from input due to removed INSERT prefixes).
+fn copy_insert_range_merged<R: Read + Seek, W: Write>(
+    input: &mut R,
+    output: &mut W,
+    start: u64,
+    end: u64,
+    table: &str,
+    max_size: u64,
+    buffer: &mut [u8],
+) -> Result<u64> {
+    // Build the pattern prefix to match: ");\nINSERT INTO `table`"
+    // The leading ")" ensures we only match after a VALUES clause, not after DISABLE KEYS etc.
+    // We'll find VALUES ourselves and replace everything up to and including " VALUES "
+    let pattern_backtick = format!(");\nINSERT INTO `{}`", table);
+    let pattern_plain = format!(");\nINSERT INTO {}", table);
+
+    input.seek(SeekFrom::Start(start))?;
+    let mut pos = start;
+    let mut written = 0u64;
+    let mut is_first_chunk = true;
+
+    while pos < end {
+        // Calculate how much to read (up to max_size or remaining)
+        let remaining = end - pos;
+        let to_read = std::cmp::min(remaining as usize, max_size as usize);
+        let to_read = std::cmp::min(to_read, buffer.len());
+
+        let n = input.read(&mut buffer[..to_read])?;
+        if n == 0 {
+            break;
+        }
+
+        let chunk = &buffer[..n];
+        let mut chunk_end = n;
+
+        // If this isn't the last chunk, find the last ");\n" to get a clean boundary
+        if pos + (n as u64) < end {
+            if let Some(boundary) = find_last_statement_boundary(chunk) {
+                chunk_end = boundary;
+                // Seek back to continue from the boundary
+                input.seek(SeekFrom::Start(pos + chunk_end as u64))?;
+            }
+        }
+
+        let chunk = &buffer[..chunk_end];
+
+        // Replace the pattern in this chunk
+        let modified = replace_insert_pattern(chunk, &pattern_backtick, &pattern_plain, is_first_chunk);
+        is_first_chunk = false;
+
+        output.write_all(&modified)?;
+        written += modified.len() as u64;
+        pos += chunk_end as u64;
+    }
+
+    Ok(written)
+}
+
+/// Find the last ");\n" boundary in a chunk, returning the position after the newline.
+fn find_last_statement_boundary(chunk: &[u8]) -> Option<usize> {
+    // Search backward for ");\n"
+    if chunk.len() < 3 {
+        return None;
+    }
+
+    for i in (0..chunk.len() - 2).rev() {
+        if chunk[i] == b')' && chunk[i + 1] == b';' && chunk[i + 2] == b'\n' {
+            return Some(i + 3);
+        }
+    }
+
+    None
+}
+
+/// Replace INSERT statement separators with commas to create bulk inserts.
+/// Handles patterns like: ");\nINSERT INTO `table` (...) VALUES " or ");\nINSERT INTO `table` VALUES "
+fn replace_insert_pattern(chunk: &[u8], pattern_backtick: &str, pattern_plain: &str, is_first_chunk: bool) -> Vec<u8> {
+    // Patterns start with ");" to ensure we only match after a VALUES clause end
+    let prefix_bt = pattern_backtick.as_bytes();
+    let prefix_pl = pattern_plain.as_bytes();
+    // Replacement keeps the ")" and adds comma instead of semicolon
+    let replacement = b"),\n";
+
+    let mut result = Vec::with_capacity(chunk.len());
+    let mut i = 0;
+
+    let _ = is_first_chunk; // Mark as intentionally unused for now
+
+    while i < chunk.len() {
+        // Check for backtick pattern: ";\nINSERT INTO `table`"
+        if i + prefix_bt.len() <= chunk.len() && &chunk[i..i + prefix_bt.len()] == prefix_bt {
+            // Found the prefix, now skip until we find " VALUES "
+            if let Some(skip_len) = find_values_keyword(&chunk[i..]) {
+                result.extend_from_slice(replacement);
+                i += skip_len;
+                continue;
+            }
+        }
+
+        // Check for plain pattern (no backticks): ";\nINSERT INTO table"
+        if i + prefix_pl.len() <= chunk.len() && &chunk[i..i + prefix_pl.len()] == prefix_pl {
+            if let Some(skip_len) = find_values_keyword(&chunk[i..]) {
+                result.extend_from_slice(replacement);
+                i += skip_len;
+                continue;
+            }
+        }
+
+        result.push(chunk[i]);
+        i += 1;
+    }
+
+    result
+}
+
+/// Find " VALUES " in the chunk and return the total length to skip (including VALUES and trailing space).
+fn find_values_keyword(chunk: &[u8]) -> Option<usize> {
+    let values_pattern = b" VALUES ";
+
+    // Search for " VALUES " within a reasonable distance (column list shouldn't be too long)
+    let search_limit = std::cmp::min(chunk.len(), 4096);
+
+    for i in 0..search_limit.saturating_sub(values_pattern.len()) {
+        if &chunk[i..i + values_pattern.len()] == values_pattern {
+            // Return position after " VALUES "
+            return Some(i + values_pattern.len());
+        }
+    }
+
+    None
 }
 
 fn format_kind(kind: &RangeKind) -> String {
