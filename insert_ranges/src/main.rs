@@ -43,6 +43,10 @@ struct Cli {
     /// Tables to include in output (comma-separated or repeated). Mutually exclusive with --exclude-tables.
     #[clap(short = 'i', long, value_name = "TABLE", value_delimiter = ',', conflicts_with = "exclude_tables")]
     include_tables: Vec<String>,
+
+    /// Check if another file's INSERT ranges are a subset of this file (by table name and size)
+    #[clap(long, value_name = "FILE")]
+    check_subset: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -61,6 +65,18 @@ fn main() -> Result<()> {
     } else {
         merge_table_data(ranges)
     };
+
+    // Check subset mode
+    if let Some(subset_path) = &cli.check_subset {
+        let subset_file = std::env::current_dir()?.join(subset_path);
+        let subset_ranges = discover_ranges(&subset_file)?;
+        let subset_ranges = if cli.no_group {
+            subset_ranges
+        } else {
+            merge_table_data(subset_ranges)
+        };
+        return check_subset(&ranges, &subset_ranges, &cli.input, subset_path);
+    }
 
     // Build filter sets
     let exclude_set: HashSet<&str> = cli.exclude_tables.iter().map(|s| s.as_str()).collect();
@@ -148,6 +164,93 @@ fn humanize_bytes(bytes: u64) -> String {
         format!("{:.2} KiB", bytes_f / KIB)
     } else {
         format!("{} B", bytes)
+    }
+}
+
+/// Check if subset_ranges is a subset of superset_ranges (by table name and size).
+/// Returns Ok(()) and prints result, exits with code 1 if not a subset.
+fn check_subset(
+    superset_ranges: &[FileRange],
+    subset_ranges: &[FileRange],
+    superset_path: &Path,
+    subset_path: &Path,
+) -> Result<()> {
+    // Build a map of (table_name, size) for the superset (INSERT ranges only)
+    let superset_inserts: HashSet<(&str, u64)> = superset_ranges
+        .iter()
+        .filter_map(|r| {
+            if let RangeKind::Insert(table) = &r.kind {
+                Some((table.as_str(), r.end - r.start))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Check each INSERT range in subset against superset
+    let mut missing: Vec<(&str, u64)> = Vec::new();
+    let mut size_mismatch: Vec<(&str, u64, u64)> = Vec::new(); // (table, subset_size, superset_size)
+
+    // Also build a map of superset sizes by table for mismatch reporting
+    let superset_by_table: std::collections::HashMap<&str, u64> = superset_ranges
+        .iter()
+        .filter_map(|r| {
+            if let RangeKind::Insert(table) = &r.kind {
+                Some((table.as_str(), r.end - r.start))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    for range in subset_ranges {
+        if let RangeKind::Insert(table) = &range.kind {
+            let size = range.end - range.start;
+            if !superset_inserts.contains(&(table.as_str(), size)) {
+                // Check if table exists with different size
+                if let Some(&superset_size) = superset_by_table.get(table.as_str()) {
+                    size_mismatch.push((table.as_str(), size, superset_size));
+                } else {
+                    missing.push((table.as_str(), size));
+                }
+            }
+        }
+    }
+
+    if missing.is_empty() && size_mismatch.is_empty() {
+        println!(
+            "OK: {} is a subset of {}",
+            subset_path.display(),
+            superset_path.display()
+        );
+        Ok(())
+    } else {
+        println!(
+            "FAIL: {} is NOT a subset of {}",
+            subset_path.display(),
+            superset_path.display()
+        );
+
+        if !missing.is_empty() {
+            println!("\nMissing tables in superset:");
+            for (table, size) in &missing {
+                println!("  {} ({})", table, humanize_bytes(*size));
+            }
+        }
+
+        if !size_mismatch.is_empty() {
+            println!("\nSize mismatches:");
+            for (table, subset_size, superset_size) in &size_mismatch {
+                println!(
+                    "  {}: subset={} vs superset={}",
+                    table,
+                    humanize_bytes(*subset_size),
+                    humanize_bytes(*superset_size)
+                );
+            }
+        }
+
+        std::process::exit(1);
     }
 }
 
