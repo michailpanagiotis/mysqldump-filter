@@ -30,3 +30,8 @@ mysql --defaults-extra-file="$MYSQL_CONFIG" --database="" -e "DROP DATABASE IF E
 
 # Load into MySQL
 # insert_ranges "$DUMP_FILE" $EXCLUDE_FLAGS -o - | mysql --defaults-extra-file="$MYSQL_CONFIG"
+# Rewrite DEFINER clauses to root@localhost (only on lines starting with /*!50013 DEFINER=)
+time cargo run --release -- "$DUMP_FILE" --no-data -o - \
+    | pv -s "$(stat -c%s "$DUMP_FILE")" \
+    | sed '/^\/\*!50013 DEFINER=/s/DEFINER=`[^`]*`@`[^`]*`/DEFINER=`root`@`localhost`/' \
+    | mysql --defaults-extra-file="$MYSQL_CONFIG"

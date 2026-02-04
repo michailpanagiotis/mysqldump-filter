@@ -44,6 +44,10 @@ struct Cli {
     #[clap(short = 'i', long, value_name = "TABLE", value_delimiter = ',', conflicts_with = "exclude_tables")]
     include_tables: Vec<String>,
 
+    /// Exclude all INSERT data ranges (output schema only)
+    #[clap(long)]
+    no_data: bool,
+
     /// Check if another file's INSERT ranges are a subset of this file (by table name and size)
     #[clap(long, value_name = "FILE")]
     check_subset: Option<PathBuf>,
@@ -85,16 +89,16 @@ fn main() -> Result<()> {
     // If output file is specified, write filtered dump
     if let Some(output_path) = &cli.output {
         // Validate that at least one filter is specified when writing output
-        if exclude_set.is_empty() && include_set.is_empty() {
-            bail!("--output requires either --exclude-tables or --include-tables");
+        if exclude_set.is_empty() && include_set.is_empty() && !cli.no_data {
+            bail!("--output requires either --exclude-tables, --include-tables, or --no-data");
         }
 
         if output_path.as_os_str() == "-" {
             // Write to stdout
-            write_filtered_dump_stdout(&input_file, &ranges, &exclude_set, &include_set)?;
+            write_filtered_dump_stdout(&input_file, &ranges, &exclude_set, &include_set, cli.no_data)?;
         } else {
             let output_file = std::env::current_dir()?.join(output_path);
-            write_filtered_dump(&input_file, &output_file, &ranges, &exclude_set, &include_set)?;
+            write_filtered_dump(&input_file, &output_file, &ranges, &exclude_set, &include_set, cli.no_data)?;
         }
         return Ok(());
     }
@@ -102,7 +106,7 @@ fn main() -> Result<()> {
     // Filter ranges for display if filters are specified
     let display_ranges: Vec<_> = ranges
         .iter()
-        .filter(|r| should_include_range(r, &exclude_set, &include_set))
+        .filter(|r| should_include_range(r, &exclude_set, &include_set, cli.no_data))
         .collect();
 
     if display_ranges.is_empty() {
@@ -270,8 +274,26 @@ fn get_range_table(range: &FileRange) -> Option<&str> {
     }
 }
 
+/// Check if a range is a data range (INSERT or related table data).
+fn is_data_range(range: &FileRange) -> bool {
+    matches!(
+        &range.kind,
+        RangeKind::Insert(_)
+            | RangeKind::DumpingData(_)
+            | RangeKind::Lock(_)
+            | RangeKind::DisableKeys(_)
+            | RangeKind::EnableKeys(_)
+            | RangeKind::Unlock
+    )
+}
+
 /// Determine if a range should be included based on filter sets.
-fn should_include_range(range: &FileRange, exclude: &HashSet<&str>, include: &HashSet<&str>) -> bool {
+fn should_include_range(range: &FileRange, exclude: &HashSet<&str>, include: &HashSet<&str>, no_data: bool) -> bool {
+    // If no_data is set, exclude all data ranges
+    if no_data && is_data_range(range) {
+        return false;
+    }
+
     let table = get_range_table(range);
 
     if !include.is_empty() {
@@ -298,6 +320,7 @@ fn write_filtered_dump_stdout(
     ranges: &[FileRange],
     exclude: &HashSet<&str>,
     include: &HashSet<&str>,
+    no_data: bool,
 ) -> Result<()> {
     let file_size = std::fs::metadata(input_path)?.len();
 
@@ -305,7 +328,7 @@ fn write_filtered_dump_stdout(
     let mut skip_ranges: Vec<(u64, u64)> = Vec::new();
 
     for range in ranges {
-        if !should_include_range(range, exclude, include) {
+        if !should_include_range(range, exclude, include, no_data) {
             skip_ranges.push((range.start, range.end));
         }
     }
@@ -348,6 +371,7 @@ fn write_filtered_dump(
     ranges: &[FileRange],
     exclude: &HashSet<&str>,
     include: &HashSet<&str>,
+    no_data: bool,
 ) -> Result<()> {
     let file_size = std::fs::metadata(input_path)?.len();
 
@@ -355,7 +379,7 @@ fn write_filtered_dump(
     let mut skip_ranges: Vec<(u64, u64)> = Vec::new();
 
     for range in ranges {
-        if !should_include_range(range, exclude, include) {
+        if !should_include_range(range, exclude, include, no_data) {
             skip_ranges.push((range.start, range.end));
         }
     }
