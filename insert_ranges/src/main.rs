@@ -4,11 +4,11 @@
 //! without scanning the entire file linearly. It uses interpolation search to achieve O(log n)
 //! complexity for finding table boundaries.
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::Parser;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 // ============================================================================
@@ -27,6 +27,18 @@ struct Cli {
     /// Don't group LOCK/INSERT/UNLOCK into single table ranges
     #[clap(long)]
     no_group: bool,
+
+    /// Output file to write filtered dump
+    #[clap(short, long, value_name = "FILE")]
+    output: Option<PathBuf>,
+
+    /// Tables to exclude from output (comma-separated or repeated)
+    #[clap(short = 'x', long, value_name = "TABLE", value_delimiter = ',')]
+    exclude_tables: Vec<String>,
+
+    /// Tables to include in output (comma-separated or repeated). Mutually exclusive with --exclude-tables.
+    #[clap(short = 'i', long, value_name = "TABLE", value_delimiter = ',', conflicts_with = "exclude_tables")]
+    include_tables: Vec<String>,
 }
 
 fn main() -> Result<()> {
@@ -46,16 +58,44 @@ fn main() -> Result<()> {
         merge_table_data(ranges)
     };
 
+    // Build filter sets
+    let exclude_set: HashSet<&str> = cli.exclude_tables.iter().map(|s| s.as_str()).collect();
+    let include_set: HashSet<&str> = cli.include_tables.iter().map(|s| s.as_str()).collect();
+
+    // If output file is specified, write filtered dump
+    if let Some(output_path) = &cli.output {
+        let output_file = std::env::current_dir()?.join(output_path);
+
+        // Validate that at least one filter is specified when writing output
+        if exclude_set.is_empty() && include_set.is_empty() {
+            bail!("--output requires either --exclude-tables or --include-tables");
+        }
+
+        write_filtered_dump(&input_file, &output_file, &ranges, &exclude_set, &include_set)?;
+        return Ok(());
+    }
+
+    // Filter ranges for display if filters are specified
+    let display_ranges: Vec<_> = ranges
+        .iter()
+        .filter(|r| should_include_range(r, &exclude_set, &include_set))
+        .collect();
+
+    if display_ranges.is_empty() {
+        println!("No ranges match the filter.");
+        return Ok(());
+    }
+
     // Calculate column widths
-    let max_kind_len = ranges
+    let max_kind_len = display_ranges
         .iter()
         .map(|r| format_kind(&r.kind).len())
         .max()
         .unwrap_or(0);
 
-    let max_start_len = ranges.iter().map(|r| format!("{}", r.start).len()).max().unwrap_or(0);
-    let max_size_len = ranges.iter().map(|r| format!("{}", r.end - r.start).len()).max().unwrap_or(0);
-    let max_human_len = ranges
+    let max_start_len = display_ranges.iter().map(|r| format!("{}", r.start).len()).max().unwrap_or(0);
+    let max_size_len = display_ranges.iter().map(|r| format!("{}", r.end - r.start).len()).max().unwrap_or(0);
+    let max_human_len = display_ranges
         .iter()
         .map(|r| humanize_bytes(r.end - r.start).len())
         .max()
@@ -74,7 +114,7 @@ fn main() -> Result<()> {
     );
 
     // Print ranges
-    for range in &ranges {
+    for range in &display_ranges {
         let size = range.end - range.start;
         println!(
             "{:<kw$}  {:>sw$}  {:>zw$}  {:>hw$}",
@@ -105,6 +145,146 @@ fn humanize_bytes(bytes: u64) -> String {
     } else {
         format!("{} B", bytes)
     }
+}
+
+/// Get the table name from a range, if any.
+fn get_range_table(range: &FileRange) -> Option<&str> {
+    match &range.kind {
+        RangeKind::Insert(t)
+        | RangeKind::DumpingData(t)
+        | RangeKind::Lock(t)
+        | RangeKind::DisableKeys(t)
+        | RangeKind::EnableKeys(t) => Some(t.as_str()),
+        RangeKind::Unlock | RangeKind::Other => None,
+    }
+}
+
+/// Determine if a range should be included based on filter sets.
+fn should_include_range(range: &FileRange, exclude: &HashSet<&str>, include: &HashSet<&str>) -> bool {
+    let table = get_range_table(range);
+
+    if !include.is_empty() {
+        // Include mode: only include ranges for specified tables (and ranges without tables)
+        match table {
+            Some(t) => include.contains(t),
+            None => true, // Always include non-table ranges (schema, etc.)
+        }
+    } else if !exclude.is_empty() {
+        // Exclude mode: exclude ranges for specified tables
+        match table {
+            Some(t) => !exclude.contains(t),
+            None => true, // Always include non-table ranges
+        }
+    } else {
+        // No filter: include everything
+        true
+    }
+}
+
+/// Write a filtered dump file, excluding or including specified table ranges.
+fn write_filtered_dump(
+    input_path: &Path,
+    output_path: &Path,
+    ranges: &[FileRange],
+    exclude: &HashSet<&str>,
+    include: &HashSet<&str>,
+) -> Result<()> {
+    let mut input = File::open(input_path)?;
+    let output = File::create(output_path)?;
+    let mut writer = BufWriter::new(output);
+
+    let file_size = input.metadata()?.len();
+
+    // Build list of ranges to exclude (gaps to skip)
+    let mut skip_ranges: Vec<(u64, u64)> = Vec::new();
+
+    for range in ranges {
+        if !should_include_range(range, exclude, include) {
+            skip_ranges.push((range.start, range.end));
+        }
+    }
+
+    // Sort and merge overlapping skip ranges
+    skip_ranges.sort_by_key(|(start, _)| *start);
+    let skip_ranges = merge_skip_ranges(skip_ranges);
+
+    // Copy file, skipping excluded ranges
+    let mut pos = 0u64;
+    const BUFFER_SIZE: usize = 64 * 1024;
+    let mut buffer = vec![0u8; BUFFER_SIZE];
+
+    for (skip_start, skip_end) in &skip_ranges {
+        // Copy from current position to start of skip range
+        if pos < *skip_start {
+            copy_range(&mut input, &mut writer, pos, *skip_start, &mut buffer)?;
+        }
+        pos = *skip_end;
+    }
+
+    // Copy remaining bytes after last skip range
+    if pos < file_size {
+        copy_range(&mut input, &mut writer, pos, file_size, &mut buffer)?;
+    }
+
+    writer.flush()?;
+
+    let skipped_bytes: u64 = skip_ranges.iter().map(|(s, e)| e - s).sum();
+    eprintln!(
+        "Wrote {} (skipped {})",
+        humanize_bytes(file_size - skipped_bytes),
+        humanize_bytes(skipped_bytes)
+    );
+
+    Ok(())
+}
+
+/// Merge overlapping or adjacent skip ranges.
+fn merge_skip_ranges(ranges: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
+    if ranges.is_empty() {
+        return ranges;
+    }
+
+    let mut merged = Vec::with_capacity(ranges.len());
+    let mut iter = ranges.into_iter();
+    let (mut start, mut end) = iter.next().unwrap();
+
+    for (next_start, next_end) in iter {
+        if next_start <= end {
+            // Overlapping or adjacent - extend current range
+            end = end.max(next_end);
+        } else {
+            merged.push((start, end));
+            start = next_start;
+            end = next_end;
+        }
+    }
+    merged.push((start, end));
+
+    merged
+}
+
+/// Copy a range of bytes from input to output.
+fn copy_range<R: Read + Seek, W: Write>(
+    input: &mut R,
+    output: &mut W,
+    start: u64,
+    end: u64,
+    buffer: &mut [u8],
+) -> Result<()> {
+    input.seek(SeekFrom::Start(start))?;
+    let mut remaining = end - start;
+
+    while remaining > 0 {
+        let to_read = std::cmp::min(remaining as usize, buffer.len());
+        let n = input.read(&mut buffer[..to_read])?;
+        if n == 0 {
+            break;
+        }
+        output.write_all(&buffer[..n])?;
+        remaining -= n as u64;
+    }
+
+    Ok(())
 }
 
 fn format_kind(kind: &RangeKind) -> String {
