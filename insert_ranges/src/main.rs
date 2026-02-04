@@ -32,7 +32,7 @@ struct Cli {
     #[clap(long)]
     no_group: bool,
 
-    /// Output file to write filtered dump
+    /// Output file to write filtered dump (use "-" for stdout)
     #[clap(short, long, value_name = "FILE")]
     output: Option<PathBuf>,
 
@@ -84,14 +84,18 @@ fn main() -> Result<()> {
 
     // If output file is specified, write filtered dump
     if let Some(output_path) = &cli.output {
-        let output_file = std::env::current_dir()?.join(output_path);
-
         // Validate that at least one filter is specified when writing output
         if exclude_set.is_empty() && include_set.is_empty() {
             bail!("--output requires either --exclude-tables or --include-tables");
         }
 
-        write_filtered_dump(&input_file, &output_file, &ranges, &exclude_set, &include_set)?;
+        if output_path.as_os_str() == "-" {
+            // Write to stdout
+            write_filtered_dump_stdout(&input_file, &ranges, &exclude_set, &include_set)?;
+        } else {
+            let output_file = std::env::current_dir()?.join(output_path);
+            write_filtered_dump(&input_file, &output_file, &ranges, &exclude_set, &include_set)?;
+        }
         return Ok(());
     }
 
@@ -286,6 +290,55 @@ fn should_include_range(range: &FileRange, exclude: &HashSet<&str>, include: &Ha
         // No filter: include everything
         true
     }
+}
+
+/// Write a filtered dump to stdout, excluding or including specified table ranges.
+fn write_filtered_dump_stdout(
+    input_path: &Path,
+    ranges: &[FileRange],
+    exclude: &HashSet<&str>,
+    include: &HashSet<&str>,
+) -> Result<()> {
+    let file_size = std::fs::metadata(input_path)?.len();
+
+    // Build list of ranges to exclude (gaps to skip)
+    let mut skip_ranges: Vec<(u64, u64)> = Vec::new();
+
+    for range in ranges {
+        if !should_include_range(range, exclude, include) {
+            skip_ranges.push((range.start, range.end));
+        }
+    }
+
+    // Sort and merge overlapping skip ranges
+    skip_ranges.sort_by_key(|(start, _)| *start);
+    let skip_ranges = merge_skip_ranges(skip_ranges);
+
+    // Build list of ranges to copy (inverse of skip ranges)
+    let copy_ranges = invert_ranges(&skip_ranges, file_size);
+
+    // Write to stdout using buffered I/O
+    let mut input = File::open(input_path)?;
+    let stdout = std::io::stdout();
+    let mut writer = BufWriter::with_capacity(1024 * 1024, stdout.lock());
+
+    const BUFFER_SIZE: usize = 1024 * 1024;
+    let mut buffer = vec![0u8; BUFFER_SIZE];
+
+    for (start, end) in &copy_ranges {
+        copy_range(&mut input, &mut writer, *start, *end, &mut buffer)?;
+    }
+
+    writer.flush()?;
+
+    let skipped_bytes: u64 = skip_ranges.iter().map(|(s, e)| e - s).sum();
+    eprintln!(
+        "Wrote {} (skipped {})",
+        humanize_bytes(file_size - skipped_bytes),
+        humanize_bytes(skipped_bytes)
+    );
+
+    Ok(())
 }
 
 /// Write a filtered dump file, excluding or including specified table ranges.
